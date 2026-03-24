@@ -1,6 +1,6 @@
 import { getPassword, setPassword } from "cross-keychain";
 
-const KEYCHAIN_SERVICE = "ACP Signer";
+const KEYCHAIN_SERVICE = "acp-signer";
 
 function toKeychainAccount(publicKey: string): string {
   return Buffer.from(publicKey, "base64").toString("hex");

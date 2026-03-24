@@ -12,9 +12,13 @@ export function registerBuyerCommands(program: Command): void {
     .command("create-job")
     .description("Create a new job on-chain")
     .requiredOption("--provider <address>", "Provider (seller) wallet address")
-    .option("--evaluator <address>", "Evaluator wallet address (defaults to your own)")
+    .option(
+      "--evaluator <address>",
+      "Evaluator wallet address (defaults to your own)"
+    )
     .requiredOption("--description <text>", "Job description")
     .option("--expired-in <seconds>", "Seconds until expiry", "3600")
+    .option("--hook-address <address>", "Hook address")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -23,13 +27,15 @@ export function registerBuyerCommands(program: Command): void {
         try {
           const buyerAddress = await agent.getAddress();
           const evaluator = opts.evaluator ?? buyerAddress;
-          const expiredAt = Math.floor(Date.now() / 1000) + Number(opts.expiredIn);
+          const expiredAt =
+            Math.floor(Date.now() / 1000) + Number(opts.expiredIn);
 
           const jobId = await agent.createJob({
             providerAddress: opts.provider,
             evaluatorAddress: evaluator,
             expiredAt,
             description: opts.description,
+            hookAddress: opts.hookAddress,
           });
 
           outputResult(json, {
@@ -39,6 +45,7 @@ export function registerBuyerCommands(program: Command): void {
             provider: opts.provider,
             evaluator,
             description: opts.description,
+            hookAddress: opts.hookAddress ?? undefined,
           });
         } finally {
           await agent.stop();
@@ -61,7 +68,9 @@ export function registerBuyerCommands(program: Command): void {
         try {
           const session = agent.getSession(opts.jobId);
           if (!session) {
-            throw new Error(`No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`);
+            throw new Error(
+              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`
+            );
           }
           await session.fund(Erc20Token.usdc(Number(opts.amount)));
           outputResult(json, {

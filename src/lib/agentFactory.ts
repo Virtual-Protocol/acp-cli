@@ -66,9 +66,7 @@ export async function createAgentFromEnv(): Promise<AcpAgent> {
     const publicKey = getPublicKey(walletAddress);
     const walletId = await getWalletIdByAddress(walletAddress);
 
-    const signerPrivateKey = publicKey
-      ? await loadSignerKey(publicKey)
-      : null;
+    const signerPrivateKey = publicKey ? await loadSignerKey(publicKey) : null;
 
     provider = await PrivyAlchemyEvmProviderAdapter.create({
       walletAddress: walletAddress as `0x${string}`,
