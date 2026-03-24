@@ -1,5 +1,5 @@
 import { ApiClient } from "./client.js";
-import { outputError } from "../output.js";
+import { getToken } from "../config.js";
 
 export interface AddSignerResponse {
   message: string;
@@ -53,16 +53,11 @@ interface AddQuorumResponse {
   data: string; // keyQuorumId
 }
 
-export function getAgentApi(json: boolean): AgentApi | null {
-  const apiUrl = process.env.ACP_API_URL;
-  const token = process.env.ACP_TOKEN;
-  if (!apiUrl) {
-    outputError(json, "ACP_API_URL is not set. Run `acp configure` first.");
-    return null;
-  }
+export function getAgentApi(): AgentApi {
+  const apiUrl = process.env.ACP_API_URL || "https://acp.virtuals.io";
+  const token = getToken();
   if (!token) {
-    outputError(json, "ACP_TOKEN is not set. Run `acp configure` first.");
-    return null;
+    throw new Error("ACP_TOKEN is not set. Run `acp configure` first.");
   }
   return new AgentApi(apiUrl, token);
 }
@@ -107,15 +102,6 @@ export class AgentApi {
     return this.client.post(`/agents/${agentId}/signer`, {
       walletId,
       keyQuorumId,
-    });
-  }
-
-  async testSigner(
-    agentId: string,
-    authorizationSignature: string
-  ): Promise<{ message: string; data: string }> {
-    return this.client.post(`/agents/${agentId}/signer/test`, {
-      authorizationSignature,
     });
   }
 }

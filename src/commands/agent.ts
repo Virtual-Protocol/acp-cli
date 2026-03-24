@@ -55,6 +55,9 @@ async function runAddSignerFlow(
     return;
   }
 
+  // 4. Add public key to config.json
+  setPublicKey(agent.walletAddress, publicKey);
+
   if (json) {
     outputResult(json, {
       agentId: agent.id,
@@ -72,13 +75,13 @@ async function runAddSignerFlow(
 export function registerAgentCommands(program: Command): void {
   const agent = program.command("agent").description("Manage ACP agents");
 
+  const agentApi: AgentApi = getAgentApi();
+
   agent
     .command("create")
     .description("Create a new agent")
     .action(async (_opts, cmd) => {
       const json = isJson(cmd);
-      const api = getAgentApi(json);
-      if (!api) return;
 
       const rl = readline.createInterface({
         input: process.stdin,
@@ -106,7 +109,7 @@ export function registerAgentCommands(program: Command): void {
 
       let created: Agent;
       try {
-        created = await api.create(name, description);
+        created = await agentApi.create(name, description);
       } catch (err) {
         outputError(
           json,
@@ -158,7 +161,7 @@ export function registerAgentCommands(program: Command): void {
       }
 
       if (addSigner === "y" || addSigner === "yes") {
-        await runAddSignerFlow(api, json, created);
+        await runAddSignerFlow(agentApi, json, created);
       }
     });
 
@@ -169,14 +172,12 @@ export function registerAgentCommands(program: Command): void {
     .option("--page-size <number>", "Number of agents per page")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
-      const api = getAgentApi(json);
-      if (!api) return;
 
       const page = opts.page ? parseInt(opts.page, 10) : undefined;
       const pageSize = opts.pageSize ? parseInt(opts.pageSize, 10) : undefined;
 
       try {
-        const result = await api.list(page, pageSize);
+        const result = await agentApi.list(page, pageSize);
         const { data, meta } = result;
 
         if (json) {
@@ -216,19 +217,11 @@ export function registerAgentCommands(program: Command): void {
     .description("Add a new signer to an agent")
     .action(async (_opts, cmd) => {
       const json = isJson(cmd);
-      const api = getAgentApi(json);
-      if (!api) return;
-
-      const privyAppId = process.env.ACP_PRIVY_APP_ID;
-      if (!privyAppId) {
-        outputError(json, "ACP_PRIVY_APP_ID is not set.");
-        return;
-      }
 
       // 1. Fetch agent list for selection
       let agents: Agent[];
       try {
-        const result = await api.list();
+        const result = await agentApi.list();
         agents = result.data;
       } catch (err) {
         outputError(
@@ -270,7 +263,7 @@ export function registerAgentCommands(program: Command): void {
       // 4. Register public key as quorum
       let keyQuorumId: string;
       try {
-        const quorumRes = await api.addQuorum(selected.id, publicKey);
+        const quorumRes = await agentApi.addQuorum(selected.id, publicKey);
         keyQuorumId = quorumRes.data;
       } catch (err) {
         outputError(
@@ -284,9 +277,9 @@ export function registerAgentCommands(program: Command): void {
 
       const walletId = selected.walletProviders[0].metadata.walletId;
 
-      // 6. Register signer on the agent
+      // 5. Register signer on the agent
       try {
-        await api.addSigner(selected.id, walletId, keyQuorumId);
+        await agentApi.addSigner(selected.id, walletId, keyQuorumId);
       } catch (err) {
         outputError(
           json,

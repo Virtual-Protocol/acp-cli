@@ -4,8 +4,10 @@ import {
   AlchemyEvmProviderAdapter,
   PrivyAlchemyEvmProviderAdapter,
 } from "acp-node-v2";
+import { getPublicKey } from "./config";
+import { getAgentApi } from "./api/agent";
 
-function requireEnv(name: string): string {
+export function requireEnv(name: string): string {
   const val = process.env[name];
   if (!val) {
     throw new Error(`Missing required environment variable: ${name}`);
@@ -26,6 +28,29 @@ const BASE_SEPOLIA_CHAIN = {
   testnet: true,
 } as const;
 
+const agentApi = getAgentApi();
+
+export async function getWalletIdByAddress(
+  walletAddress: string
+): Promise<string> {
+  const agentList = await agentApi.list();
+  const agent = agentList.data.find(
+    (agent) => agent.walletAddress === walletAddress
+  );
+
+  if (!agent) {
+    throw new Error(`Agent not found for wallet address: ${walletAddress}`);
+  }
+
+  const walletId = agent.walletProviders[0].metadata.walletId;
+
+  if (!walletId) {
+    throw new Error(`Wallet ID not found for wallet address: ${walletAddress}`);
+  }
+
+  return walletId;
+}
+
 export async function createAgentFromEnv(): Promise<AcpAgent> {
   const providerType = process.env.ACP_PROVIDER_TYPE ?? "privy";
   const walletAddress = requireEnv("ACP_WALLET_ADDRESS");
@@ -35,11 +60,16 @@ export async function createAgentFromEnv(): Promise<AcpAgent> {
     process.env.ACP_CONTRACT_ADDRESS ?? ACP_CONTRACT_ADDRESS;
 
   let provider;
+
   if (providerType === "privy") {
+    const publicKey = getPublicKey(walletAddress);
+    const walletId = await getWalletIdByAddress(walletAddress);
     provider = await PrivyAlchemyEvmProviderAdapter.create({
       walletAddress: walletAddress as `0x${string}`,
-      walletId: requireEnv("ACP_WALLET_ID"),
-      signerPrivateKey: requireEnv("ACP_SIGNER_PRIVATE_KEY"),
+      walletId,
+      ...(publicKey
+        ? { signerPublicKey: publicKey }
+        : { signerPrivateKey: requireEnv("ACP_SIGNER_PRIVATE_KEY") }),
     });
   } else {
     provider = await AlchemyEvmProviderAdapter.create({
