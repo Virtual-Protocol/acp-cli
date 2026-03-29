@@ -8,7 +8,7 @@ interface CliUrlResponse {
 }
 
 interface CliTokenResponse {
-  data: { token: string };
+  data: { token: string; refreshToken: string };
 }
 
 interface AuthTokenResponse {
@@ -29,12 +29,29 @@ export class AuthApi {
     return res.data;
   }
 
-  async pollCliToken(requestId: string): Promise<string | null> {
+  async pollCliToken(
+    requestId: string
+  ): Promise<{ token: string; refreshToken: string } | null> {
     try {
       const res = await this.client.get<CliTokenResponse>("/auth/cli/token", {
         requestId,
       });
-      return res.data.token ?? null;
+      if (!res.data.token) return null;
+      return { token: res.data.token, refreshToken: res.data.refreshToken };
+    } catch {
+      return null;
+    }
+  }
+
+  async refreshCliToken(
+    refreshToken: string
+  ): Promise<{ token: string; refreshToken: string } | null> {
+    try {
+      const res = await this.client.post<CliTokenResponse>(
+        "/auth/cli/refresh",
+        { refreshToken }
+      );
+      return { token: res.data.token, refreshToken: res.data.refreshToken };
     } catch {
       return null;
     }

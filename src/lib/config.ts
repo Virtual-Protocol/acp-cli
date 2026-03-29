@@ -11,6 +11,7 @@ interface AgentConfig {
 
 interface Config {
   acp_token?: string;
+  acp_refresh_token?: string;
   activeWallet?: string;
   agents?: Record<string, AgentConfig>;
 }
@@ -39,6 +40,17 @@ export function setupEnv(): void {
 export function setToken(token: string): void {
   const config = loadConfig();
   config.acp_token = token;
+  saveConfig(config);
+}
+
+export function getRefreshToken(): string | undefined {
+  return loadConfig().acp_refresh_token;
+}
+
+export function setTokens(accessToken: string, refreshToken: string): void {
+  const config = loadConfig();
+  config.acp_token = accessToken;
+  config.acp_refresh_token = refreshToken;
   saveConfig(config);
 }
 
@@ -93,7 +105,8 @@ export function isTokenExpired(token: string): boolean {
     const payload = JSON.parse(
       Buffer.from(token.split(".")[1], "base64url").toString()
     );
-    return typeof payload.exp === "number" && payload.exp * 1000 < Date.now();
+    const bufferMs = 5 * 60 * 1000;
+    return typeof payload.exp === "number" && payload.exp * 1000 < Date.now() + bufferMs;
   } catch {
     return true;
   }

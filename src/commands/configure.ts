@@ -3,7 +3,7 @@ import type { Command } from "commander";
 import { isJson, outputResult, outputError } from "../lib/output";
 import { AuthApi } from "../lib/api/auth";
 import { ApiClient } from "../lib/api/client";
-import { setToken } from "../lib/config";
+import { setTokens } from "../lib/config";
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -22,12 +22,12 @@ function openBrowser(url: string): void {
 async function waitForToken(
   authApi: AuthApi,
   requestId: string
-): Promise<string | null> {
+): Promise<{ token: string; refreshToken: string } | null> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-    const token = await authApi.pollCliToken(requestId);
-    if (token) return token;
+    const result = await authApi.pollCliToken(requestId);
+    if (result) return result;
   }
   return null;
 }
@@ -69,8 +69,8 @@ export function registerConfigureCommand(program: Command): void {
 
       if (!json) console.log("Waiting for authentication...");
 
-      const token = await waitForToken(authApi, requestId);
-      if (!token) {
+      const result = await waitForToken(authApi, requestId);
+      if (!result) {
         outputError(
           json,
           "Authentication timed out. Please run `acp configure` again."
@@ -78,7 +78,7 @@ export function registerConfigureCommand(program: Command): void {
         return;
       }
 
-      setToken(token);
+      setTokens(result.token, result.refreshToken);
 
       if (json) {
         outputResult(json, {

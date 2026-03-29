@@ -1,4 +1,10 @@
-import { getAgentToken, getToken, isTokenExpired } from "../config";
+import {
+  getAgentToken,
+  getRefreshToken,
+  getToken,
+  isTokenExpired,
+  setTokens,
+} from "../config";
 import { AuthApi } from "./auth";
 import { AgentApi } from "./agent";
 import { JobApi } from "./job";
@@ -48,7 +54,24 @@ async function resolveToken(
   if (!token) {
     throw new Error("ACP_TOKEN is not set. Run `acp configure` first.");
   }
-  return token;
+
+  if (!isTokenExpired(token)) {
+    return token;
+  }
+
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    throw new Error("Session expired. Run `acp configure` to re-authenticate.");
+  }
+
+  const authApi = new AuthApi(new ApiClient(apiUrl));
+  const result = await authApi.refreshCliToken(refreshToken);
+  if (!result) {
+    throw new Error("Session expired. Run `acp configure` to re-authenticate.");
+  }
+
+  setTokens(result.token, result.refreshToken);
+  return result.token;
 }
 
 export async function getClient(walletAddress?: string): Promise<{

@@ -3,7 +3,6 @@ import {
   ACP_CONTRACT_ADDRESSES,
   PrivyAlchemyEvmProviderAdapter,
   SocketTransport,
-  SOCKET_SERVER_URL,
 } from "acp-node-v2";
 import {
   getActiveWallet,
@@ -77,9 +76,7 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
   return AcpAgent.create({
     contractAddresses: ACP_CONTRACT_ADDRESSES,
     provider,
-    transport: new SocketTransport({
-      serverUrl: process.env.ACP_SOCKET_SERVER_URL ?? SOCKET_SERVER_URL,
-    }),
+    transport: new SocketTransport(),
   });
 }
 
@@ -91,8 +88,4 @@ export function getWalletAddress(): string {
     );
   }
   return addr;
-}
-
-export function getSocketUrl(): string {
-  return process.env.ACP_SOCKET_SERVER_URL ?? SOCKET_SERVER_URL;
 }
