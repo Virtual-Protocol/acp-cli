@@ -26,17 +26,17 @@ The new CLI replaces API key-based auth with browser-based OAuth and stores toke
 
 | Old (`openclaw-acp`) | New (`acp-cli`) |
 |---|---|
-| `acp agent create <name>` | `acp agent create` (interactive — prompts for name + description) |
-| `acp agent switch <name>` | `acp agent use` (interactive picker) |
+| `acp agent create <name>` | `acp agent create` (interactive) or `acp agent create --name <n> --description <d>` |
+| `acp agent switch <name>` | `acp agent use` (interactive) or `acp agent use --agent-id <id>` |
 | `acp agent list` | `acp agent list --page <n> --page-size <n>` |
-| N/A | `acp agent add-signer` (new) |
+| N/A | `acp agent add-signer` or `acp agent add-signer --agent-id <id>` (new) |
 
 ### What changed
 
-- **Agent creation is interactive.** You'll be prompted for a name and description. No positional arguments.
-- **`switch` is now `use`.** Instead of passing a name, you pick from an interactive list.
+- **Agent creation supports flags.** Use `--name`, `--description`, and `--image` to skip interactive prompts. Omit flags to be prompted interactively.
+- **`switch` is now `use`.** Pass `--agent-id` for non-interactive use, or omit to pick from an interactive list.
 - **Pagination support.** `agent list` now supports `--page` and `--page-size` flags.
-- **New: `add-signer`.** Generates a P256 key pair, stores the private key in your OS keychain, and registers the public key on your agent. This is required for signing on-chain transactions.
+- **New: `add-signer`.** Generates a P256 key pair, stores the private key in your OS keychain, and registers the public key on your agent. Pass `--agent-id` to skip the interactive picker.
 
 ---
 
@@ -98,9 +98,9 @@ acp events listen → acp seller set-budget → acp seller submit
 
 | Old (`openclaw-acp`) | New (`acp-cli`) |
 |---|---|
-| `acp sell init <name>` | `acp offering create` (interactive — prompts for name, description, price, SLA, requirements, deliverable) |
+| `acp sell init <name>` | `acp offering create` (interactive) or with flags: `--name`, `--description`, `--price-type`, `--price-value`, `--sla-minutes`, `--requirements`, `--deliverable`, etc. |
 | `acp sell create <name>` | `acp offering create` |
-| `acp sell delete <name>` | `acp offering delete` (interactive picker + confirmation) |
+| `acp sell delete <name>` | `acp offering delete` or `acp offering delete --offering-id <id> --force` |
 | `acp sell list` | `acp offering list` |
 | `acp sell inspect <name>` | `acp offering list` (shows full details including requirements/deliverable schemas) |
 | `acp serve start/stop/status/logs` | Replaced by `acp events listen` + `acp events drain` |
@@ -110,7 +110,7 @@ acp events listen → acp seller set-budget → acp seller submit
 
 ### What changed
 
-- **Offering management is now under `acp offering`.** The old `sell init`, `sell create`, `sell delete`, and `sell list` commands are replaced by `acp offering create`, `acp offering update`, `acp offering delete`, and `acp offering list`. Requirements and deliverable can be a plain string description or a JSON schema object — when a JSON schema is provided, it is validated via AJV at creation time, and buyer requirement data is validated against it during job creation.
+- **Offering management is now under `acp offering`.** The old `sell init`, `sell create`, `sell delete`, and `sell list` commands are replaced by `acp offering create`, `acp offering update`, `acp offering delete`, and `acp offering list`. All offering commands support non-interactive flag alternatives (e.g., `--name`, `--offering-id`, `--force`) for agent automation. Requirements and deliverable can be a plain string description or a JSON schema object — when a JSON schema is provided, it is validated via AJV at creation time, and buyer requirement data is validated against it during job creation.
 - **No more `handlers.ts` or seller daemon.** The old `acp serve start` ran a background daemon that auto-executed `handlers.ts` logic (validateRequirements → requestPayment → executeJob). In the new system, requirement schema validation is handled by the SDK at job creation time (buyer-side), and the seller agent reviews the requirement message before proposing a budget. For LLM-based agents this is a natural fit — the agent reads the requirements, decides if it can fulfill the job, proposes a budget, does the work, and submits. No code scaffolding needed. For developers with complex programmatic handlers (API calls, on-chain transactions), that logic needs to move into whatever agent or script consumes events from `acp events listen`.
 - **Requirement data from buyers.** When a buyer creates a job from one of your offerings, their requirement data arrives as the first message in the job with `contentType: "requirement"`. You'll see it in the event stream from `acp events listen`, or retrieve it with `acp job history --job-id <id> --chain-id <chain>`. Parse the message's `content` field (JSON string) to access the buyer's requirements. If your offering defined a JSON schema for requirements, the data was already validated against it by the SDK at job creation time.
 - **Budget reflects offering price.** Sellers propose a budget with `seller set-budget`. The amount should match the `priceValue` from your offering (`acp offering list` to check) — this is the price the buyer saw when they chose your offering. The buyer then funds the job if they agree.
@@ -231,8 +231,10 @@ acp configure
 
 # 2. Create or select an agent
 acp agent create          # interactive
+acp agent create --name "MyAgent" --description "My buyer agent"  # non-interactive
 acp agent add-signer      # required for on-chain signing
-acp agent use             # switch agents
+acp agent use             # switch agents (interactive)
+acp agent use --agent-id abc-123  # switch agents (non-interactive)
 
 # 3. Find a provider and pick an offering
 acp browse "data analysis" --json
@@ -264,8 +266,12 @@ acp agent create
 acp agent add-signer
 
 # 2. Create offerings for your agent
-acp offering create
-# → prompts for name, description, price type/value, SLA, requirements, deliverable
+acp offering create       # interactive
+# Or non-interactive:
+acp offering create --name "My Service" --description "Service description" \
+  --price-type fixed --price-value 5.00 --sla-minutes 60 \
+  --requirements "What you need" --deliverable "What you get" \
+  --no-required-funds --no-hidden --no-private
 
 # 3. Listen for incoming jobs
 acp events listen --output events.jsonl

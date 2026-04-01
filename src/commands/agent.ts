@@ -27,6 +27,51 @@ import { storeSignerKey } from "../lib/signerKeychain";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { EvmAcpClient, SUPPORTED_CHAINS } from "acp-node-v2";
 
+async function resolveAgent(
+  agentApi: AgentApi,
+  opts: { walletAddress?: string; agentId?: string },
+  json: boolean
+): Promise<Agent | null> {
+  if (opts.agentId) {
+    try {
+      return await agentApi.getById(opts.agentId);
+    } catch (err) {
+      outputError(
+        json,
+        `Failed to fetch agent: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      process.exit(1);
+    }
+  }
+  if (opts.walletAddress) {
+    try {
+      const result = await agentApi.list();
+      const match = result.data.find(
+        (a) => a.walletAddress === opts.walletAddress
+      );
+      if (!match) {
+        outputError(
+          json,
+          `No agent found with wallet address: ${opts.walletAddress}`
+        );
+        process.exit(1);
+      }
+      return match;
+    } catch (err) {
+      outputError(
+        json,
+        `Failed to fetch agents: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      process.exit(1);
+    }
+  }
+  return null;
+}
+
 async function runAddSignerFlow(
   api: AgentApi,
   json: boolean,
@@ -101,40 +146,56 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("create")
     .description("Create a new agent")
-    .action(async (_opts, cmd) => {
+    .option("--name <name>", "Agent name")
+    .option("--description <text>", "Agent description")
+    .option("--image <url>", "Agent image URL")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
+      let name: string = opts.name?.trim() ?? "";
+      let description: string = opts.description?.trim() ?? "";
+      let image: string | undefined = opts.image?.trim() || undefined;
 
-      let name: string;
-      let description: string;
-      let image: string | undefined;
+      const needsPrompt = !name || !description || (image === undefined && !opts.image);
+      let rl: readline.Interface | undefined;
 
       try {
-        name = (await prompt(rl, "Agent name: ")).trim();
+        if (needsPrompt) {
+          rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+        }
+
         if (!name) {
-          outputError(json, "Agent name cannot be empty.");
-          return;
+          name = (await prompt(rl!, "Agent name: ")).trim();
+          if (!name) {
+            outputError(json, "Agent name cannot be empty.");
+            return;
+          }
         }
 
-        description = (await prompt(rl, "Agent description: ")).trim();
         if (!description) {
-          outputError(json, "Agent description cannot be empty.");
-          return;
+          description = (await prompt(rl!, "Agent description: ")).trim();
+          if (!description) {
+            outputError(json, "Agent description cannot be empty.");
+            return;
+          }
         }
 
-        const imageInput = (
-          await prompt(rl, "Agent image URL (optional, press Enter to skip): ")
-        ).trim();
-        if (imageInput) {
-          image = imageInput;
+        if (image === undefined && !opts.image) {
+          if (rl) {
+            const imageInput = (
+              await prompt(rl, "Agent image URL (optional, press Enter to skip): ")
+            ).trim();
+            if (imageInput) {
+              image = imageInput;
+            }
+          }
         }
       } finally {
-        rl.close();
+        rl?.close();
       }
 
       let created: Agent;
@@ -232,33 +293,38 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("use")
     .description("Set the active agent for all commands")
-    .action(async (_opts, cmd) => {
+    .option("--agent-id <id>", "Agent ID")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
-      let agents: Agent[];
-      try {
-        const result = await agentApi.list();
-        agents = result.data;
-      } catch (err) {
-        outputError(
-          json,
-          `Failed to fetch agents: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+      let selected = await resolveAgent(agentApi, opts, json);
+
+      if (!selected) {
+        let agents: Agent[];
+        try {
+          const result = await agentApi.list();
+          agents = result.data;
+        } catch (err) {
+          outputError(
+            json,
+            `Failed to fetch agents: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+          return;
+        }
+
+        if (agents.length === 0) {
+          outputError(json, "No agents found. Run `acp agent create` first.");
+          return;
+        }
+
+        selected = await selectFromList(
+          "Choose the agent to set as active:",
+          agents
         );
-        return;
       }
-
-      if (agents.length === 0) {
-        outputError(json, "No agents found. Run `acp agent create` first.");
-        return;
-      }
-
-      const selected = await selectFromList(
-        "Choose the agent to set as active:",
-        agents
-      );
 
       setActiveWallet(selected.walletAddress);
       setAgentId(selected.walletAddress, selected.id);
@@ -273,33 +339,39 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("add-signer")
     .description("Add a new signer to an agent")
-    .action(async (_opts, cmd) => {
+    .option("--agent-id <id>", "Agent ID")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
-      let agents: Agent[];
-      try {
-        const result = await agentApi.list();
-        agents = result.data;
-      } catch (err) {
-        outputError(
-          json,
-          `Failed to fetch agents: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+      let selected = await resolveAgent(agentApi, opts, json);
+
+      if (!selected) {
+        let agents: Agent[];
+        try {
+          const result = await agentApi.list();
+          agents = result.data;
+        } catch (err) {
+          outputError(
+            json,
+            `Failed to fetch agents: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+          return;
+        }
+
+        if (agents.length === 0) {
+          outputError(json, "No agents found.");
+          return;
+        }
+
+        selected = await selectFromList(
+          "Choose the agent you wish to add a new signer:",
+          agents
         );
-        return;
       }
 
-      if (agents.length === 0) {
-        outputError(json, "No agents found.");
-        return;
-      }
-
-      const selected = await selectFromList(
-        "Choose the agent you wish to add a new signer:",
-        agents
-      );
       console.log(`\nSelected: ${selected.name} ${selected.walletAddress}`);
 
       await runAddSignerFlow(agentApi, json, selected);
@@ -397,41 +469,64 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("tokenize")
     .description("Tokenize an agent on a blockchain")
-    .action(async (_opts, cmd) => {
+    .option("--wallet-address <address>", "Agent wallet address")
+    .option("--agent-id <id>", "Agent ID")
+    .option("--chain-id <id>", "Chain ID to tokenize on")
+    .option("--symbol <symbol>", "Token symbol")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
       // Step 1: Select agent
-      let agents: Agent[];
-      try {
-        const result = await agentApi.list();
-        agents = result.data;
-      } catch (err) {
-        outputError(
-          json,
-          `Failed to fetch agents: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+      let selected = await resolveAgent(agentApi, opts, json);
+
+      if (!selected) {
+        let agents: Agent[];
+        try {
+          const result = await agentApi.list();
+          agents = result.data;
+        } catch (err) {
+          outputError(
+            json,
+            `Failed to fetch agents: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+          return;
+        }
+
+        if (agents.length === 0) {
+          outputError(json, "No agents found. Run `acp agent create` first.");
+          return;
+        }
+
+        selected = await selectFromList(
+          "Choose the agent to tokenize:",
+          agents
         );
-        return;
       }
-
-      if (agents.length === 0) {
-        outputError(json, "No agents found. Run `acp agent create` first.");
-        return;
-      }
-
-      const selected = await selectFromList(
-        "Choose the agent to tokenize:",
-        agents
-      );
 
       // Step 2: Select chain
-      const selectedChain = await selectOption(
-        "\nChoose a chain to tokenize on:",
-        SUPPORTED_CHAINS,
-        (chain) => chain.name
-      );
+      let selectedChain: (typeof SUPPORTED_CHAINS)[number];
+      if (opts.chainId) {
+        const match = SUPPORTED_CHAINS.find(
+          (c) => c.id.toString() === opts.chainId
+        );
+        if (!match) {
+          outputError(
+            json,
+            `Unsupported chain ID: ${opts.chainId}. Supported: ${SUPPORTED_CHAINS.map((c) => `${c.name} (${c.id})`).join(", ")}`
+          );
+          return;
+        }
+        selectedChain = match;
+      } else {
+        selectedChain = await selectOption(
+          "\nChoose a chain to tokenize on:",
+          SUPPORTED_CHAINS,
+          (chain) => chain.name
+        );
+      }
 
       // Check tokenize status
       let tokenizeDetails: TokenizeStatusResponse;
@@ -456,22 +551,30 @@ export function registerAgentCommands(program: Command): void {
       }
 
       // Step 3: Input token symbol
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-
       let symbol: string;
-      try {
-        symbol = (await prompt(rl, "\nEnter token symbol: "))
-          .trim()
-          .toUpperCase();
+      if (opts.symbol) {
+        symbol = opts.symbol.trim().toUpperCase();
         if (!symbol) {
           outputError(json, "Token symbol cannot be empty.");
           return;
         }
-      } finally {
-        rl.close();
+      } else {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+
+        try {
+          symbol = (await prompt(rl, "\nEnter token symbol: "))
+            .trim()
+            .toUpperCase();
+          if (!symbol) {
+            outputError(json, "Token symbol cannot be empty.");
+            return;
+          }
+        } finally {
+          rl.close();
+        }
       }
 
       // Step 4: Pay if not already paid

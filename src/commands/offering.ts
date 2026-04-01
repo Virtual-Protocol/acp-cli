@@ -49,6 +49,24 @@ function validateJsonSchema(input: string): Record<string, unknown> {
   return parsed;
 }
 
+function parseSchemaOrString(
+  value: string,
+  fieldName: string
+): Record<string, unknown> | string {
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return validateJsonSchema(value);
+    }
+  } catch {
+    // Not valid JSON — treat as string description
+  }
+  if (!value.trim()) {
+    throw new Error(`${fieldName} cannot be empty.`);
+  }
+  return value;
+}
+
 async function promptSchemaField(
   rl: readline.Interface,
   fieldName: string
@@ -146,91 +164,185 @@ export function registerOfferingCommands(program: Command): void {
   offering
     .command("create")
     .description("Create a new offering for the active agent")
-    .action(async (_opts, cmd) => {
+    .option("--name <name>", "Offering name")
+    .option("--description <text>", "Description")
+    .option("--price-type <type>", "Price type: fixed or percentage")
+    .option("--price-value <value>", "Price value")
+    .option("--sla-minutes <minutes>", "SLA in minutes")
+    .option("--requirements <value>", "Requirements (string or JSON schema)")
+    .option("--deliverable <value>", "Deliverable (string or JSON schema)")
+    .option("--required-funds", "Require funds")
+    .option("--no-required-funds", "Do not require funds")
+    .option("--hidden", "Hidden offering")
+    .option("--no-hidden", "Visible offering")
+    .option("--private", "Private offering")
+    .option("--no-private", "Public offering")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
       const agentId = getActiveAgentId(json);
       if (!agentId) return;
 
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
+      const needsPrompt =
+        !opts.name ||
+        !opts.description ||
+        !opts.priceType ||
+        !opts.priceValue ||
+        !opts.slaMinutes ||
+        !opts.requirements ||
+        !opts.deliverable ||
+        opts.requiredFunds === undefined ||
+        opts.hidden === undefined ||
+        opts.private === undefined;
+
+      let rl: readline.Interface | undefined;
 
       try {
-        const name = (await prompt(rl, "Offering name (3-20 chars): ")).trim();
-        if (!name) {
-          outputError(json, "Name cannot be empty.");
-          return;
+        if (needsPrompt) {
+          rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
         }
 
-        const description = (
-          await prompt(rl, "Description (10-500 chars): ")
-        ).trim();
-        if (!description) {
-          outputError(json, "Description cannot be empty.");
-          return;
+        // Name
+        let name: string;
+        if (opts.name) {
+          name = opts.name.trim();
+          if (!name) { outputError(json, "Name cannot be empty."); return; }
+        } else {
+          name = (await prompt(rl!, "Offering name (3-20 chars): ")).trim();
+          if (!name) { outputError(json, "Name cannot be empty."); return; }
         }
 
-        const priceType = await selectOption(
-          "Price type:",
-          ["fixed", "percentage"] as const,
-          (t) => t
-        );
-
-        const priceValueStr = (await prompt(rl, "Price value: ")).trim();
-        const priceValue = parseFloat(priceValueStr);
-        if (isNaN(priceValue) || priceValue <= 0) {
-          outputError(json, "Price value must be a positive number.");
-          return;
+        // Description
+        let description: string;
+        if (opts.description) {
+          description = opts.description.trim();
+          if (!description) { outputError(json, "Description cannot be empty."); return; }
+        } else {
+          description = (await prompt(rl!, "Description (10-500 chars): ")).trim();
+          if (!description) { outputError(json, "Description cannot be empty."); return; }
         }
 
-        const slaStr = (
-          await prompt(rl, "SLA in minutes (min 5): ")
-        ).trim();
-        const slaMinutes = parseInt(slaStr, 10);
-        if (isNaN(slaMinutes) || slaMinutes < 5) {
-          outputError(json, "SLA must be at least 5 minutes.");
-          return;
+        // Price type
+        let priceType: "fixed" | "percentage";
+        if (opts.priceType) {
+          const pt = opts.priceType.trim().toLowerCase();
+          if (pt !== "fixed" && pt !== "percentage") {
+            outputError(json, "Price type must be 'fixed' or 'percentage'.");
+            return;
+          }
+          priceType = pt;
+        } else {
+          priceType = await selectOption(
+            "Price type:",
+            ["fixed", "percentage"] as const,
+            (t) => t
+          );
         }
 
+        // Price value
+        let priceValue: number;
+        if (opts.priceValue) {
+          priceValue = parseFloat(opts.priceValue);
+          if (isNaN(priceValue) || priceValue <= 0) {
+            outputError(json, "Price value must be a positive number.");
+            return;
+          }
+        } else {
+          const priceValueStr = (await prompt(rl!, "Price value: ")).trim();
+          priceValue = parseFloat(priceValueStr);
+          if (isNaN(priceValue) || priceValue <= 0) {
+            outputError(json, "Price value must be a positive number.");
+            return;
+          }
+        }
+
+        // SLA minutes
+        let slaMinutes: number;
+        if (opts.slaMinutes) {
+          slaMinutes = parseInt(opts.slaMinutes, 10);
+          if (isNaN(slaMinutes) || slaMinutes < 5) {
+            outputError(json, "SLA must be at least 5 minutes.");
+            return;
+          }
+        } else {
+          const slaStr = (await prompt(rl!, "SLA in minutes (min 5): ")).trim();
+          slaMinutes = parseInt(slaStr, 10);
+          if (isNaN(slaMinutes) || slaMinutes < 5) {
+            outputError(json, "SLA must be at least 5 minutes.");
+            return;
+          }
+        }
+
+        // Requirements
         let requirements: Record<string, unknown> | string;
-        try {
-          requirements = await promptSchemaField(rl, "Requirements");
-        } catch (err) {
-          outputError(
-            json,
-            err instanceof Error ? err.message : String(err)
-          );
-          return;
+        if (opts.requirements) {
+          try {
+            requirements = parseSchemaOrString(opts.requirements, "Requirements");
+          } catch (err) {
+            outputError(json, err instanceof Error ? err.message : String(err));
+            return;
+          }
+        } else {
+          try {
+            requirements = await promptSchemaField(rl!, "Requirements");
+          } catch (err) {
+            outputError(json, err instanceof Error ? err.message : String(err));
+            return;
+          }
         }
 
+        // Deliverable
         let deliverable: Record<string, unknown> | string;
-        try {
-          deliverable = await promptSchemaField(rl, "Deliverable");
-        } catch (err) {
-          outputError(
-            json,
-            err instanceof Error ? err.message : String(err)
-          );
-          return;
+        if (opts.deliverable) {
+          try {
+            deliverable = parseSchemaOrString(opts.deliverable, "Deliverable");
+          } catch (err) {
+            outputError(json, err instanceof Error ? err.message : String(err));
+            return;
+          }
+        } else {
+          try {
+            deliverable = await promptSchemaField(rl!, "Deliverable");
+          } catch (err) {
+            outputError(json, err instanceof Error ? err.message : String(err));
+            return;
+          }
         }
 
-        const requiredFundsStr = (
-          await prompt(rl, "Required funds? (y/N): ")
-        ).trim().toLowerCase();
-        const requiredFunds = requiredFundsStr === "y";
+        // Booleans
+        let requiredFunds: boolean;
+        if (opts.requiredFunds !== undefined) {
+          requiredFunds = opts.requiredFunds;
+        } else {
+          const requiredFundsStr = (
+            await prompt(rl!, "Required funds? (y/N): ")
+          ).trim().toLowerCase();
+          requiredFunds = requiredFundsStr === "y";
+        }
 
-        const isHiddenStr = (
-          await prompt(rl, "Hidden? (y/N): ")
-        ).trim().toLowerCase();
-        const isHidden = isHiddenStr === "y";
+        let isHidden: boolean;
+        if (opts.hidden !== undefined) {
+          isHidden = opts.hidden;
+        } else {
+          const isHiddenStr = (
+            await prompt(rl!, "Hidden? (y/N): ")
+          ).trim().toLowerCase();
+          isHidden = isHiddenStr === "y";
+        }
 
-        const isPrivateStr = (
-          await prompt(rl, "Private? (y/N): ")
-        ).trim().toLowerCase();
-        const isPrivate = isPrivateStr === "y";
+        let isPrivate: boolean;
+        if (opts.private !== undefined) {
+          isPrivate = opts.private;
+        } else {
+          const isPrivateStr = (
+            await prompt(rl!, "Private? (y/N): ")
+          ).trim().toLowerCase();
+          isPrivate = isPrivateStr === "y";
+        }
 
         const body: CreateOfferingBody = {
           name,
@@ -262,7 +374,7 @@ export function registerOfferingCommands(program: Command): void {
           }`
         );
       } finally {
-        rl.close();
+        rl?.close();
       }
     });
 
@@ -270,7 +382,21 @@ export function registerOfferingCommands(program: Command): void {
   offering
     .command("update")
     .description("Update an existing offering for the active agent")
-    .action(async (_opts, cmd) => {
+    .option("--offering-id <id>", "Offering ID to update")
+    .option("--name <name>", "New name")
+    .option("--description <text>", "New description")
+    .option("--price-type <type>", "New price type: fixed or percentage")
+    .option("--price-value <value>", "New price value")
+    .option("--sla-minutes <minutes>", "New SLA in minutes")
+    .option("--requirements <value>", "New requirements (string or JSON schema)")
+    .option("--deliverable <value>", "New deliverable (string or JSON schema)")
+    .option("--required-funds", "Set required funds to true")
+    .option("--no-required-funds", "Set required funds to false")
+    .option("--hidden", "Set hidden to true")
+    .option("--no-hidden", "Set hidden to false")
+    .option("--private", "Set private to true")
+    .option("--no-private", "Set private to false")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
@@ -296,137 +422,220 @@ export function registerOfferingCommands(program: Command): void {
         return;
       }
 
-      const selected = await selectOption(
-        "Choose an offering to update:",
-        offerings,
-        (o) => `${o.name} — ${o.priceValue} (${o.priceType})`
-      );
+      let selected: AgentOffering;
+      if (opts.offeringId) {
+        const match = offerings.find((o) => o.id === opts.offeringId);
+        if (!match) {
+          outputError(json, `No offering found with ID: ${opts.offeringId}`);
+          return;
+        }
+        selected = match;
+      } else {
+        selected = await selectOption(
+          "Choose an offering to update:",
+          offerings,
+          (o) => `${o.name} — ${o.priceValue} (${o.priceType})`
+        );
+      }
 
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
+      // If --offering-id is provided, build updates from flags only (non-interactive)
+      const nonInteractive = !!opts.offeringId;
+
+      let rl: readline.Interface | undefined;
 
       try {
-        console.log("\nPress Enter to keep current value.\n");
+        if (!nonInteractive) {
+          rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+          console.log("\nPress Enter to keep current value.\n");
+        }
 
         const updates: UpdateOfferingBody = {};
 
-        const name = (
-          await prompt(rl, `Name [${selected.name}]: `)
-        ).trim();
-        if (name) updates.name = name;
+        // Name
+        if (opts.name) {
+          updates.name = opts.name.trim();
+        } else if (!nonInteractive) {
+          const name = (await prompt(rl!, `Name [${selected.name}]: `)).trim();
+          if (name) updates.name = name;
+        }
 
-        const description = (
-          await prompt(rl, `Description [${selected.description}]: `)
-        ).trim();
-        if (description) updates.description = description;
+        // Description
+        if (opts.description) {
+          updates.description = opts.description.trim();
+        } else if (!nonInteractive) {
+          const description = (
+            await prompt(rl!, `Description [${selected.description}]: `)
+          ).trim();
+          if (description) updates.description = description;
+        }
 
-        const priceValueStr = (
-          await prompt(rl, `Price value [${selected.priceValue}]: `)
-        ).trim();
-        if (priceValueStr) {
-          const pv = parseFloat(priceValueStr);
+        // Price value
+        if (opts.priceValue) {
+          const pv = parseFloat(opts.priceValue);
           if (isNaN(pv) || pv <= 0) {
             outputError(json, "Price value must be a positive number.");
             return;
           }
           updates.priceValue = pv;
+        } else if (!nonInteractive) {
+          const priceValueStr = (
+            await prompt(rl!, `Price value [${selected.priceValue}]: `)
+          ).trim();
+          if (priceValueStr) {
+            const pv = parseFloat(priceValueStr);
+            if (isNaN(pv) || pv <= 0) {
+              outputError(json, "Price value must be a positive number.");
+              return;
+            }
+            updates.priceValue = pv;
+          }
         }
 
-        const priceTypeStr = (
-          await prompt(rl, `Price type [${selected.priceType}] (fixed/percentage): `)
-        ).trim().toLowerCase();
-        if (priceTypeStr) {
-          if (priceTypeStr !== "fixed" && priceTypeStr !== "percentage") {
+        // Price type
+        if (opts.priceType) {
+          const pt = opts.priceType.trim().toLowerCase();
+          if (pt !== "fixed" && pt !== "percentage") {
             outputError(json, "Price type must be 'fixed' or 'percentage'.");
             return;
           }
-          updates.priceType = priceTypeStr;
+          updates.priceType = pt;
+        } else if (!nonInteractive) {
+          const priceTypeStr = (
+            await prompt(rl!, `Price type [${selected.priceType}] (fixed/percentage): `)
+          ).trim().toLowerCase();
+          if (priceTypeStr) {
+            if (priceTypeStr !== "fixed" && priceTypeStr !== "percentage") {
+              outputError(json, "Price type must be 'fixed' or 'percentage'.");
+              return;
+            }
+            updates.priceType = priceTypeStr;
+          }
         }
 
-        const slaStr = (
-          await prompt(rl, `SLA minutes [${selected.slaMinutes}]: `)
-        ).trim();
-        if (slaStr) {
-          const sla = parseInt(slaStr, 10);
+        // SLA minutes
+        if (opts.slaMinutes) {
+          const sla = parseInt(opts.slaMinutes, 10);
           if (isNaN(sla) || sla < 5) {
             outputError(json, "SLA must be at least 5 minutes.");
             return;
           }
           updates.slaMinutes = sla;
-        }
-
-        const currentReqDisplay =
-          typeof selected.requirements === "object"
-            ? JSON.stringify(selected.requirements)
-            : selected.requirements;
-        const updateReq = (
-          await prompt(
-            rl,
-            `Update requirements? Current: ${currentReqDisplay} (y/N): `
-          )
-        ).trim().toLowerCase();
-        if (updateReq === "y") {
-          try {
-            updates.requirements = await promptSchemaField(rl, "Requirements");
-          } catch (err) {
-            outputError(
-              json,
-              err instanceof Error ? err.message : String(err)
-            );
-            return;
+        } else if (!nonInteractive) {
+          const slaStr = (
+            await prompt(rl!, `SLA minutes [${selected.slaMinutes}]: `)
+          ).trim();
+          if (slaStr) {
+            const sla = parseInt(slaStr, 10);
+            if (isNaN(sla) || sla < 5) {
+              outputError(json, "SLA must be at least 5 minutes.");
+              return;
+            }
+            updates.slaMinutes = sla;
           }
         }
 
-        const currentDelDisplay =
-          typeof selected.deliverable === "object"
-            ? JSON.stringify(selected.deliverable)
-            : selected.deliverable;
-        const updateDel = (
-          await prompt(
-            rl,
-            `Update deliverable? Current: ${currentDelDisplay} (y/N): `
-          )
-        ).trim().toLowerCase();
-        if (updateDel === "y") {
+        // Requirements
+        if (opts.requirements) {
           try {
-            updates.deliverable = await promptSchemaField(rl, "Deliverable");
+            updates.requirements = parseSchemaOrString(opts.requirements, "Requirements");
           } catch (err) {
-            outputError(
-              json,
-              err instanceof Error ? err.message : String(err)
-            );
+            outputError(json, err instanceof Error ? err.message : String(err));
             return;
+          }
+        } else if (!nonInteractive) {
+          const currentReqDisplay =
+            typeof selected.requirements === "object"
+              ? JSON.stringify(selected.requirements)
+              : selected.requirements;
+          const updateReq = (
+            await prompt(
+              rl!,
+              `Update requirements? Current: ${currentReqDisplay} (y/N): `
+            )
+          ).trim().toLowerCase();
+          if (updateReq === "y") {
+            try {
+              updates.requirements = await promptSchemaField(rl!, "Requirements");
+            } catch (err) {
+              outputError(json, err instanceof Error ? err.message : String(err));
+              return;
+            }
           }
         }
 
-        const reqFundsStr = (
-          await prompt(
-            rl,
-            `Required funds [${selected.requiredFunds ? "Yes" : "No"}] (y/n): `
-          )
-        ).trim().toLowerCase();
-        if (reqFundsStr === "y") updates.requiredFunds = true;
-        else if (reqFundsStr === "n") updates.requiredFunds = false;
+        // Deliverable
+        if (opts.deliverable) {
+          try {
+            updates.deliverable = parseSchemaOrString(opts.deliverable, "Deliverable");
+          } catch (err) {
+            outputError(json, err instanceof Error ? err.message : String(err));
+            return;
+          }
+        } else if (!nonInteractive) {
+          const currentDelDisplay =
+            typeof selected.deliverable === "object"
+              ? JSON.stringify(selected.deliverable)
+              : selected.deliverable;
+          const updateDel = (
+            await prompt(
+              rl!,
+              `Update deliverable? Current: ${currentDelDisplay} (y/N): `
+            )
+          ).trim().toLowerCase();
+          if (updateDel === "y") {
+            try {
+              updates.deliverable = await promptSchemaField(rl!, "Deliverable");
+            } catch (err) {
+              outputError(json, err instanceof Error ? err.message : String(err));
+              return;
+            }
+          }
+        }
 
-        const hiddenStr = (
-          await prompt(
-            rl,
-            `Hidden [${selected.isHidden ? "Yes" : "No"}] (y/n): `
-          )
-        ).trim().toLowerCase();
-        if (hiddenStr === "y") updates.isHidden = true;
-        else if (hiddenStr === "n") updates.isHidden = false;
+        // Required funds
+        if (opts.requiredFunds !== undefined) {
+          updates.requiredFunds = opts.requiredFunds;
+        } else if (!nonInteractive) {
+          const reqFundsStr = (
+            await prompt(
+              rl!,
+              `Required funds [${selected.requiredFunds ? "Yes" : "No"}] (y/n): `
+            )
+          ).trim().toLowerCase();
+          if (reqFundsStr === "y") updates.requiredFunds = true;
+          else if (reqFundsStr === "n") updates.requiredFunds = false;
+        }
 
-        const privateStr = (
-          await prompt(
-            rl,
-            `Private [${selected.isPrivate ? "Yes" : "No"}] (y/n): `
-          )
-        ).trim().toLowerCase();
-        if (privateStr === "y") updates.isPrivate = true;
-        else if (privateStr === "n") updates.isPrivate = false;
+        // Hidden
+        if (opts.hidden !== undefined) {
+          updates.isHidden = opts.hidden;
+        } else if (!nonInteractive) {
+          const hiddenStr = (
+            await prompt(
+              rl!,
+              `Hidden [${selected.isHidden ? "Yes" : "No"}] (y/n): `
+            )
+          ).trim().toLowerCase();
+          if (hiddenStr === "y") updates.isHidden = true;
+          else if (hiddenStr === "n") updates.isHidden = false;
+        }
+
+        // Private
+        if (opts.private !== undefined) {
+          updates.isPrivate = opts.private;
+        } else if (!nonInteractive) {
+          const privateStr = (
+            await prompt(
+              rl!,
+              `Private [${selected.isPrivate ? "Yes" : "No"}] (y/n): `
+            )
+          ).trim().toLowerCase();
+          if (privateStr === "y") updates.isPrivate = true;
+          else if (privateStr === "n") updates.isPrivate = false;
+        }
 
         if (Object.keys(updates).length === 0) {
           console.log("No changes made.");
@@ -454,7 +663,7 @@ export function registerOfferingCommands(program: Command): void {
           }`
         );
       } finally {
-        rl.close();
+        rl?.close();
       }
     });
 
@@ -462,7 +671,9 @@ export function registerOfferingCommands(program: Command): void {
   offering
     .command("delete")
     .description("Delete an offering from the active agent")
-    .action(async (_opts, cmd) => {
+    .option("--offering-id <id>", "Offering ID to delete")
+    .option("--force", "Skip confirmation prompt")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
@@ -488,27 +699,43 @@ export function registerOfferingCommands(program: Command): void {
         return;
       }
 
-      const selected = await selectOption(
-        "Choose an offering to delete:",
-        offerings,
-        (o) => `${o.name} — ${o.priceValue} (${o.priceType})`
-      );
-
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-
-      try {
-        const confirm = (
-          await prompt(rl, `Delete offering '${selected.name}'? (y/N): `)
-        ).trim().toLowerCase();
-
-        if (confirm !== "y") {
-          console.log("Cancelled.");
+      let selected: AgentOffering;
+      if (opts.offeringId) {
+        const match = offerings.find((o) => o.id === opts.offeringId);
+        if (!match) {
+          outputError(json, `No offering found with ID: ${opts.offeringId}`);
           return;
         }
+        selected = match;
+      } else {
+        selected = await selectOption(
+          "Choose an offering to delete:",
+          offerings,
+          (o) => `${o.name} — ${o.priceValue} (${o.priceType})`
+        );
+      }
 
+      if (!opts.force) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+
+        try {
+          const confirm = (
+            await prompt(rl, `Delete offering '${selected.name}'? (y/N): `)
+          ).trim().toLowerCase();
+
+          if (confirm !== "y") {
+            console.log("Cancelled.");
+            return;
+          }
+        } finally {
+          rl.close();
+        }
+      }
+
+      try {
         await agentApi.deleteOffering(agentId, selected.id);
 
         if (json) {
@@ -526,8 +753,6 @@ export function registerOfferingCommands(program: Command): void {
             err instanceof Error ? err.message : String(err)
           }`
         );
-      } finally {
-        rl.close();
       }
     });
 }

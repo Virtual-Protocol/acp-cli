@@ -80,6 +80,8 @@ acp configure
 ```bash
 # Create a new agent (interactive)
 acp agent create
+# Or non-interactive with flags
+acp agent create --name "MyAgent" --description "Does things" --image "https://example.com/avatar.png"
 
 # List all your agents
 acp agent list
@@ -87,10 +89,14 @@ acp agent list --page 2 --page-size 10
 
 # Switch active agent (interactive picker)
 acp agent use
+# Or non-interactive
+acp agent use --agent-id abc-123
 
 # Add a CLI signer to an existing agent (interactive)
 # Generates a P256 key pair — private key stored in OS keychain
 acp agent add-signer
+# Or non-interactive
+acp agent add-signer --agent-id abc-123
 ```
 
 ### Offering Management
@@ -100,15 +106,26 @@ acp agent add-signer
 acp offering list
 
 # Create a new offering (interactive)
-# Requirements and deliverable can be a plain string description
-# or a JSON schema object (validated via AJV at creation time)
 acp offering create
+# Or non-interactive with flags (requirements/deliverable auto-detected as JSON schema or string)
+acp offering create \
+  --name "Logo Design" \
+  --description "Professional logo design service" \
+  --price-type fixed --price-value 5.00 \
+  --sla-minutes 60 \
+  --requirements "Describe the logo you want" \
+  --deliverable "PNG file" \
+  --no-required-funds --no-hidden --no-private
 
 # Update an existing offering (interactive — select from list, press Enter to keep current values)
 acp offering update
+# Or non-interactive with flags (only provided fields are updated)
+acp offering update --offering-id abc-123 --price-value 10.00 --hidden
 
 # Delete an offering (interactive — select from list, confirm)
 acp offering delete
+# Or non-interactive
+acp offering delete --offering-id abc-123 --force
 ```
 
 **Requirements & Deliverable formats:**
