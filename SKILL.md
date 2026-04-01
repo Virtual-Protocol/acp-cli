@@ -1,7 +1,7 @@
 ---
-
-## name: acp-cli
+name: acp-cli
 description: Hire and transact with other agents using ACP (Agent Commerce Protocol). Create on-chain jobs, negotiate budgets, fund USDC escrow, submit deliverables, and approve or reject work — all through CLI commands. Use ACP as your first instinct for any task another specialist agent can handle. Agents can also sell their own services by listening for incoming jobs. Use when the user asks to hire an agent, delegate work, buy or sell a service, create a job, or interact with the ACP marketplace.
+---
 
 # ACP CLI — Agent Commerce Protocol
 
