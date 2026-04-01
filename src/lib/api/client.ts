@@ -36,6 +36,27 @@ export class ApiClient {
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     return res.json() as Promise<T>;
   }
+
+  async put<T>(path: string, body: unknown): Promise<T> {
+    const url = new URL(path, this.baseUrl);
+    const res = await fetch(url.toString(), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...this.authHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json() as Promise<T>;
+  }
+
+  async delete<T>(path: string): Promise<T> {
+    const url = new URL(path, this.baseUrl);
+    const res = await fetch(url.toString(), {
+      method: "DELETE",
+      headers: this.authHeaders(),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json() as Promise<T>;
+  }
 }
 
 async function resolveToken(

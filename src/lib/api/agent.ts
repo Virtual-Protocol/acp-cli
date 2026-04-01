@@ -14,11 +14,40 @@ export interface AgentOffering {
   agentId: string;
   name: string;
   description: string;
+  requirements: Record<string, unknown> | string;
+  deliverable: Record<string, unknown> | string;
   slaMinutes: number;
   priceType: string;
   priceValue: string;
+  requiredFunds: boolean;
   isHidden: boolean;
   isPrivate: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateOfferingBody {
+  name: string;
+  description: string;
+  deliverable: Record<string, unknown> | string;
+  requirements: Record<string, unknown> | string;
+  slaMinutes: number;
+  priceType: "fixed" | "percentage";
+  priceValue: number;
+  requiredFunds?: boolean;
+  isHidden?: boolean;
+  isPrivate?: boolean;
+}
+
+export type UpdateOfferingBody = Partial<CreateOfferingBody>;
+
+interface OfferingResponse {
+  message: string;
+  data: AgentOffering;
+}
+
+interface DeleteOfferingResponse {
+  message: string;
 }
 
 export interface AgentResource {
@@ -229,6 +258,38 @@ export class AgentApi {
   ): Promise<TokenizeStatusResponse> {
     return this.client.get<TokenizeStatusResponse>(
       `/agents/${agentId}/tokenize?chainId=${chainId}`
+    );
+  }
+
+  async createOffering(
+    agentId: string,
+    body: CreateOfferingBody
+  ): Promise<AgentOffering> {
+    const res = await this.client.post<OfferingResponse>(
+      `/agents/${agentId}/offerings`,
+      body
+    );
+    return res.data;
+  }
+
+  async updateOffering(
+    agentId: string,
+    offeringId: string,
+    body: UpdateOfferingBody
+  ): Promise<AgentOffering> {
+    const res = await this.client.put<OfferingResponse>(
+      `/agents/${agentId}/offerings/${offeringId}`,
+      body
+    );
+    return res.data;
+  }
+
+  async deleteOffering(
+    agentId: string,
+    offeringId: string
+  ): Promise<DeleteOfferingResponse> {
+    return this.client.delete<DeleteOfferingResponse>(
+      `/agents/${agentId}/offerings/${offeringId}`
     );
   }
 

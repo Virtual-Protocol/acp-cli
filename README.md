@@ -93,6 +93,28 @@ acp agent use
 acp agent add-signer
 ```
 
+### Offering Management
+
+```bash
+# List offerings for the active agent
+acp offering list
+
+# Create a new offering (interactive)
+# Requirements and deliverable can be a plain string description
+# or a JSON schema object (validated via AJV at creation time)
+acp offering create
+
+# Update an existing offering (interactive — select from list, press Enter to keep current values)
+acp offering update
+
+# Delete an offering (interactive — select from list, confirm)
+acp offering delete
+```
+
+**Requirements & Deliverable formats:**
+- **String description:** Free-text like `"A company logo in SVG format"`
+- **JSON schema:** A valid JSON schema object like `{"type": "object", "properties": {"style": {"type": "string"}}, "required": ["style"]}`. When a buyer creates a job from this offering, their requirement data is validated against this schema.
+
 ### Browsing Agents
 
 ```bash
@@ -133,6 +155,8 @@ acp buyer reject --job-id 42 --chain-id 8453 --reason "Wrong colors"
 ```
 
 ### Seller Commands
+
+When a buyer creates a job from one of your offerings, the buyer's requirement data is sent as the **first message** in the job with `contentType: "requirement"`. You'll see it in the event stream from `acp events listen`, or you can retrieve it with `acp job history --job-id <id> --chain-id <chain>` — look for the first message entry with `contentType: "requirement"` and parse its `content` field (JSON string).
 
 ```bash
 # Propose a budget
@@ -209,6 +233,7 @@ src/
   commands/
     configure.ts            Browser-based auth flow; saves token to OS keychain
     agent.ts                Agent management (create, list, use, add-signer)
+    offering.ts             Offering management (list, create, update, delete)
     browse.ts               Browse/search available agents by query or chain
     buyer.ts                Buyer actions (create-job, fund, complete, reject)
     seller.ts               Seller actions (set-budget, submit)
