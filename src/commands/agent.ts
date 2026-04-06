@@ -91,24 +91,13 @@ async function runAddSignerFlow(
     return;
   }
 
-  // // 2. Register public key as quorum
-  // let keyQuorumId: string;
-  // try {
-  //   const quorumRes = await api.addQuorum(agent.id, publicKey);
-  //   keyQuorumId = quorumRes.data;
-  // } catch (err) {
-  //   outputError(
-  //     json,
-  //     `Failed to add quorum: ${
-  //       err instanceof Error ? err.message : String(err)
-  //     }`
-  //   );
-  //   return;
-  // }
-
-  // 3. Register signer on the agent
+  // 2. Get add signer URL
+  let signerUrl: string;
+  let requestId: string;
   try {
-    const res = await api.addSigner(agent.id);
+    const res = await api.addSignerWithUrl(agent.id);
+    signerUrl = `${res.data.url}&publicKey=${keypair.publicKey}`;
+    requestId = res.data.requestId;
   } catch (err) {
     outputError(
       json,
@@ -119,24 +108,68 @@ async function runAddSignerFlow(
     return;
   }
 
+  // 3. Present the URL and public key for the user to verify and approve
+  if (json) {
+    outputResult(json, {
+      signerUrl,
+      publicKey: keypair.publicKey,
+      expiresIn: "5 minutes",
+    });
+  } else {
+    console.log(`\nPublic Key: ${keypair.publicKey}`);
+    console.log(
+      `\nPlease visit the following URL to verify the public key and approve the signer:`
+    );
+    console.log(`\n  ${signerUrl}\n`);
+    console.log(`This link expires in 5 minutes.\n`);
+    console.log(`Waiting for approval...`);
+  }
+
+  // 3b. Poll signer status until completed or timeout (5 minutes)
+  const POLL_INTERVAL_MS = 5_000;
+  const TIMEOUT_MS = 5 * 60 * 1_000;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < TIMEOUT_MS) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    try {
+      const statusRes = await api.getSignerStatus(agent.id, requestId);
+
+      if (!statusRes.data.status) {
+        outputError(json, "Signer registration not found. Please try again.");
+        return;
+      }
+
+      if (statusRes.data.status === "completed") {
+        if (!json) {
+          console.log("Signer registration approved.");
+        }
+        break;
+      }
+    } catch {
+      // Ignore transient polling errors and retry
+    }
+
+    if (Date.now() - startTime >= TIMEOUT_MS) {
+      outputError(json, "Signer registration timed out. Please try again.");
+      return;
+    }
+  }
+
   // 4. Persist public key to config and keychain (only after all API calls succeed)
   const walletId = agent.walletProviders[0].metadata.walletId;
   setPublicKey(agent.walletAddress, keypair.publicKey);
   setWalletId(agent.walletAddress, walletId);
   await storeSignerKey(keypair.publicKey, keypair.privateKey);
 
-  // if (json) {
-  //   outputResult(json, {
-  //     agentId: agent.id,
-  //     agentName: agent.name,
-  //     keyQuorumId,
-  //     publicKey,
-  //   });
-  // } else {
-  //   console.log(
-  //     `\nNew signer ${publicKey} added to ${agent.name} successfully!`
-  //   );
-  // }
+  if (json) {
+    outputResult(json, {
+      agentId: agent.id,
+      agentName: agent.name,
+    });
+  } else {
+    console.log(`\nSigner added to ${agent.name} successfully!`);
+  }
 }
 
 export function registerAgentCommands(program: Command): void {

@@ -23,7 +23,7 @@ Both are discoverable via `acp browse`.
 
 ## Setup
 
-Authentication is handled by `acp configure`, which opens a browser-based OAuth flow and stores tokens in the OS keychain. Agent wallets and signing keys are managed via `acp agent create` and `acp agent add-signer` — no manual key configuration needed.
+Authentication is handled by `acp configure`, which opens a browser-based OAuth flow and stores tokens in the OS keychain. Agent wallets and signing keys are managed via `acp agent create` and `acp agent add-signer`. The `add-signer` command generates a P256 key pair, displays the public key for verification, opens a browser URL for approval, and polls until the signer is confirmed — private keys are only persisted after approval.
 
 All environment variables are optional. The CLI works out of the box after `acp configure`.
 
@@ -475,7 +475,7 @@ Browse supports filtering and sorting:
 | `agent create`     | Create a new agent                       | --             | `--name`, `--description`, `--image`    |
 | `agent list`       | List all agents                          | --             | `--page`, `--page-size`                 |
 | `agent use`        | Set the active agent for all commands    | --             | `--agent-id`                            |
-| `agent add-signer` | Add a new signer to an agent             | --             | `--agent-id`                            |
+| `agent add-signer` | Add a new signer (generates key, shows public key & approval URL, polls for confirmation) | --             | `--agent-id`                            |
 | `agent whoami`     | Show details of the currently active agent | --           | --                                      |
 | `agent tokenize`   | Tokenize an agent on a blockchain        | --             | `--wallet-address`, `--agent-id`, `--chain-id`, `--symbol` |
 

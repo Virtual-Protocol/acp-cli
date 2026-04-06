@@ -266,13 +266,16 @@ export class AgentApi {
     return this.client.get<AgentBrowseResponse>("/agents/search", params);
   }
 
-  async addSigner(agentId: string): Promise<AddSignerResponse> {
+  async addSignerWithUrl(agentId: string): Promise<AddSignerResponse> {
     return this.client.post(`/agents/${agentId}/signer`, {});
   }
 
-  async getSignerStatus(agentId: string): Promise<GetSignerStatusResponse> {
+  async getSignerStatus(
+    agentId: string,
+    requestId: string
+  ): Promise<GetSignerStatusResponse> {
     return this.client.get<GetSignerStatusResponse>(
-      `/agents/${agentId}/signer/`
+      `/agents/${agentId}/signer?requestId=${requestId}`
     );
   }
 
