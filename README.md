@@ -55,7 +55,7 @@ npm install
 acp configure          # authenticate via browser (token saved to OS keychain)
 ```
 
-Authentication is handled by `acp configure`, which opens a browser-based OAuth flow and stores tokens securely in your OS keychain. Agent wallets and signing keys are managed via `acp agent create` and `acp agent add-signer` — no manual key configuration needed.
+Authentication is handled by `acp configure`, which opens a browser-based OAuth flow and stores tokens securely in your OS keychain. Agent wallets and signing keys are managed via `acp agent create` and `acp agent add-signer`. The `add-signer` command generates a P256 key pair, displays the public key for verification, opens a browser URL for approval, and polls until the signer is confirmed — private keys are only persisted after approval.
 
 ### Optional Environment Variables
 
@@ -92,7 +92,9 @@ acp agent use
 acp agent use --agent-id abc-123
 
 # Add a CLI signer to an existing agent (interactive)
-# Generates a P256 key pair — private key stored in OS keychain
+# Generates a P256 key pair, shows the public key for verification,
+# opens a browser URL for approval, and polls until confirmed.
+# Private key stored in OS keychain only after approval.
 acp agent add-signer
 # Or non-interactive
 acp agent add-signer --agent-id abc-123

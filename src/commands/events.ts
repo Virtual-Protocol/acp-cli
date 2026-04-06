@@ -11,11 +11,13 @@ import {
 import {
   createAgentFromConfig,
   createV1BuyerAdapter,
+  getWalletAddress,
 } from "../lib/agentFactory";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { V1BuyerAdapter } from "../lib/compat/v1BuyerAdapter";
 import { AcpJobPhases, AcpJob, AcpMemo } from "@virtuals-protocol/acp-node";
 import { FundIntent } from "acp-node-v2/dist/events/types";
+import { CliError } from "../lib/errors";
 
 function phaseToEventType(phase: AcpJobPhases): string {
   switch (phase) {
@@ -59,6 +61,7 @@ export function registerEventsCommand(program: Command): void {
         "Each line is a lightweight event. Use `acp job status` for full context."
     )
     .option("--job-id <id>", "Filter events to a specific job ID")
+    .option("--events <types>", "Comma-separated event types to include (e.g. job.created,budget.set,job.funded)")
     .option("--output <path>", "Append events to a file instead of stdout")
     .action(async (opts) => {
       try {
@@ -68,9 +71,20 @@ export function registerEventsCommand(program: Command): void {
           ? (line: string) => appendFileSync(opts.output, line + "\n")
           : (line: string) => process.stdout.write(line + "\n");
 
-        // V2 event listener (SSE)
+        const allowedEvents: Set<string> | undefined = opts.events
+          ? new Set(opts.events.split(",").map((s: string) => s.trim()))
+          : undefined;
+
+
         agent.on("entry", async (session: JobSession, entry: JobRoomEntry) => {
           if (opts.jobId && session.jobId !== opts.jobId) return;
+
+          if (allowedEvents) {
+            const entryAny = entry as Record<string, unknown>;
+            const event = entryAny.event as Record<string, unknown> | undefined;
+            const eventType = event?.type as string | undefined;
+            if (!eventType || !allowedEvents.has(eventType)) return;
+          }
 
           const line = JSON.stringify({
             jobId: session.jobId,
@@ -86,8 +100,6 @@ export function registerEventsCommand(program: Command): void {
 
         await agent.start();
 
-        // V1 Socket.IO listener via old AcpClient's onNewTask — always connect
-        // so we catch v1 events even for jobs created after the listener starts.
         try {
           const v1Adapter = await createV1BuyerAdapter(undefined, {
             onNewTask: async (job: AcpJob, memoToSign?: AcpMemo) => {
@@ -163,26 +175,6 @@ export function registerEventsCommand(program: Command): void {
                   timestamp: Date.now(),
                 },
               });
-
-              console.log("v1 event", {
-                kind: "system",
-                onChainJobId: jobId,
-                chainId: v1Adapter.chainId,
-                entry: {
-                  kind: "system",
-                  onChainJobId: jobId,
-                  chainId: v1Adapter.chainId,
-                  event: {
-                    type: eventType,
-                    jobId,
-                    budget,
-                    ...(fundTransfer ? { fundTransfer } : {}),
-                    ...(fundRequest ? { fundRequest } : {}),
-                    ...(deliverable ? { deliverable } : {}),
-                  },
-                  timestamp: Date.now(),
-                },
-              });
               write(line);
             },
           });
@@ -196,6 +188,16 @@ export function registerEventsCommand(program: Command): void {
           );
         }
 
+        const wallet = getWalletAddress();
+        process.stderr.write(`Listening for events... connected.\n`);
+        process.stderr.write(`Agent: ${maskAddress(wallet)}\n`);
+        if (opts.output) {
+          process.stderr.write(`Writing to: ${opts.output}\n`);
+        }
+        if (allowedEvents) {
+          process.stderr.write(`Filtering: ${[...allowedEvents].join(", ")}\n`);
+        }
+
         const shutdown = async () => {
           await agent.stop();
           process.exit(0);
@@ -204,7 +206,12 @@ export function registerEventsCommand(program: Command): void {
         process.on("SIGTERM", shutdown);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(JSON.stringify({ error: msg }) + "\n");
+        const payload: Record<string, string> = { error: msg };
+        if (err instanceof CliError) {
+          payload.code = err.code;
+          if (err.recovery) payload.recovery = err.recovery;
+        }
+        process.stderr.write(JSON.stringify(payload) + "\n");
         process.exit(1);
       }
     });
@@ -270,7 +277,7 @@ export function registerEventsCommand(program: Command): void {
 
         outputResult(json, { events, remaining: remaining.length });
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 }

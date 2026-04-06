@@ -1,13 +1,14 @@
 import type { Command } from "commander";
-import { isJson, outputResult, outputError } from "../lib/output";
-import { getWalletAddress, createV1BuyerAdapter } from "../lib/agentFactory";
+import type { JobSession, JobRoomEntry } from "acp-node-v2";
+import { isJson, outputResult, outputError, isTTY } from "../lib/output";
+import { getWalletAddress, createAgentFromConfig, createV1BuyerAdapter } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { formatUnits } from "viem";
 import { getJobRegistryEntry, getV1Jobs } from "../lib/config";
 import { V1BuyerAdapter } from "../lib/compat/v1BuyerAdapter";
 
 export function registerJobCommands(program: Command): void {
-  const job = program.command("job").description("Job queries (history, list)");
+  const job = program.command("job").description("Job queries and monitoring");
 
   job
     .command("list")
@@ -53,7 +54,7 @@ export function registerJobCommands(program: Command): void {
         } else {
           if (allJobs.length === 0) {
             console.log("No active jobs.");
-          } else {
+          } else if (isTTY()) {
             console.log(`Active jobs (${allJobs.length}):\n`);
             for (const j of allJobs) {
               console.log(
@@ -79,10 +80,20 @@ export function registerJobCommands(program: Command): void {
               }
               console.log();
             }
+          } else {
+            console.log("JOB_ID\tCHAIN\tCLIENT\tPROVIDER\tBUDGET\tSTATUS\tPROTOCOL");
+            for (const j of allJobs) {
+              const budget = j.protocol === "v2"
+                ? formatUnits(BigInt(j.budget), 6)
+                : j.budget;
+              console.log(
+                `${j.onChainJobId}\t${j.chainId}\t${j.clientAddress}\t${j.providerAddress}\t${budget}\t${j.jobStatus}\t${j.protocol}`
+              );
+            }
           }
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 
@@ -155,7 +166,7 @@ export function registerJobCommands(program: Command): void {
             entryCount: entries.length,
             entries,
           });
-        } else {
+        } else if (isTTY()) {
           console.log(`Job ${opts.jobId} (chain ${opts.chainId}) [v2]`);
           console.log(`Status: ${status}`);
           console.log(`Entries: ${entries.length}\n`);
@@ -166,9 +177,113 @@ export function registerJobCommands(program: Command): void {
               console.log(`  [${e.from}] ${e.content}`);
             }
           }
+        } else {
+          console.log(`${opts.jobId}\t${status}\t${entries.length}`);
+          for (const e of entries) {
+            if (e.kind === "system") {
+              console.log(`system\t${e.event.type}`);
+            } else {
+              console.log(`${e.from}\t${e.content}`);
+            }
+          }
         }
       } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  job
+    .command("watch")
+    .description(
+      "Block until the job needs your action, then print the event and exit. " +
+        "This is a blocking command — use it as a background process or subagent task."
+    )
+    .requiredOption("--job-id <id>", "On-chain job ID")
+    .option("--timeout <seconds>", "Timeout in seconds (default: no timeout)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const agent = await createAgentFromConfig();
+
+        const jobId: string = opts.jobId;
+        const timeoutSec: number | undefined = opts.timeout
+          ? Number(opts.timeout)
+          : undefined;
+
+        let settled = false;
+
+        const done = (exitCode: number, data?: Record<string, unknown>) => {
+          if (settled) return;
+          settled = true;
+          if (data) {
+            if (json) {
+              process.stdout.write(JSON.stringify(data) + "\n");
+            } else {
+              const status = data.status as string;
+              const tools = data.availableTools as string[];
+              if (tools && tools.length > 0) {
+                console.log(`\nJob #${jobId} needs your action`);
+                console.log(`  Status: ${status}`);
+                console.log(`  Available: ${tools.join(", ")}`);
+              } else {
+                console.log(`\nJob #${jobId} reached terminal state: ${status}`);
+              }
+            }
+          }
+          agent.stop().then(() => process.exit(exitCode));
+        };
+
+        agent.on("entry", async (session: JobSession, _entry: JobRoomEntry) => {
+          if (session.jobId !== jobId) return;
+
+          const status = session.status;
+          const tools = session.availableTools().map((t) => t.name);
+          const actionable = tools.filter((t) => t !== "wait");
+
+          const eventData = {
+            jobId: session.jobId,
+            chainId: session.chainId,
+            status,
+            roles: session.roles,
+            availableTools: tools,
+            entry: _entry,
+          };
+
+          // Terminal states
+          if (status === "completed") return done(1, eventData);
+          if (status === "rejected") return done(2, eventData);
+          if (status === "expired") return done(3, eventData);
+
+          // Actionable — agent has something to do
+          if (actionable.length > 0) return done(0, eventData);
+        });
+
+        // Timeout handler
+        if (timeoutSec) {
+          setTimeout(() => {
+            if (!settled) {
+              outputError(json, `Timed out after ${timeoutSec}s waiting for job ${jobId}`);
+              agent.stop().then(() => process.exit(4));
+            }
+          }, timeoutSec * 1000);
+        }
+
+        await agent.start();
+
+        process.stderr.write(`Watching job ${jobId}...\n`);
+
+        const shutdown = async () => {
+          if (!settled) {
+            settled = true;
+            await agent.stop();
+            process.exit(0);
+          }
+        };
+        process.on("SIGINT", shutdown);
+        process.on("SIGTERM", shutdown);
+      } catch (err) {
         outputError(json, err instanceof Error ? err.message : String(err));
+        process.exit(4);
       }
     });
 }

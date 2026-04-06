@@ -17,7 +17,11 @@ program
   .name("acp")
   .version("1.0.0")
   .description("ACP CLI — Agent Commerce Protocol tool for buyer/seller agents")
-  .option("--json", "Output results as JSON");
+  .option("--json", "Output results as JSON")
+  .addHelpText(
+    "after",
+    "\nGet started:\n  acp configure → acp agent create → acp agent add-signer → acp browse\n"
+  );
 
 registerBuyerCommands(program);
 registerSellerCommands(program);

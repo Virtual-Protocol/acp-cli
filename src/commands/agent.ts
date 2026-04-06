@@ -1,6 +1,7 @@
 import * as readline from "readline";
 import type { Command } from "commander";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, isTTY } from "../lib/output";
+import { CliError } from "../lib/errors";
 import {
   AgentApi,
   TokenizeResponse,
@@ -22,7 +23,7 @@ import {
   setAgentId,
   getAgentId,
 } from "../lib/config";
-import { generateP256KeyPair } from "@privy-io/node";
+import { generateP256KeyPair, P256KeyPair } from "@privy-io/node";
 import { storeSignerKey } from "../lib/signerKeychain";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { EvmAcpClient, SUPPORTED_CHAINS } from "acp-node-v2";
@@ -39,7 +40,7 @@ async function resolveAgent(
       outputError(
         json,
         `Failed to fetch agent: ${
-          err instanceof Error ? err.message : String(err)
+          err instanceof Error ? err : String(err)
         }`
       );
       process.exit(1);
@@ -63,7 +64,7 @@ async function resolveAgent(
       outputError(
         json,
         `Failed to fetch agents: ${
-          err instanceof Error ? err.message : String(err)
+          err instanceof Error ? err : String(err)
         }`
       );
       process.exit(1);
@@ -78,65 +79,97 @@ async function runAddSignerFlow(
   agent: Agent
 ): Promise<void> {
   // 1. Generate key pair and persist private key to keychain
-  let publicKey: string;
+  let keypair: P256KeyPair;
   try {
-    const keypair = await generateP256KeyPair();
-    publicKey = keypair.publicKey;
-    await storeSignerKey(keypair.publicKey, keypair.privateKey);
+    keypair = await generateP256KeyPair();
   } catch (err) {
     outputError(
       json,
       `Failed to generate key pair: ${
-        err instanceof Error ? err.message : String(err)
+        err instanceof Error ? err : String(err)
       }`
     );
     return;
   }
 
-  // 2. Register public key as quorum
-  let keyQuorumId: string;
+  // 2. Get add signer URL
+  let signerUrl: string;
+  let requestId: string;
   try {
-    const quorumRes = await api.addQuorum(agent.id, publicKey);
-    keyQuorumId = quorumRes.data;
-  } catch (err) {
-    outputError(
-      json,
-      `Failed to add quorum: ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
-    return;
-  }
-
-  // 3. Register signer on the agent
-  const walletId = agent.walletProviders[0].metadata.walletId;
-  try {
-    await api.addSigner(agent.id, walletId, keyQuorumId);
+    const res = await api.addSignerWithUrl(agent.id);
+    signerUrl = `${res.data.url}&publicKey=${keypair.publicKey}`;
+    requestId = res.data.requestId;
   } catch (err) {
     outputError(
       json,
       `Failed to add signer: ${
-        err instanceof Error ? err.message : String(err)
+        err instanceof Error ? err : String(err)
       }`
     );
     return;
   }
 
-  // 4. Persist public key to config (only after all API calls succeed)
-  setPublicKey(agent.walletAddress, publicKey);
+  // 3. Present the URL and public key for the user to verify and approve
+  if (json) {
+    outputResult(json, {
+      signerUrl,
+      publicKey: keypair.publicKey,
+      expiresIn: "5 minutes",
+    });
+  } else {
+    console.log(`\nPublic Key: ${keypair.publicKey}`);
+    console.log(
+      `\nPlease visit the following URL to verify the public key and approve the signer:`
+    );
+    console.log(`\n  ${signerUrl}\n`);
+    console.log(`This link expires in 5 minutes.\n`);
+    console.log(`Waiting for approval...`);
+  }
+
+  // 3b. Poll signer status until completed or timeout (5 minutes)
+  const POLL_INTERVAL_MS = 5_000;
+  const TIMEOUT_MS = 5 * 60 * 1_000;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < TIMEOUT_MS) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    try {
+      const statusRes = await api.getSignerStatus(agent.id, requestId);
+
+      if (!statusRes.data.status) {
+        outputError(json, "Signer registration not found. Please try again.");
+        return;
+      }
+
+      if (statusRes.data.status === "completed") {
+        if (!json) {
+          console.log("Signer registration approved.");
+        }
+        break;
+      }
+    } catch {
+      // Ignore transient polling errors and retry
+    }
+
+    if (Date.now() - startTime >= TIMEOUT_MS) {
+      outputError(json, "Signer registration timed out. Please try again.");
+      return;
+    }
+  }
+
+  // 4. Persist public key to config and keychain (only after all API calls succeed)
+  const walletId = agent.walletProviders[0].metadata.walletId;
+  setPublicKey(agent.walletAddress, keypair.publicKey);
   setWalletId(agent.walletAddress, walletId);
+  await storeSignerKey(keypair.publicKey, keypair.privateKey);
 
   if (json) {
     outputResult(json, {
       agentId: agent.id,
       agentName: agent.name,
-      keyQuorumId,
-      publicKey,
     });
   } else {
-    console.log(
-      `\nNew signer ${publicKey} added to ${agent.name} successfully!`
-    );
+    console.log(`\nSigner added to ${agent.name} successfully!`);
   }
 }
 
@@ -157,7 +190,8 @@ export function registerAgentCommands(program: Command): void {
       let description: string = opts.description?.trim() ?? "";
       let image: string | undefined = opts.image?.trim() || undefined;
 
-      const needsPrompt = !name || !description || (image === undefined && !opts.image);
+      const needsPrompt =
+        !name || !description || (image === undefined && !opts.image);
       let rl: readline.Interface | undefined;
 
       try {
@@ -187,7 +221,10 @@ export function registerAgentCommands(program: Command): void {
         if (image === undefined && !opts.image) {
           if (rl) {
             const imageInput = (
-              await prompt(rl, "Agent image URL (optional, press Enter to skip): ")
+              await prompt(
+                rl,
+                "Agent image URL (optional, press Enter to skip): "
+              )
             ).trim();
             if (imageInput) {
               image = imageInput;
@@ -205,7 +242,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to create agent: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -269,22 +306,31 @@ export function registerAgentCommands(program: Command): void {
 
         for (const a of data) {
           if (a.walletAddress) setAgentId(a.walletAddress, a.id);
-          console.log(`\n  ID:             ${a.id}`);
-          console.log(`  Name:           ${a.name}`);
-          console.log(`  Description:    ${a.description}`);
-          console.log(`  Role:           ${a.role}`);
-          console.log(`  Wallet:         ${a.walletAddress}`);
-          console.log(`  Created:        ${a.createdAt}`);
         }
 
-        console.log(
-          `\nPage ${meta.pagination.page} of ${meta.pagination.pageCount} (${meta.pagination.total} total)`
-        );
+        if (isTTY()) {
+          for (const a of data) {
+            console.log(`\n  ID:             ${a.id}`);
+            console.log(`  Name:           ${a.name}`);
+            console.log(`  Description:    ${a.description}`);
+            console.log(`  Role:           ${a.role}`);
+            console.log(`  Wallet:         ${a.walletAddress}`);
+            console.log(`  Created:        ${a.createdAt}`);
+          }
+          console.log(
+            `\nPage ${meta.pagination.page} of ${meta.pagination.pageCount} (${meta.pagination.total} total)`
+          );
+        } else {
+          console.log("ID\tNAME\tROLE\tWALLET");
+          for (const a of data) {
+            console.log(`${a.id}\t${a.name}\t${a.role}\t${a.walletAddress}`);
+          }
+        }
       } catch (err) {
         outputError(
           json,
           `Failed to list agents: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       }
@@ -309,7 +355,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err.message : String(err)
+              err instanceof Error ? err : String(err)
             }`
           );
           return;
@@ -355,7 +401,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err.message : String(err)
+              err instanceof Error ? err : String(err)
             }`
           );
           return;
@@ -386,16 +432,21 @@ export function registerAgentCommands(program: Command): void {
 
       const activeWallet = getActiveWallet();
       if (!activeWallet) {
-        outputError(json, "No active agent set. Run `acp agent use` first.");
+        outputError(json, new CliError(
+          "No active agent set.",
+          "NO_ACTIVE_AGENT",
+          "Run `acp agent use` to set an active agent."
+        ));
         return;
       }
 
       const agentId = getAgentId(activeWallet);
       if (!agentId) {
-        outputError(
-          json,
-          "Agent ID not found for active wallet. Run `acp agent list` or `acp agent use` to populate it."
-        );
+        outputError(json, new CliError(
+          "Agent ID not found for active wallet.",
+          "NO_ACTIVE_AGENT",
+          "Run `acp agent list` or `acp agent use` to populate it."
+        ));
         return;
       }
 
@@ -406,7 +457,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch agent: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -417,52 +468,56 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      const chainRows: [string, string][] = (agentData.chains ?? []).map(
-        (c, i) => [`Chain ${c.chainId}`, `${c.tokenAddress ?? "Not tokenized"}`]
-      );
+      if (isTTY()) {
+        const chainRows: [string, string][] = (agentData.chains ?? []).map(
+          (c, i) => [`Chain ${c.chainId}`, `${c.tokenAddress ?? "Not tokenized"}`]
+        );
 
-      console.log("\nAgent Details:");
-      printTable([
-        ["ID", agentData.id],
-        ["Name", agentData.name],
-        ["Description", agentData.description],
-        ["Role", agentData.role],
-        ["Wallet Address", agentData.walletAddress ?? "N/A"],
-        ["Hidden", agentData.isHidden ? "Yes" : "No"],
-        ["Image", agentData.imageUrl ?? "N/A"],
-        ["Created", agentData.createdAt],
-        ...chainRows,
-      ]);
+        console.log("\nAgent Details:");
+        printTable([
+          ["ID", agentData.id],
+          ["Name", agentData.name],
+          ["Description", agentData.description],
+          ["Role", agentData.role],
+          ["Wallet Address", agentData.walletAddress ?? "N/A"],
+          ["Hidden", agentData.isHidden ? "Yes" : "No"],
+          ["Image", agentData.imageUrl ?? "N/A"],
+          ["Created", agentData.createdAt],
+          ...chainRows,
+        ]);
 
-      console.log("\nOfferings:");
-      if (agentData.offerings?.length) {
-        for (const o of agentData.offerings) {
-          printTable([
-            ["ID", o.id],
-            ["Name", o.name],
-            ["Description", o.description],
-            ["Price", `${o.priceValue} (${o.priceType})`],
-            ["SLA", `${o.slaMinutes} min`],
-            ["Hidden", o.isHidden ? "Yes" : "No"],
-            ["Private", o.isPrivate ? "Yes" : "No"],
-          ]);
+        console.log("\nOfferings:");
+        if (agentData.offerings?.length) {
+          for (const o of agentData.offerings) {
+            printTable([
+              ["ID", o.id],
+              ["Name", o.name],
+              ["Description", o.description],
+              ["Price", `${o.priceValue} (${o.priceType})`],
+              ["SLA", `${o.slaMinutes} min`],
+              ["Hidden", o.isHidden ? "Yes" : "No"],
+              ["Private", o.isPrivate ? "Yes" : "No"],
+            ]);
+          }
+        } else {
+          console.log("  N/A");
+        }
+
+        console.log("\nResources:");
+        if (agentData.resources?.length) {
+          for (const r of agentData.resources) {
+            printTable([
+              ["ID", r.id],
+              ["Name", r.name],
+              ["Description", r.description],
+              ["URL", r.url],
+            ]);
+          }
+        } else {
+          console.log("  N/A");
         }
       } else {
-        console.log("  N/A");
-      }
-
-      console.log("\nResources:");
-      if (agentData.resources?.length) {
-        for (const r of agentData.resources) {
-          printTable([
-            ["ID", r.id],
-            ["Name", r.name],
-            ["Description", r.description],
-            ["URL", r.url],
-          ]);
-        }
-      } else {
-        console.log("  N/A");
+        console.log(`${agentData.name}\t${agentData.role}\t${agentData.walletAddress ?? "N/A"}\t${agentData.id}`);
       }
     });
 
@@ -489,7 +544,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err.message : String(err)
+              err instanceof Error ? err : String(err)
             }`
           );
           return;
@@ -515,7 +570,11 @@ export function registerAgentCommands(program: Command): void {
         if (!match) {
           outputError(
             json,
-            `Unsupported chain ID: ${opts.chainId}. Supported: ${SUPPORTED_CHAINS.map((c) => `${c.name} (${c.id})`).join(", ")}`
+            `Unsupported chain ID: ${
+              opts.chainId
+            }. Supported: ${SUPPORTED_CHAINS.map(
+              (c) => `${c.name} (${c.id})`
+            ).join(", ")}`
           );
           return;
         }
@@ -539,7 +598,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch tokenize details: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -581,13 +640,13 @@ export function registerAgentCommands(program: Command): void {
       let txHash = "";
 
       if (tokenizeDetails.hasPaid) {
-        console.log("\nPayment already received, skipping transfer.");
+        if (!json) console.log("\nPayment already received, skipping transfer.");
       } else {
         const previousWallet = getActiveWallet();
         setActiveWallet(selected.walletAddress);
 
         try {
-          console.log(`Sending payment for tokenization...`);
+          if (!json) console.log(`Sending payment for tokenization...`);
 
           const acpAgent = await createAgentFromConfig();
           const client = acpAgent.getClient();
@@ -614,7 +673,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to send payment: ${
-              err instanceof Error ? err.message : String(err)
+              err instanceof Error ? err : String(err)
             }`
           );
           return;
@@ -626,7 +685,7 @@ export function registerAgentCommands(program: Command): void {
       // Step 5: Call tokenize API
       let tokenizeResponse: TokenizeResponse;
       try {
-        console.log(`Tokenizing your agent on chain ID ${selectedChain.id}...`);
+        if (!json) console.log(`Tokenizing your agent on chain ID ${selectedChain.id}...`);
 
         tokenizeResponse = await agentApi.tokenize(
           selected.id,
@@ -638,7 +697,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to tokenize agent: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;

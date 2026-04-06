@@ -1,7 +1,7 @@
 import * as readline from "readline";
 import type { Command } from "commander";
-import { isJson, outputResult, outputError } from "../lib/output";
-import type {
+import { isJson, outputResult, outputError, isTTY } from "../lib/output";
+import { CliError } from "../lib/errors";import type {
   AgentResource,
   CreateResourceBody,
   UpdateResourceBody,
@@ -14,15 +14,20 @@ import { validateJsonSchema } from "../lib/validation";
 function getActiveAgentId(json: boolean): string | null {
   const activeWallet = getActiveWallet();
   if (!activeWallet) {
-    outputError(json, "No active agent set. Run `acp agent use` first.");
+    outputError(json, new CliError(
+      "No active agent set.",
+      "NO_ACTIVE_AGENT",
+      "Run `acp agent use` to set an active agent."
+    ));
     return null;
   }
   const agentId = getAgentId(activeWallet);
   if (!agentId) {
-    outputError(
-      json,
-      "Agent ID not found for active wallet. Run `acp agent list` or `acp agent use` to populate it."
-    );
+    outputError(json, new CliError(
+      "Agent ID not found for active wallet.",
+      "NO_ACTIVE_AGENT",
+      "Run `acp agent list` or `acp agent use` to populate it."
+    ));
     return null;
   }
   return agentId;
@@ -69,15 +74,22 @@ export function registerResourceCommands(program: Command): void {
           return;
         }
 
-        for (const r of resources) {
-          printResource(r);
-          console.log();
+        if (isTTY()) {
+          for (const r of resources) {
+            printResource(r);
+            console.log();
+          }
+        } else {
+          console.log("ID\tNAME\tURL\tHIDDEN");
+          for (const r of resources) {
+            console.log(`${r.id}\t${r.name}\t${r.url}\t${r.isHidden ? "yes" : "no"}`);
+          }
         }
       } catch (err) {
         outputError(
           json,
           `Failed to list resources: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       }
@@ -153,7 +165,7 @@ export function registerResourceCommands(program: Command): void {
           try {
             params = validateJsonSchema(opts.params);
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         } else {
@@ -167,7 +179,7 @@ export function registerResourceCommands(program: Command): void {
           try {
             params = validateJsonSchema(paramsStr);
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         }
@@ -204,7 +216,7 @@ export function registerResourceCommands(program: Command): void {
         outputError(
           json,
           `Failed to create resource: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       } finally {
@@ -231,7 +243,7 @@ export function registerResourceCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch resources: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -287,7 +299,7 @@ export function registerResourceCommands(program: Command): void {
           try {
             updates.params = validateJsonSchema(paramsStr);
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         }
@@ -323,7 +335,7 @@ export function registerResourceCommands(program: Command): void {
         outputError(
           json,
           `Failed to update resource: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       } finally {
@@ -350,7 +362,7 @@ export function registerResourceCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch resources: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -396,7 +408,7 @@ export function registerResourceCommands(program: Command): void {
         outputError(
           json,
           `Failed to delete resource: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       } finally {

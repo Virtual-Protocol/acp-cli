@@ -1,6 +1,7 @@
 import { exec } from "child_process";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError } from "../lib/output";
+import { CliError } from "../lib/errors";
 import { AuthApi } from "../lib/api/auth";
 import { ApiClient } from "../lib/api/client";
 import { setTokens } from "../lib/config";
@@ -49,7 +50,7 @@ export function registerConfigureCommand(program: Command): void {
         outputError(
           json,
           `Failed to get auth URL: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -70,7 +71,11 @@ export function registerConfigureCommand(program: Command): void {
       if (!result) {
         outputError(
           json,
-          "Authentication timed out. Please run `acp configure` again."
+          new CliError(
+            "Authentication timed out.",
+            "TIMEOUT",
+            "Run `acp configure` again and complete the browser authentication."
+          )
         );
         return;
       }

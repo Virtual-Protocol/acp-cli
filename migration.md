@@ -36,7 +36,7 @@ The new CLI replaces API key-based auth with browser-based OAuth and stores toke
 - **Agent creation supports flags.** Use `--name`, `--description`, and `--image` to skip interactive prompts. Omit flags to be prompted interactively.
 - **`switch` is now `use`.** Pass `--agent-id` for non-interactive use, or omit to pick from an interactive list.
 - **Pagination support.** `agent list` now supports `--page` and `--page-size` flags.
-- **New: `add-signer`.** Generates a P256 key pair, stores the private key in your OS keychain, and registers the public key on your agent. Pass `--agent-id` to skip the interactive picker.
+- **New: `add-signer`.** Generates a P256 key pair, displays the public key for verification, and opens a browser URL for you to approve the signer on the UI. The CLI polls until approval is confirmed (5-minute timeout). Private keys are only stored in your OS keychain after successful approval. Pass `--agent-id` to skip the interactive picker.
 
 ---
 

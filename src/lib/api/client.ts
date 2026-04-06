@@ -5,6 +5,7 @@ import {
   isTokenExpired,
   setTokens,
 } from "../config";
+import { CliError } from "../errors";
 import { AuthApi } from "./auth";
 import { AgentApi } from "./agent";
 import { JobApi } from "./job";
@@ -74,7 +75,11 @@ async function resolveToken(
   }
   const token = await getToken();
   if (!token) {
-    throw new Error("Not authenticated. Run `acp configure` first.");
+    throw new CliError(
+      "Not authenticated.",
+      "NOT_AUTHENTICATED",
+      "Run `acp configure` to authenticate."
+    );
   }
 
   if (!isTokenExpired(token)) {
@@ -83,13 +88,21 @@ async function resolveToken(
 
   const refreshToken = await getRefreshToken();
   if (!refreshToken) {
-    throw new Error("Session expired. Run `acp configure` to re-authenticate.");
+    throw new CliError(
+      "Session expired.",
+      "NOT_AUTHENTICATED",
+      "Run `acp configure` to re-authenticate."
+    );
   }
 
   const authApi = new AuthApi(new ApiClient(apiUrl));
   const result = await authApi.refreshCliToken(refreshToken);
   if (!result) {
-    throw new Error("Session expired. Run `acp configure` to re-authenticate.");
+    throw new CliError(
+      "Session expired.",
+      "NOT_AUTHENTICATED",
+      "Run `acp configure` to re-authenticate."
+    );
   }
 
   await setTokens(result.token, result.refreshToken);

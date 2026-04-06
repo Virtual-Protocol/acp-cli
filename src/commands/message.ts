@@ -28,14 +28,18 @@ export function registerMessageCommands(program: Command): void {
           opts.content,
           opts.contentType
         );
-        outputResult(json, {
-          success: true,
-          action: "send-message",
-          jobId: opts.jobId,
-          content: opts.content,
-        });
+        if (json) {
+          outputResult(json, {
+            success: true,
+            action: "send-message",
+            jobId: opts.jobId,
+            content: opts.content,
+          });
+        } else {
+          console.log(`\nMessage sent in Job #${opts.jobId}`);
+        }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 }

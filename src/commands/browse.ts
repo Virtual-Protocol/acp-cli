@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { isJson, outputError } from "../lib/output";
+import { isJson, outputError, isTTY } from "../lib/output";
 import { getClient } from "../lib/api/client";
 import type { BrowseAgent } from "../lib/api/agent";
 import { detectProtocolVersion } from "../lib/compat/versionDetector";
@@ -93,42 +93,48 @@ export function registerBrowseCommand(program: Command): void {
           return;
         }
 
-        for (const a of data) {
-          const version = detectProtocolVersion(a);
-          console.log(`  Name:           ${a.name} [${version}]`);
-          console.log(`  Description:    ${a.description}`);
-          console.log(`  Wallet:         ${a.walletAddress}`);
-          if (a.chains.length > 0) {
+        if (isTTY()) {
+          for (const a of data) {
+            const version = detectProtocolVersion(a);
+            console.log(`  Name:           ${a.name} [${version}]`);
+            console.log(`  Description:    ${a.description}`);
+            console.log(`  Wallet:         ${a.walletAddress}`);
+            if (a.chains.length > 0) {
+              console.log(
+                `  Chains:         ${a.chains.map((c) => c.chainId).join(", ")}`
+              );
+            }
+            if (a.offerings.length > 0) {
+              console.log(`  Offerings:`);
+              for (const o of a.offerings) {
+                printOffering(o);
+              }
+            } else {
+              console.log(`  Offerings:      No offerings`);
+            }
+            if (a.resources.length > 0) {
+              console.log(`  Resources:`);
+              for (const r of a.resources) {
+                printResource(r);
+              }
+            } else {
+              console.log(`  Resources:      No resources`);
+            }
+            console.log("");
+          }
+          console.log(`\n${data.length} agent(s) found.`);
+        } else {
+          console.log("NAME\tWALLET\tOFFERINGS\tRESOURCES");
+          for (const a of data) {
             console.log(
-              `  Chains:         ${a.chains.map((c) => c.chainId).join(", ")}`
+              `${a.name}\t${a.walletAddress}\t${a.offerings.length}\t${a.resources.length}`
             );
           }
-          if (a.offerings.length > 0) {
-            console.log(`  Offerings:`);
-            for (const o of a.offerings) {
-              printOffering(o);
-            }
-          } else {
-            console.log(`  Offerings:      No offerings`);
-          }
-          if (a.resources.length > 0) {
-            console.log(`  Resources:`);
-            for (const r of a.resources) {
-              printResource(r);
-            }
-          } else {
-            console.log(`  Resources:      No resources`);
-          }
-          console.log("");
         }
-
-        console.log(`\n${data.length} agent(s) found.`);
       } catch (err) {
         outputError(
           json,
-          `Failed to browse agents: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          err instanceof Error ? err : String(err)
         );
       }
     });

@@ -5,8 +5,9 @@ import {
   createAgentFromConfig,
   createV1BuyerAdapter,
 } from "../lib/agentFactory";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { registerJob, getJobRegistryEntry } from "../lib/config";
+import { CliError } from "../lib/errors";
 
 export function registerBuyerCommands(program: Command): void {
   const buyer = program
@@ -81,21 +82,29 @@ export function registerBuyerCommands(program: Command): void {
 
           registerJob(jobId.toString(), "v2", chainId);
 
-          outputResult(json, {
-            success: true,
-            action: "create-job",
-            protocol: "v2",
-            jobId: jobId.toString(),
-            provider: opts.provider,
-            evaluator,
-            description: opts.description,
-            hookAddress: opts.hook ?? (opts.fundTransfer ? "default" : "N/A"),
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "create-job",
+              protocol: "v2",
+              jobId: jobId.toString(),
+              provider: opts.provider,
+              evaluator,
+              description: opts.description,
+              hookAddress: opts.hook ?? (opts.fundTransfer ? "default" : "N/A"),
+            });
+          } else {
+            console.log(`\nJob #${jobId} created successfully!`);
+            console.log(`  Provider:    ${maskAddress(opts.provider)}`);
+            console.log(`  Evaluator:   ${maskAddress(evaluator)}`);
+            console.log(`  Description: ${opts.description}`);
+            console.log(`  Chain:       ${opts.chainId}`);
+          }
         } finally {
           await agent.stop();
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 
@@ -134,25 +143,31 @@ export function registerBuyerCommands(program: Command): void {
         try {
           const session = agent.getSession(chainId, opts.jobId);
           if (!session) {
-            throw new Error(
-              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`
+            throw new CliError(
+              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
+              "SESSION_NOT_FOUND",
+              "Run `acp job list` to see your active jobs."
             );
           }
 
           await session.fetchJob();
           await session.fund(AssetToken.usdc(Number(opts.amount), chainId));
-          outputResult(json, {
-            success: true,
-            action: "fund",
-            protocol: "v2",
-            jobId: opts.jobId,
-            amount: opts.amount,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "fund",
+              protocol: "v2",
+              jobId: opts.jobId,
+              amount: opts.amount,
+            });
+          } else {
+            console.log(`\nJob #${opts.jobId} funded with ${opts.amount} USDC`);
+          }
         } finally {
           await agent.stop();
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 
@@ -186,21 +201,29 @@ export function registerBuyerCommands(program: Command): void {
         try {
           const session = agent.getSession(Number(opts.chainId), opts.jobId);
           if (!session) {
-            throw new Error(`No session found for job ${opts.jobId}.`);
+            throw new CliError(
+              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
+              "SESSION_NOT_FOUND",
+              "Run `acp job list` to see your active jobs."
+            );
           }
           await session.complete(opts.reason);
-          outputResult(json, {
-            success: true,
-            action: "complete",
-            protocol: "v2",
-            jobId: opts.jobId,
-            reason: opts.reason,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "complete",
+              protocol: "v2",
+              jobId: opts.jobId,
+              reason: opts.reason,
+            });
+          } else {
+            console.log(`\nJob #${opts.jobId} completed — escrow released to seller`);
+          }
         } finally {
           await agent.stop();
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 
@@ -234,21 +257,32 @@ export function registerBuyerCommands(program: Command): void {
         try {
           const session = agent.getSession(Number(opts.chainId), opts.jobId);
           if (!session) {
-            throw new Error(`No session found for job ${opts.jobId}.`);
+            throw new CliError(
+              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
+              "SESSION_NOT_FOUND",
+              "Run `acp job list` to see your active jobs."
+            );
           }
           await session.reject(opts.reason);
-          outputResult(json, {
-            success: true,
-            action: "reject",
-            protocol: "v2",
-            jobId: opts.jobId,
-            reason: opts.reason,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "reject",
+              protocol: "v2",
+              jobId: opts.jobId,
+              reason: opts.reason,
+            });
+          } else {
+            console.log(`\nJob #${opts.jobId} rejected — escrow returned to buyer`);
+            if (opts.reason !== "Rejected") {
+              console.log(`  Reason: ${opts.reason}`);
+            }
+          }
         } finally {
           await agent.stop();
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 
@@ -335,19 +369,25 @@ export function registerBuyerCommands(program: Command): void {
 
           registerJob(jobId.toString(), "v2", chainId);
 
-          outputResult(json, {
-            success: true,
-            action: "create-job-from-offering",
-            protocol: "v2",
-            jobId: jobId.toString(),
-            provider: opts.provider,
-            offering: offering.name,
-          });
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "create-job-from-offering",
+              protocol: "v2",
+              jobId: jobId.toString(),
+              provider: opts.provider,
+              offering: offering.name,
+            });
+          } else {
+            console.log(`\nJob #${jobId} created from offering "${offering.name}"`);
+            console.log(`  Provider: ${maskAddress(opts.provider)}`);
+            console.log(`  Chain:    ${opts.chainId}`);
+          }
         } finally {
           await agent.stop();
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 }
