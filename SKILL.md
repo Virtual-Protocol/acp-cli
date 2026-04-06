@@ -556,11 +556,36 @@ open ──► budget_set ──► funded ──► submitted ──► complet
 
 ## Error Handling
 
-On error, commands print `{"error":"message"}` to stderr and exit with code 1. Common errors:
+On error, commands exit with code 1. In `--json` mode, errors include a machine-readable `code` and optional `recovery` hint:
 
-- **Not authenticated** — Run `acp configure` to authenticate.
-- **No session found for job** — The job ID doesn't exist or your wallet is not a participant.
-- **Socket connection timeout** — Cannot reach the ACP socket server.
+```json
+{
+  "error": "No active agent set.",
+  "code": "NO_ACTIVE_AGENT",
+  "recovery": "Run `acp agent use` to set an active agent."
+}
+```
+
+In human-readable mode, the recovery hint is printed as a second line:
+```
+Error: No active agent set.
+  Run `acp agent use` to set an active agent.
+```
+
+### Error Codes
+
+| Code | Meaning | Recovery |
+|------|---------|----------|
+| `NOT_AUTHENTICATED` | No token or session expired | `acp configure` |
+| `NO_ACTIVE_AGENT` | No agent selected or agent ID not cached | `acp agent use` or `acp agent list` |
+| `NO_SIGNER` | No signing key configured or key missing from keychain | `acp agent add-signer` |
+| `SESSION_NOT_FOUND` | Job ID doesn't exist or wallet is not a participant | `acp job list` to verify job ID |
+| `VALIDATION_ERROR` | Invalid input (empty fields, bad JSON, invalid chain ID) | Fix input and retry |
+| `API_ERROR` | Network failure or API error | Retry the command |
+| `ALREADY_EXISTS` | Resource already exists (e.g. agent already tokenized) | N/A |
+| `TIMEOUT` | Operation timed out | Retry the command |
+
+Errors without a `code` field are unstructured (typically propagated from the SDK or network layer). Agents should handle these as generic errors and retry once.
 
 On transient errors (network timeouts, rate limits), retry the command once.
 

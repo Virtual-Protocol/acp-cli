@@ -1,6 +1,7 @@
 import * as readline from "readline";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
+import { CliError } from "../lib/errors";
 import {
   AgentApi,
   TokenizeResponse,
@@ -39,7 +40,7 @@ async function resolveAgent(
       outputError(
         json,
         `Failed to fetch agent: ${
-          err instanceof Error ? err.message : String(err)
+          err instanceof Error ? err : String(err)
         }`
       );
       process.exit(1);
@@ -63,7 +64,7 @@ async function resolveAgent(
       outputError(
         json,
         `Failed to fetch agents: ${
-          err instanceof Error ? err.message : String(err)
+          err instanceof Error ? err : String(err)
         }`
       );
       process.exit(1);
@@ -85,7 +86,7 @@ async function runAddSignerFlow(
     outputError(
       json,
       `Failed to generate key pair: ${
-        err instanceof Error ? err.message : String(err)
+        err instanceof Error ? err : String(err)
       }`
     );
     return;
@@ -102,7 +103,7 @@ async function runAddSignerFlow(
     outputError(
       json,
       `Failed to add signer: ${
-        err instanceof Error ? err.message : String(err)
+        err instanceof Error ? err : String(err)
       }`
     );
     return;
@@ -241,7 +242,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to create agent: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -329,7 +330,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to list agents: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       }
@@ -354,7 +355,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err.message : String(err)
+              err instanceof Error ? err : String(err)
             }`
           );
           return;
@@ -400,7 +401,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err.message : String(err)
+              err instanceof Error ? err : String(err)
             }`
           );
           return;
@@ -431,16 +432,21 @@ export function registerAgentCommands(program: Command): void {
 
       const activeWallet = getActiveWallet();
       if (!activeWallet) {
-        outputError(json, "No active agent set. Run `acp agent use` first.");
+        outputError(json, new CliError(
+          "No active agent set.",
+          "NO_ACTIVE_AGENT",
+          "Run `acp agent use` to set an active agent."
+        ));
         return;
       }
 
       const agentId = getAgentId(activeWallet);
       if (!agentId) {
-        outputError(
-          json,
-          "Agent ID not found for active wallet. Run `acp agent list` or `acp agent use` to populate it."
-        );
+        outputError(json, new CliError(
+          "Agent ID not found for active wallet.",
+          "NO_ACTIVE_AGENT",
+          "Run `acp agent list` or `acp agent use` to populate it."
+        ));
         return;
       }
 
@@ -451,7 +457,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch agent: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -538,7 +544,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err.message : String(err)
+              err instanceof Error ? err : String(err)
             }`
           );
           return;
@@ -592,7 +598,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch tokenize details: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -667,7 +673,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to send payment: ${
-              err instanceof Error ? err.message : String(err)
+              err instanceof Error ? err : String(err)
             }`
           );
           return;
@@ -691,7 +697,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to tokenize agent: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;

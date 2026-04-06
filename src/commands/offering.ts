@@ -1,7 +1,7 @@
 import * as readline from "readline";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import type {
+import { CliError } from "../lib/errors";import type {
   AgentOffering,
   CreateOfferingBody,
   UpdateOfferingBody,
@@ -14,15 +14,20 @@ import { validateJsonSchema } from "../lib/validation";
 function getActiveAgentId(json: boolean): string | null {
   const activeWallet = getActiveWallet();
   if (!activeWallet) {
-    outputError(json, "No active agent set. Run `acp agent use` first.");
+    outputError(json, new CliError(
+      "No active agent set.",
+      "NO_ACTIVE_AGENT",
+      "Run `acp agent use` to set an active agent."
+    ));
     return null;
   }
   const agentId = getAgentId(activeWallet);
   if (!agentId) {
-    outputError(
-      json,
-      "Agent ID not found for active wallet. Run `acp agent list` or `acp agent use` to populate it."
-    );
+    outputError(json, new CliError(
+      "Agent ID not found for active wallet.",
+      "NO_ACTIVE_AGENT",
+      "Run `acp agent list` or `acp agent use` to populate it."
+    ));
     return null;
   }
   return agentId;
@@ -140,7 +145,7 @@ export function registerOfferingCommands(program: Command): void {
         outputError(
           json,
           `Failed to list offerings: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       }
@@ -269,14 +274,14 @@ export function registerOfferingCommands(program: Command): void {
           try {
             requirements = parseSchemaOrString(opts.requirements, "Requirements");
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         } else {
           try {
             requirements = await promptSchemaField(rl!, "Requirements");
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         }
@@ -287,14 +292,14 @@ export function registerOfferingCommands(program: Command): void {
           try {
             deliverable = parseSchemaOrString(opts.deliverable, "Deliverable");
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         } else {
           try {
             deliverable = await promptSchemaField(rl!, "Deliverable");
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         }
@@ -356,7 +361,7 @@ export function registerOfferingCommands(program: Command): void {
         outputError(
           json,
           `Failed to create offering: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       } finally {
@@ -397,7 +402,7 @@ export function registerOfferingCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch offerings: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -528,7 +533,7 @@ export function registerOfferingCommands(program: Command): void {
           try {
             updates.requirements = parseSchemaOrString(opts.requirements, "Requirements");
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         } else if (!nonInteractive) {
@@ -546,7 +551,7 @@ export function registerOfferingCommands(program: Command): void {
             try {
               updates.requirements = await promptSchemaField(rl!, "Requirements");
             } catch (err) {
-              outputError(json, err instanceof Error ? err.message : String(err));
+              outputError(json, err instanceof Error ? err : String(err));
               return;
             }
           }
@@ -557,7 +562,7 @@ export function registerOfferingCommands(program: Command): void {
           try {
             updates.deliverable = parseSchemaOrString(opts.deliverable, "Deliverable");
           } catch (err) {
-            outputError(json, err instanceof Error ? err.message : String(err));
+            outputError(json, err instanceof Error ? err : String(err));
             return;
           }
         } else if (!nonInteractive) {
@@ -575,7 +580,7 @@ export function registerOfferingCommands(program: Command): void {
             try {
               updates.deliverable = await promptSchemaField(rl!, "Deliverable");
             } catch (err) {
-              outputError(json, err instanceof Error ? err.message : String(err));
+              outputError(json, err instanceof Error ? err : String(err));
               return;
             }
           }
@@ -645,7 +650,7 @@ export function registerOfferingCommands(program: Command): void {
         outputError(
           json,
           `Failed to update offering: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       } finally {
@@ -674,7 +679,7 @@ export function registerOfferingCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch offerings: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
         return;
@@ -736,7 +741,7 @@ export function registerOfferingCommands(program: Command): void {
         outputError(
           json,
           `Failed to delete offering: ${
-            err instanceof Error ? err.message : String(err)
+            err instanceof Error ? err : String(err)
           }`
         );
       }

@@ -117,9 +117,7 @@ export function registerBrowseCommand(program: Command): void {
       } catch (err) {
         outputError(
           json,
-          `Failed to browse agents: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          err instanceof Error ? err : String(err)
         );
       }
     });

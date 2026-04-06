@@ -16,7 +16,7 @@ export function registerWalletCommands(program: Command): void {
         const address = getWalletAddress();
         outputResult(json, { address });
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 }

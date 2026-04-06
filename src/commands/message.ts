@@ -39,7 +39,7 @@ export function registerMessageCommands(program: Command): void {
           console.log(`\nMessage sent in Job #${opts.jobId}`);
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 }

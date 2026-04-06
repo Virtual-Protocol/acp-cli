@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import type { JobSession, JobRoomEntry } from "acp-node-v2";
-import { isJson, outputResult, outputError } from "../lib/output";
+import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import { getWalletAddress, createAgentFromConfig } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { formatUnits } from "viem";
@@ -49,7 +49,7 @@ export function registerJobCommands(program: Command): void {
           }
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 
@@ -103,7 +103,7 @@ export function registerJobCommands(program: Command): void {
           }
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 

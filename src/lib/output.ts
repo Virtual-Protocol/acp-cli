@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { CliError } from "./errors";
 
 export function isJson(cmd: Command): boolean {
   return cmd.optsWithGlobals().json === true;
@@ -21,11 +22,29 @@ export function outputResult(
   }
 }
 
-export function outputError(json: boolean, message: string): void {
+export function outputError(
+  json: boolean,
+  errOrMessage: string | Error
+): void {
+  const message =
+    typeof errOrMessage === "string"
+      ? errOrMessage
+      : errOrMessage.message;
+
+  const isCliErr = errOrMessage instanceof CliError;
+
   if (json) {
-    process.stdout.write(JSON.stringify({ error: message }) + "\n");
+    const payload: Record<string, string> = { error: message };
+    if (isCliErr) {
+      payload.code = errOrMessage.code;
+      if (errOrMessage.recovery) payload.recovery = errOrMessage.recovery;
+    }
+    process.stdout.write(JSON.stringify(payload) + "\n");
   } else {
     console.error(`Error: ${message}`);
+    if (isCliErr && errOrMessage.recovery) {
+      console.error(`  ${errOrMessage.recovery}`);
+    }
   }
   process.exitCode = 1;
 }

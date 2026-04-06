@@ -11,6 +11,7 @@ import {
 import { createAgentFromConfig, getWalletAddress } from "../lib/agentFactory";
 import { isJson, outputResult, outputError } from "../lib/output";
 import { maskAddress } from "../lib/output";
+import { CliError } from "../lib/errors";
 
 export function registerEventsCommand(program: Command): void {
   const events = program
@@ -79,7 +80,12 @@ export function registerEventsCommand(program: Command): void {
         process.on("SIGTERM", shutdown);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(JSON.stringify({ error: msg }) + "\n");
+        const payload: Record<string, string> = { error: msg };
+        if (err instanceof CliError) {
+          payload.code = err.code;
+          if (err.recovery) payload.recovery = err.recovery;
+        }
+        process.stderr.write(JSON.stringify(payload) + "\n");
         process.exit(1);
       }
     });
@@ -145,7 +151,7 @@ export function registerEventsCommand(program: Command): void {
 
         outputResult(json, { events, remaining: remaining.length });
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 }

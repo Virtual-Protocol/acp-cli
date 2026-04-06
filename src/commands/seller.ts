@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { AssetToken } from "acp-node-v2";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
-
+import { CliError } from "../lib/errors";
 export function registerSellerCommands(program: Command): void {
   const seller = program
     .command("seller")
@@ -22,8 +22,10 @@ export function registerSellerCommands(program: Command): void {
         try {
           const session = agent.getSession(Number(opts.chainId), opts.jobId);
           if (!session) {
-            throw new Error(
-              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`
+            throw new CliError(
+              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
+              "SESSION_NOT_FOUND",
+              "Run `acp job list` to see your active jobs."
             );
           }
           await session.setBudget(AssetToken.usdc(Number(opts.amount), Number(opts.chainId)));
@@ -41,7 +43,7 @@ export function registerSellerCommands(program: Command): void {
           await agent.stop();
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 
@@ -62,8 +64,10 @@ export function registerSellerCommands(program: Command): void {
           const chainId = Number(opts.chainId);
           const session = agent.getSession(chainId, opts.jobId);
           if (!session) {
-            throw new Error(
-              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`
+            throw new CliError(
+              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
+              "SESSION_NOT_FOUND",
+              "Run `acp job list` to see your active jobs."
             );
           }
           await session.setBudgetWithFundRequest(
@@ -88,7 +92,7 @@ export function registerSellerCommands(program: Command): void {
           await agent.stop();
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 
@@ -108,7 +112,11 @@ export function registerSellerCommands(program: Command): void {
           const chainId = Number(opts.chainId);
           const session = agent.getSession(chainId, opts.jobId);
           if (!session) {
-            throw new Error(`No session found for job ${opts.jobId}.`);
+            throw new CliError(
+              `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
+              "SESSION_NOT_FOUND",
+              "Run `acp job list` to see your active jobs."
+            );
           }
           const transferAmount = opts.transferAmount
             ? AssetToken.usdc(Number(opts.transferAmount), chainId)
@@ -129,7 +137,7 @@ export function registerSellerCommands(program: Command): void {
           await agent.stop();
         }
       } catch (err) {
-        outputError(json, err instanceof Error ? err.message : String(err));
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 }

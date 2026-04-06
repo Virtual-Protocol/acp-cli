@@ -11,6 +11,7 @@ import {
 } from "./config";
 import { getClient } from "./api/client";
 import { loadSignerKey } from "./signerKeychain";
+import { CliError } from "./errors";
 
 export function requireEnv(name: string): string {
   const val = process.env[name];
@@ -45,14 +46,20 @@ export async function getWalletIdByAddress(
 export async function createAgentFromConfig(): Promise<AcpAgent> {
   const walletAddress = getActiveWallet();
   if (!walletAddress) {
-    throw new Error(
-      "No active agent. Run `acp agent create` or `acp agent use`."
+    throw new CliError(
+      "No active agent set.",
+      "NO_ACTIVE_AGENT",
+      "Run `acp agent create` or `acp agent use` to set an active agent."
     );
   }
 
   const publicKey = getPublicKey(walletAddress);
   if (!publicKey) {
-    throw new Error("No signer configured. Run `acp agent add-signer`.");
+    throw new CliError(
+      "No signer configured for this agent.",
+      "NO_SIGNER",
+      "Run `acp agent add-signer` to generate and register a signing key."
+    );
   }
 
   const walletId =
@@ -61,8 +68,10 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
 
   const signerPrivateKey = await loadSignerKey(publicKey);
   if (!signerPrivateKey) {
-    throw new Error(
-      "Signer key not found in keychain. Run `acp agent add-signer`."
+    throw new CliError(
+      "Signer key not found in keychain.",
+      "NO_SIGNER",
+      "Run `acp agent add-signer` to regenerate the signing key."
     );
   }
 
@@ -81,8 +90,10 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
 export function getWalletAddress(): string {
   const addr = getActiveWallet();
   if (!addr) {
-    throw new Error(
-      "No active agent. Run `acp agent create` or `acp agent use`."
+    throw new CliError(
+      "No active agent set.",
+      "NO_ACTIVE_AGENT",
+      "Run `acp agent create` or `acp agent use` to set an active agent."
     );
   }
   return addr;
