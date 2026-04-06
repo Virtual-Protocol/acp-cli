@@ -2,11 +2,12 @@ import { ApiClient } from "./client";
 
 export interface AddSignerResponse {
   message: string;
-  data: {
-    id: string;
-    address: string;
-    signers: string[];
-  };
+  data: { url: string; requestId: string };
+}
+
+export interface GetSignerStatusResponse {
+  message: string;
+  data: { status: "completed" | "pending" | null };
 }
 
 export interface AgentOffering {
@@ -265,15 +266,14 @@ export class AgentApi {
     return this.client.get<AgentBrowseResponse>("/agents/search", params);
   }
 
-  async addSigner(
-    agentId: string,
-    walletId: string,
-    keyQuorumId: string
-  ): Promise<AddSignerResponse> {
-    return this.client.post(`/agents/${agentId}/signer`, {
-      walletId,
-      keyQuorumId,
-    });
+  async addSigner(agentId: string): Promise<AddSignerResponse> {
+    return this.client.post(`/agents/${agentId}/signer`, {});
+  }
+
+  async getSignerStatus(agentId: string): Promise<GetSignerStatusResponse> {
+    return this.client.get<GetSignerStatusResponse>(
+      `/agents/${agentId}/signer/`
+    );
   }
 
   async getTokenizeDetails(

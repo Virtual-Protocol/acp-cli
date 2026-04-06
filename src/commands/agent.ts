@@ -22,7 +22,7 @@ import {
   setAgentId,
   getAgentId,
 } from "../lib/config";
-import { generateP256KeyPair } from "@privy-io/node";
+import { generateP256KeyPair, P256KeyPair } from "@privy-io/node";
 import { storeSignerKey } from "../lib/signerKeychain";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { EvmAcpClient, SUPPORTED_CHAINS } from "acp-node-v2";
@@ -78,11 +78,9 @@ async function runAddSignerFlow(
   agent: Agent
 ): Promise<void> {
   // 1. Generate key pair and persist private key to keychain
-  let publicKey: string;
+  let keypair: P256KeyPair;
   try {
-    const keypair = await generateP256KeyPair();
-    publicKey = keypair.publicKey;
-    await storeSignerKey(keypair.publicKey, keypair.privateKey);
+    keypair = await generateP256KeyPair();
   } catch (err) {
     outputError(
       json,
@@ -93,25 +91,24 @@ async function runAddSignerFlow(
     return;
   }
 
-  // 2. Register public key as quorum
-  let keyQuorumId: string;
-  try {
-    const quorumRes = await api.addQuorum(agent.id, publicKey);
-    keyQuorumId = quorumRes.data;
-  } catch (err) {
-    outputError(
-      json,
-      `Failed to add quorum: ${
-        err instanceof Error ? err.message : String(err)
-      }`
-    );
-    return;
-  }
+  // // 2. Register public key as quorum
+  // let keyQuorumId: string;
+  // try {
+  //   const quorumRes = await api.addQuorum(agent.id, publicKey);
+  //   keyQuorumId = quorumRes.data;
+  // } catch (err) {
+  //   outputError(
+  //     json,
+  //     `Failed to add quorum: ${
+  //       err instanceof Error ? err.message : String(err)
+  //     }`
+  //   );
+  //   return;
+  // }
 
   // 3. Register signer on the agent
-  const walletId = agent.walletProviders[0].metadata.walletId;
   try {
-    await api.addSigner(agent.id, walletId, keyQuorumId);
+    const res = await api.addSigner(agent.id);
   } catch (err) {
     outputError(
       json,
@@ -122,22 +119,24 @@ async function runAddSignerFlow(
     return;
   }
 
-  // 4. Persist public key to config (only after all API calls succeed)
-  setPublicKey(agent.walletAddress, publicKey);
+  // 4. Persist public key to config and keychain (only after all API calls succeed)
+  const walletId = agent.walletProviders[0].metadata.walletId;
+  setPublicKey(agent.walletAddress, keypair.publicKey);
   setWalletId(agent.walletAddress, walletId);
+  await storeSignerKey(keypair.publicKey, keypair.privateKey);
 
-  if (json) {
-    outputResult(json, {
-      agentId: agent.id,
-      agentName: agent.name,
-      keyQuorumId,
-      publicKey,
-    });
-  } else {
-    console.log(
-      `\nNew signer ${publicKey} added to ${agent.name} successfully!`
-    );
-  }
+  // if (json) {
+  //   outputResult(json, {
+  //     agentId: agent.id,
+  //     agentName: agent.name,
+  //     keyQuorumId,
+  //     publicKey,
+  //   });
+  // } else {
+  //   console.log(
+  //     `\nNew signer ${publicKey} added to ${agent.name} successfully!`
+  //   );
+  // }
 }
 
 export function registerAgentCommands(program: Command): void {
@@ -157,7 +156,8 @@ export function registerAgentCommands(program: Command): void {
       let description: string = opts.description?.trim() ?? "";
       let image: string | undefined = opts.image?.trim() || undefined;
 
-      const needsPrompt = !name || !description || (image === undefined && !opts.image);
+      const needsPrompt =
+        !name || !description || (image === undefined && !opts.image);
       let rl: readline.Interface | undefined;
 
       try {
@@ -187,7 +187,10 @@ export function registerAgentCommands(program: Command): void {
         if (image === undefined && !opts.image) {
           if (rl) {
             const imageInput = (
-              await prompt(rl, "Agent image URL (optional, press Enter to skip): ")
+              await prompt(
+                rl,
+                "Agent image URL (optional, press Enter to skip): "
+              )
             ).trim();
             if (imageInput) {
               image = imageInput;
@@ -515,7 +518,11 @@ export function registerAgentCommands(program: Command): void {
         if (!match) {
           outputError(
             json,
-            `Unsupported chain ID: ${opts.chainId}. Supported: ${SUPPORTED_CHAINS.map((c) => `${c.name} (${c.id})`).join(", ")}`
+            `Unsupported chain ID: ${
+              opts.chainId
+            }. Supported: ${SUPPORTED_CHAINS.map(
+              (c) => `${c.name} (${c.id})`
+            ).join(", ")}`
           );
           return;
         }
