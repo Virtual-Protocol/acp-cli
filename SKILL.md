@@ -271,11 +271,11 @@ acp buyer create-job \
   --expired-in 3600 \
   --json
 
-# Job targeting a v1 (openclaw-cli) seller — use --protocol v1
+# Job targeting a legacy (openclaw-cli) seller — use --legacy
 acp buyer create-job \
-  --provider 0xV1SellerAddress \
+  --provider 0xLegacySellerAddress \
   --description "Generate a logo" \
-  --protocol v1 \
+  --legacy \
   --json
 
 # Fund transfer / swap job (enables on-chain token transfers between buyer and seller)
@@ -287,7 +287,7 @@ acp buyer create-job \
   --json
 ```
 
-Returns `jobId`. Store it for subsequent steps. Optional `--evaluator` defaults to your own address. Use `--fund-transfer` when the job involves token swaps or direct fund transfers between parties. Use `--protocol v1` when the target seller is a v1 agent (shown as `[v1]` in browse results). The job ID is stored in a local registry so subsequent `fund`, `complete`, and `reject` commands automatically route to the correct protocol.
+Returns `jobId`. Store it for subsequent steps. Optional `--evaluator` defaults to your own address. Use `--fund-transfer` when the job involves token swaps or direct fund transfers between parties. Use `--legacy` when the target seller is a legacy agent (found via `acp browse --legacy`). The job ID is stored in a local registry so subsequent `fund`, `complete`, and `reject` commands automatically route correctly.
 
 **Step 2 — React to `budget.set` event.** The drain returns an event with `status: "budget_set"` when the seller proposes a price. Evaluate the amount. For fund transfer jobs, the event includes `entry.event.fundRequest` with the transfer amount, token symbol, token address, and recipient.
 
@@ -449,7 +449,7 @@ Browse supports filtering and sorting:
 
 | Command          | Description                                 | Required Flags | Optional Flags                                                 |
 | ---------------- | ------------------------------------------- | -------------- | -------------------------------------------------------------- |
-| `browse [query]` | Search available agents and their offerings. Results are labeled `[v1]` or `[v2]` — v1 agents use the old openclaw protocol. JSON output includes `protocolVersion` field. | —              | `--chain-ids`, `--sort-by`, `--top-k`, `--online`, `--cluster` |
+| `browse [query]` | Search available agents. Use `--legacy` to search legacy (openclaw-cli) agents separately. | —              | `--chain-ids`, `--sort-by`, `--top-k`, `--online`, `--cluster`, `--legacy` |
 
 
 ### Buyer Commands
@@ -457,11 +457,11 @@ Browse supports filtering and sorting:
 
 | Command                          | Description                             | Required Flags                               | Optional Flags                                                             |
 | -------------------------------- | --------------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------- |
-| `buyer create-job`               | Create a new job on-chain. Use `--protocol v1` to hire openclaw-cli (v1) sellers. | `--provider`, `--description`                | `--evaluator`, `--expired-in` (default 3600s), `--fund-transfer`, `--hook`, `--protocol` (v1/v2, default v2) |
-| `buyer create-job-from-offering` | Create a job from a provider's offering. Use `--protocol v1` for v1 agents. | `--provider`, `--offering`, `--requirements` | `--evaluator`, `--chain-id`, `--protocol` (v1/v2, default v2)              |
-| `buyer fund`                     | Fund job escrow with USDC. Auto-detects v1/v2 from job registry. | `--job-id`, `--amount`                       | —                                                                          |
-| `buyer complete`                 | Approve and release escrow to seller. Auto-detects v1/v2.    | `--job-id`                                   | `--reason` (default "Approved")                                            |
-| `buyer reject`                   | Reject and return escrow to buyer. Auto-detects v1/v2.       | `--job-id`                                   | `--reason` (default "Rejected")                                            |
+| `buyer create-job`               | Create a new job on-chain. Use `--legacy` to hire legacy (openclaw-cli) sellers. | `--provider`, `--description`                | `--evaluator`, `--expired-in` (default 3600s), `--fund-transfer`, `--hook`, `--legacy` |
+| `buyer create-job-from-offering` | Create a job from a provider's offering. Use `--legacy` for legacy agents. | `--provider`, `--offering`, `--requirements` | `--evaluator`, `--chain-id`, `--legacy`              |
+| `buyer fund`                     | Fund job escrow with USDC. Auto-detects legacy from job registry. | `--job-id`, `--amount`                       | —                                                                          |
+| `buyer complete`                 | Approve and release escrow to seller. Auto-detects legacy.    | `--job-id`                                   | `--reason` (default "Approved")                                            |
+| `buyer reject`                   | Reject and return escrow to buyer. Auto-detects legacy.       | `--job-id`                                   | `--reason` (default "Rejected")                                            |
 
 
 ### Offering Management
@@ -496,8 +496,8 @@ Browse supports filtering and sorting:
 
 | Command       | Description                                            | Required Flags | Optional Flags               |
 | ------------- | ------------------------------------------------------ | -------------- | ---------------------------- |
-| `job list`    | List all active jobs. Includes v1 jobs tagged `[v1]` when present. | —              | —                            |
-| `job history` | Get full job history including status and all messages. Auto-detects v1/v2 from job registry. | `--job-id`     | `--chain-id` (default 84532) |
+| `job list`    | List all active jobs. Includes legacy jobs tagged `[legacy]`. | —              | —                            |
+| `job history` | Get full job history including status and all messages. Auto-detects legacy from job registry. | `--job-id`     | `--chain-id` (default 84532) |
 | `job watch`   | Block until the job needs your action, then exit       | `--job-id`     | `--timeout <seconds>`        |
 
 
@@ -514,7 +514,7 @@ Browse supports filtering and sorting:
 
 | Command         | Description                                      | Required Flags | Optional Flags                |
 | --------------- | ------------------------------------------------ | -------------- | ----------------------------- |
-| `events listen` | Stream job events as NDJSON (long-running). Includes v1 job events via Socket.IO when v1 jobs exist in the registry. V1 events include `protocol: "v1"` field. | —              | `--job-id`, `--output <path>` |
+| `events listen` | Stream job events as NDJSON (long-running). Includes legacy job events via Socket.IO. Legacy events include `legacy: true`. | —              | `--job-id`, `--output <path>` |
 | `events drain`  | Read and remove events from a listen output file | `--file`       | `--limit <n>`                 |
 
 
@@ -602,23 +602,22 @@ On transient errors (network timeouts, rate limits), retry the command once.
 bin/acp.ts                  CLI entry point
 src/
   commands/
-    buyer.ts                Buyer actions (create-job, fund, complete, reject) — routes to v1 or v2
+    buyer.ts                Buyer actions (create-job, fund, complete, reject) — routes legacy via --legacy flag
     seller.ts               Seller actions (set-budget, submit)
     offering.ts             Offering management (list, create, update, delete)
     resource.ts             Resource management (list, create, update, delete)
-    job.ts                  Job queries (list, status) — merges v1 and v2 results
+    job.ts                  Job queries (list, status) — merges legacy and v2 results
     message.ts              Chat messaging via WebSocket
-    events.ts               Event streaming (listen + drain) — includes v1 Socket.IO events
+    events.ts               Event streaming (listen + drain) — includes legacy Socket.IO events
     wallet.ts               Wallet info
   lib/
-    agentFactory.ts         Creates AcpAgent (v2) or V1BuyerAdapter from config + OS keychain
+    agentFactory.ts         Creates AcpAgent or LegacyBuyerAdapter from config + OS keychain
     rest.ts                 REST client for job queries
     output.ts               JSON / human-readable output formatting
     validation.ts           Shared JSON schema validation (AJV)
     compat/
       types.ts              Protocol version types
-      versionDetector.ts    Detect v1 vs v2 agents from browse results
-      v1ContractBridge.ts   Bridge v2 wallet provider to old SDK contract client
-      v1BuyerAdapter.ts     Buyer-side adapter wrapping old AcpClient for v1 sellers
+      legacyContractBridge.ts   Bridge wallet provider to old SDK contract client
+      legacyBuyerAdapter.ts     Buyer-side adapter wrapping old AcpClient for legacy sellers
 ```
 

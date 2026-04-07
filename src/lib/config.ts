@@ -14,7 +14,7 @@ interface AgentConfig {
 }
 
 interface JobRegistryEntry {
-  version: "v1" | "v2";
+  legacy: boolean;
   chainId: number;
 }
 
@@ -112,12 +112,12 @@ export function setActiveWallet(walletAddress: string): void {
 
 export function registerJob(
   jobId: string,
-  version: "v1" | "v2",
+  legacy: boolean,
   chainId: number
 ): void {
   const config = loadConfig();
   config.jobRegistry ??= {};
-  config.jobRegistry[jobId] = { version, chainId };
+  config.jobRegistry[jobId] = { legacy, chainId };
   saveConfig(config);
 }
 
@@ -127,15 +127,13 @@ export function getJobRegistryEntry(
   return loadConfig().jobRegistry?.[jobId];
 }
 
-export function getV1Jobs(): Record<string, JobRegistryEntry> {
-  const registry = loadConfig().jobRegistry ?? {};
-  const v1Jobs: Record<string, JobRegistryEntry> = {};
-  for (const [id, entry] of Object.entries(registry)) {
-    if (entry.version === "v1") {
-      v1Jobs[id] = entry;
-    }
-  }
-  return v1Jobs;
+export function isLegacyJob(jobId: string): boolean {
+  return loadConfig().jobRegistry?.[jobId]?.legacy === true;
+}
+
+export function getLegacyJobChainId(jobId: string): number | undefined {
+  const entry = loadConfig().jobRegistry?.[jobId];
+  return entry?.legacy ? entry.chainId : undefined;
 }
 
 export function isTokenExpired(token: string): boolean {

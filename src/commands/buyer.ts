@@ -3,10 +3,10 @@ import type { AcpAgentOffering } from "acp-node-v2";
 import { AssetToken } from "acp-node-v2";
 import {
   createAgentFromConfig,
-  createV1BuyerAdapter,
+  createLegacyBuyerAdapter,
 } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
-import { registerJob, getJobRegistryEntry } from "../lib/config";
+import { registerJob, isLegacyJob, getLegacyJobChainId } from "../lib/config";
 import { CliError } from "../lib/errors";
 
 export function registerBuyerCommands(program: Command): void {
@@ -30,30 +30,29 @@ export function registerBuyerCommands(program: Command): void {
       "--fund-transfer",
       "Use fund transfer hook (defaults to chain hook address)"
     )
-    .option("--protocol <version>", "Protocol version: v1 or v2 (default: v2)")
+    .option("--legacy", "Target a legacy (openclaw-cli) seller")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
         const chainId = Number(opts.chainId);
 
-        if (opts.protocol === "v1") {
-          // Route to V1 adapter for openclaw-cli sellers
-          const adapter = await createV1BuyerAdapter(chainId);
+        if (opts.legacy) {
+          const adapter = await createLegacyBuyerAdapter(chainId);
           const jobId = await adapter.createJob({
             providerAddress: opts.provider,
             requirement: opts.description,
-            amount: 0, // Budget set later by seller in v1 flow
+            amount: 0,
             evaluatorAddress: opts.evaluator,
             expiredAt: new Date(Date.now() + Number(opts.expiredIn) * 1000),
             chainId,
           });
 
-          registerJob(String(jobId), "v1", chainId);
+          registerJob(String(jobId), true, chainId);
 
           outputResult(json, {
             success: true,
             action: "create-job",
-            protocol: "v1",
+            protocol: "legacy",
             jobId: String(jobId),
             provider: opts.provider,
           });
@@ -80,7 +79,7 @@ export function registerBuyerCommands(program: Command): void {
             ? await agent.createFundTransferJob(chainId, params)
             : await agent.createJob(chainId, params);
 
-          registerJob(jobId.toString(), "v2", chainId);
+          registerJob(jobId.toString(), false, chainId);
 
           if (json) {
             outputResult(json, {
@@ -118,11 +117,10 @@ export function registerBuyerCommands(program: Command): void {
       const json = isJson(cmd);
       try {
         const chainId = Number(opts.chainId);
-        const entry = getJobRegistryEntry(opts.jobId);
 
-        if (entry?.version === "v1") {
-          // Route to V1 adapter
-          const adapter = await createV1BuyerAdapter(entry.chainId);
+        if (isLegacyJob(opts.jobId)) {
+          const legacyChainId = getLegacyJobChainId(opts.jobId) ?? chainId;
+          const adapter = await createLegacyBuyerAdapter(legacyChainId);
           await adapter.fundJob(
             Number(opts.jobId),
             `Funded ${opts.amount} USDC`
@@ -130,7 +128,7 @@ export function registerBuyerCommands(program: Command): void {
           outputResult(json, {
             success: true,
             action: "fund",
-            protocol: "v1",
+            protocol: "legacy",
             jobId: opts.jobId,
             amount: opts.amount,
           });
@@ -180,22 +178,20 @@ export function registerBuyerCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const entry = getJobRegistryEntry(opts.jobId);
-
-        if (entry?.version === "v1") {
-          const adapter = await createV1BuyerAdapter(entry.chainId);
+        if (isLegacyJob(opts.jobId)) {
+          const legacyChainId = getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
+          const adapter = await createLegacyBuyerAdapter(legacyChainId);
           await adapter.completeJob(Number(opts.jobId), opts.reason);
           outputResult(json, {
             success: true,
             action: "complete",
-            protocol: "v1",
+            legacy: true,
             jobId: opts.jobId,
             reason: opts.reason,
           });
           return;
         }
 
-        // Default: v2 flow
         const agent = await createAgentFromConfig();
         await agent.start();
         try {
@@ -236,22 +232,20 @@ export function registerBuyerCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const entry = getJobRegistryEntry(opts.jobId);
-
-        if (entry?.version === "v1") {
-          const adapter = await createV1BuyerAdapter(entry.chainId);
+        if (isLegacyJob(opts.jobId)) {
+          const legacyChainId = getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
+          const adapter = await createLegacyBuyerAdapter(legacyChainId);
           await adapter.rejectJob(Number(opts.jobId), opts.reason);
           outputResult(json, {
             success: true,
             action: "reject",
-            protocol: "v1",
+            legacy: true,
             jobId: opts.jobId,
             reason: opts.reason,
           });
           return;
         }
 
-        // Default: v2 flow
         const agent = await createAgentFromConfig();
         await agent.start();
         try {
@@ -305,7 +299,7 @@ export function registerBuyerCommands(program: Command): void {
       "--evaluator <address>",
       "Evaluator wallet address (defaults to your own)"
     )
-    .option("--protocol <version>", "Protocol version: v1 or v2 (default: v2)")
+    .option("--legacy", "Target a legacy (openclaw-cli) seller")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -325,9 +319,8 @@ export function registerBuyerCommands(program: Command): void {
 
         const chainId = Number(opts.chainId);
 
-        if (opts.protocol === "v1") {
-          // Route to V1 adapter for openclaw-cli sellers
-          const adapter = await createV1BuyerAdapter(chainId);
+        if (opts.legacy) {
+          const adapter = await createLegacyBuyerAdapter(chainId);
           const jobId = await adapter.createJob({
             providerAddress: opts.provider,
             requirement: requirements,
@@ -341,12 +334,12 @@ export function registerBuyerCommands(program: Command): void {
             chainId,
           });
 
-          registerJob(String(jobId), "v1", chainId);
+          registerJob(String(jobId), true, chainId);
 
           outputResult(json, {
             success: true,
             action: "create-job-from-offering",
-            protocol: "v1",
+            protocol: "legacy",
             jobId: String(jobId),
             provider: opts.provider,
             offering: offering.name,
@@ -367,7 +360,7 @@ export function registerBuyerCommands(program: Command): void {
             { evaluatorAddress: evaluator }
           );
 
-          registerJob(jobId.toString(), "v2", chainId);
+          registerJob(jobId.toString(), false, chainId);
 
           if (json) {
             outputResult(json, {

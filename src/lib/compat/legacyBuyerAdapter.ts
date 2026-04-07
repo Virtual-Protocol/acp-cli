@@ -1,6 +1,7 @@
 import AcpClientDefault, {
   AcpJob,
   AcpMemo,
+  AcpAgent as LegacyAgent,
   AcpContractConfig,
   baseSepoliaAcpConfigV2,
   baseAcpConfigV2,
@@ -12,15 +13,15 @@ import AcpClientDefault, {
 const AcpClient = (AcpClientDefault as any).default ?? AcpClientDefault;
 import type { IEvmProviderAdapter } from "acp-node-v2";
 import type { Address } from "viem";
-import { V1ContractBridge } from "./v1ContractBridge";
+import { LegacyContractBridge } from "./legacyContractBridge";
 
-export type V1JobEventHandler = (job: AcpJob, memoToSign?: AcpMemo) => void;
+export type LegacyJobEventHandler = (job: AcpJob, memoToSign?: AcpMemo) => void;
 
 /**
- * Adapter that lets acp-cli buyers create and manage jobs with v1 (openclaw) sellers.
- * Wraps the old AcpClient internally using V1ContractBridge for blockchain operations.
+ * Adapter that lets acp-cli buyers create and manage jobs with legacy (openclaw-cli) sellers.
+ * Wraps the old AcpClient internally using LegacyContractBridge for blockchain operations.
  */
-export class V1BuyerAdapter {
+export class LegacyBuyerAdapter {
   private acpClient: AcpClientDefault;
   readonly chainId: number;
 
@@ -30,22 +31,21 @@ export class V1BuyerAdapter {
   }
 
   /**
-   * Create a V1BuyerAdapter using the same wallet provider that acp-cli already uses.
+   * Create a LegacyBuyerAdapter using the same wallet provider that acp-cli already uses.
    * Pass onNewTask to receive real-time socket events from the old backend.
    */
   static async create(
     provider: IEvmProviderAdapter,
     chainId?: number,
     options?: {
-      onNewTask?: V1JobEventHandler;
+      onNewTask?: LegacyJobEventHandler;
     }
-  ): Promise<V1BuyerAdapter> {
+  ): Promise<LegacyBuyerAdapter> {
     const walletAddress = (await provider.getAddress()) as Address;
 
-    // Pick the right old-SDK config based on chain
-    const config = resolveV1Config(chainId);
+    const config = resolveLegacyConfig(chainId);
 
-    const bridge = new V1ContractBridge(walletAddress, config, provider);
+    const bridge = new LegacyContractBridge(walletAddress, config, provider);
 
     const connectSocket = !!options?.onNewTask;
 
@@ -55,7 +55,7 @@ export class V1BuyerAdapter {
       skipSocketConnection: !connectSocket,
     });
 
-    return new V1BuyerAdapter(acpClient, config.chain.id);
+    return new LegacyBuyerAdapter(acpClient, config.chain.id);
   }
 
   /**
@@ -71,7 +71,7 @@ export class V1BuyerAdapter {
     offeringName?: string;
     chainId?: number;
   }): Promise<number> {
-    const config = resolveV1Config(params.chainId);
+    const config = resolveLegacyConfig(params.chainId);
     const fareAmount = new FareAmount(params.amount, config.baseFare);
 
     // V1 sellers expect the first memo content to be JSON with shape:
@@ -142,10 +142,24 @@ export class V1BuyerAdapter {
   }
 
   /**
-   * Get all active v1 jobs for this wallet.
+   * Get all active legacy jobs for this wallet.
    */
   async getActiveJobs(): Promise<AcpJob[]> {
     return this.acpClient.getActiveJobs();
+  }
+
+  /**
+   * Browse legacy agents by keyword using the old backend's search.
+   */
+  async browse(
+    keyword: string,
+    options?: { topK?: number; cluster?: string; onlineStatus?: string }
+  ): Promise<LegacyAgent[]> {
+    return this.acpClient.browseAgents(keyword, {
+      topK: options?.topK,
+      cluster: options?.cluster,
+      onlineStatus: options?.onlineStatus as any,
+    });
   }
 
 
@@ -178,7 +192,7 @@ export class V1BuyerAdapter {
  * Resolve the old SDK config for a given chain ID.
  * Defaults to Base Sepolia testnet.
  */
-function resolveV1Config(chainId?: number): AcpContractConfig {
+function resolveLegacyConfig(chainId?: number): AcpContractConfig {
   if (chainId === 8453) {
     return baseAcpConfigV2;
   }

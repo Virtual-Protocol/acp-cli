@@ -1,11 +1,12 @@
 import type { Command } from "commander";
 import type { JobSession, JobRoomEntry } from "acp-node-v2";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import { getWalletAddress, createAgentFromConfig, createV1BuyerAdapter } from "../lib/agentFactory";
+import { getWalletAddress, createAgentFromConfig, createLegacyBuyerAdapter } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { formatUnits } from "viem";
-import { getJobRegistryEntry, getV1Jobs } from "../lib/config";
-import { V1BuyerAdapter } from "../lib/compat/v1BuyerAdapter";
+import { isLegacyJob, getLegacyJobChainId } from "../lib/config";
+import { LegacyBuyerAdapter } from "../lib/compat/legacyBuyerAdapter";
+import { AcpJobPhases, AcpJob } from "@virtuals-protocol/acp-node";
 
 export function registerJobCommands(program: Command): void {
   const job = program.command("job").description("Job queries and monitoring");
@@ -21,33 +22,29 @@ export function registerJobCommands(program: Command): void {
         const { jobApi } = await getClient(wallet);
         const v2Jobs = await jobApi.getActiveJobs();
 
-        // Tag v2 jobs
-        const taggedV2 = v2Jobs.map((j: any) => ({ ...j, protocol: "v2" }));
+        const taggedV2 = v2Jobs.map((j: any) => ({ ...j, legacy: false }));
 
-        // Also fetch v1 jobs if any exist in registry
-        let taggedV1: any[] = [];
-        const v1Registry = getV1Jobs();
-        if (Object.keys(v1Registry).length > 0) {
-          try {
-            const adapter = await createV1BuyerAdapter();
-            const v1Jobs = await adapter.getActiveJobs();
-            taggedV1 = v1Jobs.map((j) => ({
-              onChainJobId: String(j.id),
-              chainId: j.config.chain.id,
-              clientAddress: j.clientAddress,
-              providerAddress: j.providerAddress,
-              evaluatorAddress: j.evaluatorAddress,
-              budget: String(j.price),
-              jobStatus: V1BuyerAdapter.phaseToStatus(j.phase),
-              expiredAt: "",
-              protocol: "v1",
-            }));
-          } catch {
-            // V1 fetch failed — continue with v2 only
-          }
+        // Also fetch legacy jobs
+        let taggedLegacy: any[] = [];
+        try {
+          const adapter = await createLegacyBuyerAdapter();
+          const legacyJobs = await adapter.getActiveJobs();
+          taggedLegacy = legacyJobs.map((j) => ({
+            onChainJobId: String(j.id),
+            chainId: adapter.chainId,
+            clientAddress: j.clientAddress,
+            providerAddress: j.providerAddress,
+            evaluatorAddress: j.evaluatorAddress,
+            budget: String(j.price),
+            jobStatus: LegacyBuyerAdapter.phaseToStatus(j.phase),
+            expiredAt: "",
+            legacy: true,
+          }));
+        } catch {
+          // Legacy fetch failed — continue with v2 only
         }
 
-        const allJobs = [...taggedV2, ...taggedV1];
+        const allJobs = [...taggedV2, ...taggedLegacy];
 
         if (json) {
           outputResult(true, { jobs: allJobs });
@@ -58,13 +55,13 @@ export function registerJobCommands(program: Command): void {
             console.log(`Active jobs (${allJobs.length}):\n`);
             for (const j of allJobs) {
               console.log(
-                `  Job ID:           ${j.onChainJobId} [${j.protocol}]`
+                `  Job ID:           ${j.onChainJobId}${j.legacy ? " [legacy]" : ""}`
               );
               console.log(`  Chain ID:         ${j.chainId}`);
               console.log(`  Client:           ${j.clientAddress}`);
               console.log(`  Provider:         ${j.providerAddress}`);
               console.log(`  Evaluator:        ${j.evaluatorAddress}`);
-              if (j.protocol === "v2") {
+              if (!j.legacy) {
                 console.log(
                   `  Budget:           ${formatUnits(
                     BigInt(j.budget),
@@ -81,13 +78,13 @@ export function registerJobCommands(program: Command): void {
               console.log();
             }
           } else {
-            console.log("JOB_ID\tCHAIN\tCLIENT\tPROVIDER\tBUDGET\tSTATUS\tPROTOCOL");
+            console.log("JOB_ID\tCHAIN\tCLIENT\tPROVIDER\tBUDGET\tSTATUS\tLEGACY");
             for (const j of allJobs) {
-              const budget = j.protocol === "v2"
+              const budget = !j.legacy
                 ? formatUnits(BigInt(j.budget), 6)
                 : j.budget;
               console.log(
-                `${j.onChainJobId}\t${j.chainId}\t${j.clientAddress}\t${j.providerAddress}\t${budget}\t${j.jobStatus}\t${j.protocol}`
+                `${j.onChainJobId}\t${j.chainId}\t${j.clientAddress}\t${j.providerAddress}\t${budget}\t${j.jobStatus}\t${j.legacy}`
               );
             }
           }
@@ -107,18 +104,16 @@ export function registerJobCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const entry = getJobRegistryEntry(opts.jobId);
-
-        if (entry?.version === "v1") {
-          // V1 job history — fetch from old backend
-          const adapter = await createV1BuyerAdapter(entry.chainId);
-          const v1Job = await adapter.getJob(Number(opts.jobId));
-          if (!v1Job) {
-            throw new Error(`V1 job ${opts.jobId} not found`);
+        if (isLegacyJob(opts.jobId)) {
+          const legacyChainId = getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
+          const adapter = await createLegacyBuyerAdapter(legacyChainId);
+          const legacyJob = await adapter.getJob(Number(opts.jobId));
+          if (!legacyJob) {
+            throw new Error(`Legacy job ${opts.jobId} not found`);
           }
 
-          const status = V1BuyerAdapter.phaseToStatus(v1Job.phase);
-          const memoEntries = v1Job.memos.map((m: any) => ({
+          const status = LegacyBuyerAdapter.phaseToStatus(legacyJob.phase);
+          const memoEntries = legacyJob.memos.map((m: any) => ({
             kind: "message" as const,
             from: m.senderAddress,
             content: m.content,
@@ -129,18 +124,23 @@ export function registerJobCommands(program: Command): void {
           if (json) {
             outputResult(true, {
               jobId: opts.jobId,
-              chainId: entry.chainId,
-              protocol: "v1",
+              chainId: legacyChainId,
+              legacy: true,
               status,
               entryCount: memoEntries.length,
               entries: memoEntries,
             });
-          } else {
-            console.log(`Job ${opts.jobId} (chain ${entry.chainId}) [v1]`);
+          } else if (isTTY()) {
+            console.log(`Job ${opts.jobId} (chain ${legacyChainId}) [legacy]`);
             console.log(`Status: ${status}`);
             console.log(`Memos: ${memoEntries.length}\n`);
             for (const e of memoEntries) {
               console.log(`  [${e.from}] ${e.content}`);
+            }
+          } else {
+            console.log(`${opts.jobId}\t${status}\t${memoEntries.length}`);
+            for (const e of memoEntries) {
+              console.log(`${e.from}\t${e.content}`);
             }
           }
           return;
@@ -203,8 +203,6 @@ export function registerJobCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const agent = await createAgentFromConfig();
-
         const jobId: string = opts.jobId;
         const timeoutSec: number | undefined = opts.timeout
           ? Number(opts.timeout)
@@ -230,52 +228,81 @@ export function registerJobCommands(program: Command): void {
               }
             }
           }
-          agent.stop().then(() => process.exit(exitCode));
+          process.exit(exitCode);
         };
-
-        agent.on("entry", async (session: JobSession, _entry: JobRoomEntry) => {
-          if (session.jobId !== jobId) return;
-
-          const status = session.status;
-          const tools = session.availableTools().map((t) => t.name);
-          const actionable = tools.filter((t) => t !== "wait");
-
-          const eventData = {
-            jobId: session.jobId,
-            chainId: session.chainId,
-            status,
-            roles: session.roles,
-            availableTools: tools,
-            entry: _entry,
-          };
-
-          // Terminal states
-          if (status === "completed") return done(1, eventData);
-          if (status === "rejected") return done(2, eventData);
-          if (status === "expired") return done(3, eventData);
-
-          // Actionable — agent has something to do
-          if (actionable.length > 0) return done(0, eventData);
-        });
 
         // Timeout handler
         if (timeoutSec) {
           setTimeout(() => {
             if (!settled) {
               outputError(json, `Timed out after ${timeoutSec}s waiting for job ${jobId}`);
-              agent.stop().then(() => process.exit(4));
+              process.exit(4);
             }
           }, timeoutSec * 1000);
         }
 
-        await agent.start();
+        if (isLegacyJob(jobId)) {
+          // Legacy: watch via old SDK's onNewTask socket
+          const legacyChainId = getLegacyJobChainId(jobId);
+          await createLegacyBuyerAdapter(legacyChainId, {
+            onNewTask: (job: AcpJob) => {
+              if (String(job.id) !== jobId) return;
 
-        process.stderr.write(`Watching job ${jobId}...\n`);
+              const status = LegacyBuyerAdapter.phaseToStatus(job.phase);
+              const tools = legacyAvailableTools(job.phase);
+              const actionable = tools.filter((t) => t !== "wait");
 
-        const shutdown = async () => {
+              const eventData: Record<string, unknown> = {
+                jobId,
+                chainId: legacyChainId,
+                status,
+                legacy: true,
+                roles: ["client"],
+                availableTools: tools,
+              };
+
+              if (status === "completed") return done(1, eventData);
+              if (status === "rejected") return done(2, eventData);
+              if (status === "expired") return done(3, eventData);
+              if (actionable.length > 0) return done(0, eventData);
+            },
+          });
+
+          process.stderr.write(`Watching legacy job ${jobId}...\n`);
+        } else {
+          // V2: watch via SSE
+          const agent = await createAgentFromConfig();
+
+          agent.on("entry", async (session: JobSession, _entry: JobRoomEntry) => {
+            if (session.jobId !== jobId) return;
+
+            const status = session.status;
+            const tools = session.availableTools().map((t) => t.name);
+            const actionable = tools.filter((t) => t !== "wait");
+
+            const eventData = {
+              jobId: session.jobId,
+              chainId: session.chainId,
+              status,
+              roles: session.roles,
+              availableTools: tools,
+              entry: _entry,
+            };
+
+            if (status === "completed") return done(1, eventData);
+            if (status === "rejected") return done(2, eventData);
+            if (status === "expired") return done(3, eventData);
+            if (actionable.length > 0) return done(0, eventData);
+          });
+
+          await agent.start();
+
+          process.stderr.write(`Watching job ${jobId}...\n`);
+        }
+
+        const shutdown = () => {
           if (!settled) {
             settled = true;
-            await agent.stop();
             process.exit(0);
           }
         };
@@ -286,6 +313,17 @@ export function registerJobCommands(program: Command): void {
         process.exit(4);
       }
     });
+}
+
+function legacyAvailableTools(phase: AcpJobPhases): string[] {
+  switch (phase) {
+    case AcpJobPhases.NEGOTIATION:
+      return ["fund"];
+    case AcpJobPhases.EVALUATION:
+      return ["complete", "reject"];
+    default:
+      return [];
+  }
 }
 
 type JobStatus =

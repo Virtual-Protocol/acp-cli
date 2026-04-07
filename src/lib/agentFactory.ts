@@ -12,7 +12,7 @@ import {
 } from "./config";
 import { getClient } from "./api/client";
 import { loadSignerKey } from "./signerKeychain";
-import { V1BuyerAdapter, type V1JobEventHandler } from "./compat/v1BuyerAdapter";
+import { LegacyBuyerAdapter, type LegacyJobEventHandler } from "./compat/legacyBuyerAdapter";
 import { CliError } from "./errors";
 
 export function requireEnv(name: string): string {
@@ -97,15 +97,15 @@ async function createProviderFromConfig(): Promise<IEvmProviderAdapter> {
 }
 
 /**
- * Create a V1BuyerAdapter for interacting with openclaw-cli (v1) sellers.
+ * Create a LegacyBuyerAdapter for interacting with legacy (openclaw-cli) sellers.
  * Pass onNewTask to connect the old backend's socket and receive real-time events.
  */
-export async function createV1BuyerAdapter(
+export async function createLegacyBuyerAdapter(
   chainId?: number,
-  options?: { onNewTask?: V1JobEventHandler }
-): Promise<V1BuyerAdapter> {
+  options?: { onNewTask?: LegacyJobEventHandler }
+): Promise<LegacyBuyerAdapter> {
   const provider = await createProviderFromConfig();
-  return V1BuyerAdapter.create(provider, chainId, options);
+  return LegacyBuyerAdapter.create(provider, chainId, options);
 }
 
 export function getWalletAddress(): string {

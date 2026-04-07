@@ -1,20 +1,24 @@
 import type { Command } from "commander";
+import type { AcpAgentDetail } from "acp-node-v2";
 import { isJson, outputError, isTTY } from "../lib/output";
-import { getClient } from "../lib/api/client";
-import type { BrowseAgent } from "../lib/api/agent";
-import { detectProtocolVersion } from "../lib/compat/versionDetector";
+import {
+  createAgentFromConfig,
+  createLegacyBuyerAdapter,
+} from "../lib/agentFactory";
 
-type Offering = BrowseAgent["offerings"][number];
-type Resource = BrowseAgent["resources"][number];
+type Offering = AcpAgentDetail["offerings"][number];
+type Resource = AcpAgentDetail["resources"][number];
 
-function formatPrice(priceType: string, priceValue: string): string {
+function formatPrice(priceType: string, priceValue: number | string): string {
+  const value =
+    typeof priceValue === "string" ? parseFloat(priceValue) : priceValue;
   if (priceType.toUpperCase() === "FIXED") {
-    return `${parseFloat(priceValue)} USDC`;
+    return `${value} USDC`;
   }
   if (priceType.toUpperCase() === "PERCENTAGE") {
-    return `${parseFloat((parseFloat(priceValue) * 100).toFixed(2))}%`;
+    return `${parseFloat((value * 100).toFixed(2))}%`;
   }
-  return `${priceValue} (${priceType})`;
+  return `${value} (${priceType})`;
 }
 
 function formatOneLiner(value: unknown): string {
@@ -37,6 +41,25 @@ function printResource(r: Resource): void {
   console.log(`      URL:           ${r.url}`);
 }
 
+function printLegacyAgent(a: {
+  name: string;
+  walletAddress: string;
+  jobOfferings: readonly any[];
+}): void {
+  console.log(`  Name:           ${a.name} [legacy]`);
+  console.log(`  Wallet:         ${a.walletAddress}`);
+  if (a.jobOfferings.length > 0) {
+    console.log(`  Offerings:`);
+    for (const o of a.jobOfferings) {
+      console.log(`    - ${o.name}`);
+      if (o.price != null) console.log(`      Price:         ${o.price} USDC`);
+    }
+  } else {
+    console.log(`  Offerings:      No offerings`);
+  }
+  console.log("");
+}
+
 export function registerBrowseCommand(program: Command): void {
   program
     .command("browse [query]")
@@ -52,39 +75,82 @@ export function registerBrowseCommand(program: Command): void {
       "Filter by online status: all, online, offline"
     )
     .option("--cluster <name>", "Filter by cluster")
+    .option("--legacy", "Search legacy (openclaw-cli) agents instead of v2")
     .action(async (query, opts, cmd) => {
       if (!query) {
         console.log("Please provide a query to browse agents.");
         return;
       }
 
-      const { agentApi } = await getClient();
       const json = isJson(cmd);
 
-      const chainIds = opts.chainIds
-        ? opts.chainIds.split(",").map((id: string) => parseInt(id.trim(), 10))
-        : undefined;
-
-      const sortBy = opts.sortBy
-        ? opts.sortBy.split(",").map((s: string) => s.trim())
-        : undefined;
-
       try {
-        const result = await agentApi.browse(query, chainIds, {
+        if (opts.legacy) {
+          // Search legacy agents via old AcpClient.browseAgents
+          const adapter = await createLegacyBuyerAdapter();
+          const agents = await adapter.browse(query, {
+            topK: opts.topK,
+            cluster: opts.cluster,
+            onlineStatus: opts.online,
+          });
+
+          if (json) {
+            const data = agents.map((a) => ({
+              name: a.name,
+              walletAddress: a.walletAddress,
+              description: a.description ?? "",
+              offerings: a.jobOfferings.map((o) => ({
+                name: o.name,
+                price: o.price,
+                priceType: o.priceType,
+                requirement: o.requirement,
+                deliverable: o.deliverable,
+                slaMinutes: o.slaMinutes,
+                requiredFunds: o.requiredFunds,
+              })),
+              legacy: true,
+            }));
+            process.stdout.write(JSON.stringify({ data }) + "\n");
+            return;
+          }
+
+          if (agents.length === 0) {
+            console.log("No legacy agents found.");
+            return;
+          }
+
+          if (isTTY()) {
+            for (const a of agents) {
+              printLegacyAgent(a);
+            }
+            console.log(`\n${agents.length} legacy agent(s) found.`);
+          } else {
+            console.log("NAME\tWALLET\tOFFERINGS");
+            for (const a of agents) {
+              console.log(
+                `${a.name}\t${a.walletAddress}\t${a.jobOfferings.length}`
+              );
+            }
+          }
+          return;
+        }
+
+        // Default: search agents via v2 SDK
+        const agent = await createAgentFromConfig();
+
+        const sortBy = opts.sortBy
+          ? opts.sortBy.split(",").map((s: string) => s.trim())
+          : undefined;
+
+        const data = await agent.browseAgents(query, {
           sortBy,
           topK: opts.topK,
           isOnline: opts.online,
           cluster: opts.cluster,
         });
 
-        const { data } = result;
-
         if (json) {
-          const enriched = data.map((a) => ({
-            ...a,
-            protocolVersion: detectProtocolVersion(a),
-          }));
-          process.stdout.write(JSON.stringify({ data: enriched }) + "\n");
+          process.stdout.write(JSON.stringify({ data }) + "\n");
           return;
         }
 
@@ -95,8 +161,7 @@ export function registerBrowseCommand(program: Command): void {
 
         if (isTTY()) {
           for (const a of data) {
-            const version = detectProtocolVersion(a);
-            console.log(`  Name:           ${a.name} [${version}]`);
+            console.log(`  Name:           ${a.name}`);
             console.log(`  Description:    ${a.description}`);
             console.log(`  Wallet:         ${a.walletAddress}`);
             if (a.chains.length > 0) {
@@ -132,10 +197,7 @@ export function registerBrowseCommand(program: Command): void {
           }
         }
       } catch (err) {
-        outputError(
-          json,
-          err instanceof Error ? err : String(err)
-        );
+        outputError(json, err instanceof Error ? err : String(err));
       }
     });
 }

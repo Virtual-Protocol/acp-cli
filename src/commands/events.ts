@@ -10,11 +10,11 @@ import {
 } from "fs";
 import {
   createAgentFromConfig,
-  createV1BuyerAdapter,
+  createLegacyBuyerAdapter,
   getWalletAddress,
 } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
-import { V1BuyerAdapter } from "../lib/compat/v1BuyerAdapter";
+import { LegacyBuyerAdapter } from "../lib/compat/legacyBuyerAdapter";
 import { AcpJobPhases, AcpJob, AcpMemo } from "@virtuals-protocol/acp-node";
 import { FundIntent } from "acp-node-v2/dist/events/types";
 import { CliError } from "../lib/errors";
@@ -90,7 +90,7 @@ export function registerEventsCommand(program: Command): void {
             jobId: session.jobId,
             chainId: session.chainId,
             status: session.status,
-            protocol: "v2",
+            legacy: false,
             roles: session.roles,
             availableTools: session.availableTools().map((t) => t.name),
             entry,
@@ -101,12 +101,12 @@ export function registerEventsCommand(program: Command): void {
         await agent.start();
 
         try {
-          const v1Adapter = await createV1BuyerAdapter(undefined, {
+          const legacyAdapter = await createLegacyBuyerAdapter(undefined, {
             onNewTask: async (job: AcpJob, memoToSign?: AcpMemo) => {
               const jobId = String(job.id);
               if (opts.jobId && jobId !== opts.jobId) return;
 
-              const status = V1BuyerAdapter.phaseToStatus(job.phase);
+              const status = LegacyBuyerAdapter.phaseToStatus(job.phase);
               const eventType = phaseToEventType(job.phase);
 
               const deliverable = await job.getDeliverable();
@@ -122,7 +122,7 @@ export function registerEventsCommand(program: Command): void {
                 const requestToken = await agent.resolveRawAssetToken(
                   memoToSign.payableDetails.token,
                   memoToSign.payableDetails.amount,
-                  v1Adapter.chainId
+                  legacyAdapter.chainId
                 );
 
                 fundRequest = {
@@ -142,7 +142,7 @@ export function registerEventsCommand(program: Command): void {
                 const transferToken = await agent.resolveRawAssetToken(
                   completedMemo.payableDetails.token,
                   completedMemo.payableDetails.amount,
-                  v1Adapter.chainId
+                  legacyAdapter.chainId
                 );
 
                 fundTransfer = {
@@ -155,15 +155,15 @@ export function registerEventsCommand(program: Command): void {
 
               const line = JSON.stringify({
                 jobId,
-                chainId: v1Adapter.chainId,
+                chainId: legacyAdapter.chainId,
                 status,
-                protocol: "v1",
+                legacy: true,
                 roles: ["client"],
                 availableTools: v1AvailableTools(job.phase),
                 entry: {
                   kind: "system",
                   onChainJobId: jobId,
-                  chainId: v1Adapter.chainId,
+                  chainId: legacyAdapter.chainId,
                   event: {
                     type: eventType,
                     jobId,
@@ -181,7 +181,7 @@ export function registerEventsCommand(program: Command): void {
         } catch (err) {
           process.stderr.write(
             JSON.stringify({
-              warning: `V1 listener failed: ${
+              warning: `Legacy listener failed: ${
                 err instanceof Error ? err.message : String(err)
               }`,
             }) + "\n"

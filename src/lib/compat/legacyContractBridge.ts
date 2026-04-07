@@ -69,7 +69,7 @@ const JOB_CREATED_ABI = [
  * Bridges the acp-node-v2 PrivyAlchemyEvmProviderAdapter to the old SDK's
  * BaseAcpContractClient interface. Only buyer-side methods are implemented.
  */
-export class V1ContractBridge extends BaseAcpContractClient {
+export class LegacyContractBridge extends BaseAcpContractClient {
   private chainId: number;
 
   constructor(
@@ -160,11 +160,11 @@ export class V1ContractBridge extends BaseAcpContractClient {
   }
 
   async sendTransaction(_request: TransactionRequest): Promise<Hex> {
-    throw new Error("sendTransaction not supported via V1ContractBridge");
+    throw new Error("sendTransaction not supported via LegacyContractBridge");
   }
 
   async getAssetManager(): Promise<Address> {
-    throw new Error("getAssetManager not supported via V1ContractBridge");
+    throw new Error("getAssetManager not supported via LegacyContractBridge");
   }
 
   getAcpVersion(): string {
@@ -172,14 +172,14 @@ export class V1ContractBridge extends BaseAcpContractClient {
   }
 
   async updateJobX402Nonce(): Promise<any> {
-    throw new Error("X402 not supported via V1ContractBridge");
+    throw new Error("X402 not supported via LegacyContractBridge");
   }
 
   async generateX402Payment(): Promise<any> {
-    throw new Error("X402 not supported via V1ContractBridge");
+    throw new Error("X402 not supported via LegacyContractBridge");
   }
 
   async performX402Request(): Promise<any> {
-    throw new Error("X402 not supported via V1ContractBridge");
+    throw new Error("X402 not supported via LegacyContractBridge");
   }
 }
