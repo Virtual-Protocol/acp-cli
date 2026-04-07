@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { CliError } from "./errors";
+import pc from "picocolors";
 
 export function isJson(cmd: Command): boolean {
   return cmd.optsWithGlobals().json === true;
@@ -41,7 +42,7 @@ export function outputError(
     }
     process.stdout.write(JSON.stringify(payload) + "\n");
   } else {
-    console.error(`Error: ${message}`);
+    console.error(pc.red(`Error: ${message}`));
     if (isCliErr && errOrMessage.recovery) {
       console.error(`  ${errOrMessage.recovery}`);
     }
@@ -60,6 +61,5 @@ export function maskAddress(address: string): string {
 export function isTTY(): boolean {
   if ("NO_COLOR" in process.env) return false;
   if ("FORCE_COLOR" in process.env) return process.env.FORCE_COLOR !== "0";
-  if (process.env.TERM === "dumb") return false;
-  return process.stdout.isTTY === true;
+  if (process.env.TERM === "dumb") return false;  return process.stdout.isTTY === true;
 }

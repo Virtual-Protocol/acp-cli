@@ -3,6 +3,7 @@ import { AssetToken } from "acp-node-v2";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { CliError } from "../lib/errors";
+import { c } from "../lib/color";
 export function registerSellerCommands(program: Command): void {
   const seller = program
     .command("seller")
@@ -37,7 +38,7 @@ export function registerSellerCommands(program: Command): void {
               amount: opts.amount,
             });
           } else {
-            console.log(`\nBudget of ${opts.amount} USDC proposed for Job #${opts.jobId}`);
+            console.log(`\n${c.green(`Budget of ${opts.amount} USDC proposed for Job #${opts.jobId}`)}`);
           }
         } finally {
           await agent.stop();
@@ -85,7 +86,7 @@ export function registerSellerCommands(program: Command): void {
               destination: opts.destination,
             });
           } else {
-            console.log(`\nBudget of ${opts.amount} USDC proposed for Job #${opts.jobId}`);
+            console.log(`\n${c.green(`Budget of ${opts.amount} USDC proposed for Job #${opts.jobId}`)}`);
             console.log(`  Fund transfer: ${opts.transferAmount} USDC → ${maskAddress(opts.destination)}`);
           }
         } finally {
@@ -131,7 +132,7 @@ export function registerSellerCommands(program: Command): void {
               ...(transferAmount && { transferAmount: opts.transferAmount }),
             });
           } else {
-            console.log(`\nDeliverable submitted for Job #${opts.jobId}`);
+            console.log(`\n${c.green(`Deliverable submitted for Job #${opts.jobId}`)}`);
           }
         } finally {
           await agent.stop();

@@ -5,6 +5,7 @@ import {
   createAgentFromConfig,
   createLegacyBuyerAdapter,
 } from "../lib/agentFactory";
+import { c } from "../lib/color";
 
 type Offering = AcpAgentDetail["offerings"][number];
 type Resource = AcpAgentDetail["resources"][number];
@@ -165,33 +166,33 @@ export function registerBrowseCommand(program: Command): void {
 
         if (isTTY()) {
           for (const a of data) {
-            console.log(`  Name:           ${a.name}`);
-            console.log(`  Description:    ${a.description}`);
-            console.log(`  Wallet:         ${a.walletAddress}`);
+            console.log(`  ${c.bold("Name:")}           ${c.cyan(a.name)}`);
+            console.log(`  ${c.bold("Description:")}    ${a.description}`);
+            console.log(`  ${c.bold("Wallet:")}         ${c.dim(a.walletAddress)}`);
             if (a.chains.length > 0) {
               console.log(
-                `  Chains:         ${a.chains.map((c) => c.chainId).join(", ")}`
+                `  ${c.bold("Chains:")}         ${a.chains.map((ch) => ch.chainId).join(", ")}`
               );
             }
             if (a.offerings.length > 0) {
-              console.log(`  Offerings:`);
+              console.log(`  ${c.bold("Offerings:")}`);
               for (const o of a.offerings) {
                 printOffering(o);
               }
             } else {
-              console.log(`  Offerings:      No offerings`);
+              console.log(`  ${c.bold("Offerings:")}      ${c.dim("No offerings")}`);
             }
             if (a.resources.length > 0) {
-              console.log(`  Resources:`);
+              console.log(`  ${c.bold("Resources:")}`);
               for (const r of a.resources) {
                 printResource(r);
               }
             } else {
-              console.log(`  Resources:      No resources`);
+              console.log(`  ${c.bold("Resources:")}      ${c.dim("No resources")}`);
             }
             console.log("");
           }
-          console.log(`\n${data.length} agent(s) found.`);
+          console.log(`\n${c.dim(`${data.length} agent(s) found.`)}`);
         } else {
           console.log("NAME\tWALLET\tOFFERINGS\tRESOURCES");
           for (const a of data) {

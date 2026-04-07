@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { JobSession, JobRoomEntry } from "acp-node-v2";
-import { isJson, outputResult, outputError, isTTY } from "../lib/output";
+import { isJson, outputResult, outputError, isTTY, maskAddress } from "../lib/output";
+import { c } from "../lib/color";
 import {
   getWalletAddress,
   createAgentFromConfig,
@@ -56,27 +57,27 @@ export function registerJobCommands(program: Command): void {
           if (allJobs.length === 0) {
             console.log("No active jobs.");
           } else if (isTTY()) {
-            console.log(`Active jobs (${allJobs.length}):\n`);
+            console.log(`${c.bold(`Active jobs (${allJobs.length}):`)}\n`);
             for (const j of allJobs) {
               console.log(
-                `  Job ID:           ${j.onChainJobId}${
-                  j.legacy ? " [legacy]" : ""
+                `  ${c.bold("Job ID:")}           ${c.cyan(j.onChainJobId)}${
+                  j.legacy ? c.dim(" [legacy]") : ""
                 }`
               );
-              console.log(`  Chain ID:         ${j.chainId}`);
-              console.log(`  Client:           ${j.clientAddress}`);
-              console.log(`  Provider:         ${j.providerAddress}`);
-              console.log(`  Evaluator:        ${j.evaluatorAddress}`);
+              console.log(`  ${c.bold("Chain ID:")}         ${j.chainId}`);
+              console.log(`  ${c.bold("Client:")}           ${c.dim(j.clientAddress)}`);
+              console.log(`  ${c.bold("Provider:")}         ${c.dim(j.providerAddress)}`);
+              console.log(`  ${c.bold("Evaluator:")}        ${c.dim(j.evaluatorAddress)}`);
               if (!j.legacy) {
                 console.log(
-                  `  Budget:           ${formatUnits(BigInt(j.budget), 6)} USDC`
+                  `  ${c.bold("Budget:")}           ${formatUnits(BigInt(j.budget), 6)} USDC`
                 );
               } else {
-                console.log(`  Budget:           ${j.budget} USDC`);
+                console.log(`  ${c.bold("Budget:")}           ${j.budget} USDC`);
               }
-              console.log(`  Status:           ${j.jobStatus}`);
+              console.log(`  ${c.bold("Status:")}           ${c.status(j.jobStatus)}`);
               if (j.expiredAt) {
-                console.log(`  Expires At:       ${j.expiredAt}`);
+                console.log(`  ${c.bold("Expires At:")}       ${c.dim(j.expiredAt)}`);
               }
               console.log();
             }
@@ -173,14 +174,14 @@ export function registerJobCommands(program: Command): void {
             entries,
           });
         } else if (isTTY()) {
-          console.log(`Job ${opts.jobId} (chain ${opts.chainId}) [v2]`);
-          console.log(`Status: ${status}`);
+          console.log(`${c.bold(`Job ${opts.jobId}`)} ${c.dim(`(chain ${opts.chainId})`)} [v2]`);
+          console.log(`Status: ${c.status(status)}`);
           console.log(`Entries: ${entries.length}\n`);
           for (const e of entries) {
             if (e.kind === "system") {
-              console.log(`  [system] ${e.event.type}`);
+              console.log(`  ${c.dim("[system]")} ${c.cyan(e.event.type)}`);
             } else {
-              console.log(`  [${e.from}] ${e.content}`);
+              console.log(`  ${c.dim(`[${maskAddress(e.from)}]`)} ${e.content}`);
             }
           }
         } else {

@@ -1,8 +1,9 @@
 import * as readline from "readline";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import { CliError } from "../lib/errors";import type {
-  AgentOffering,
+import { CliError } from "../lib/errors";
+import { c } from "../lib/color";
+import type {  AgentOffering,
   CreateOfferingBody,
   UpdateOfferingBody,
 } from "../lib/api/agent";
@@ -355,7 +356,7 @@ export function registerOfferingCommands(program: Command): void {
           return;
         }
 
-        console.log("\nOffering created successfully!\n");
+        console.log(`\n${c.green("Offering created successfully!")}\n`);
         printOffering(created);
       } catch (err) {
         outputError(
@@ -644,7 +645,7 @@ export function registerOfferingCommands(program: Command): void {
           return;
         }
 
-        console.log("\nOffering updated successfully!\n");
+        console.log(`\n${c.green("Offering updated successfully!")}\n`);
         printOffering(updated);
       } catch (err) {
         outputError(
@@ -735,7 +736,7 @@ export function registerOfferingCommands(program: Command): void {
             deletedOffering: selected.name,
           });
         } else {
-          console.log(`\nOffering '${selected.name}' deleted successfully.`);
+          console.log(`\n${c.green(`Offering '${selected.name}' deleted successfully.`)}`);
         }
       } catch (err) {
         outputError(

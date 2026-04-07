@@ -8,6 +8,7 @@ import {
   maskAddress,
 } from "../lib/output";
 import { CliError } from "../lib/errors";
+import { c } from "../lib/color";
 import {
   AgentApi,
   MigrationStatus,
@@ -281,7 +282,7 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      console.log(`\n${created.name} has been created successfully!\n`);
+      console.log(`\n${c.green(`${created.name} has been created successfully!`)}\n`);
 
       printTable([
         ["Name", created.name],
@@ -345,15 +346,15 @@ export function registerAgentCommands(program: Command): void {
 
         if (isTTY()) {
           for (const a of data) {
-            console.log(`\n  ID:             ${a.id}`);
-            console.log(`  Name:           ${a.name}`);
-            console.log(`  Description:    ${a.description}`);
-            console.log(`  Role:           ${a.role}`);
-            console.log(`  Wallet:         ${a.walletAddress}`);
-            console.log(`  Created:        ${a.createdAt}`);
+            console.log(`\n  ${c.bold("Name:")}           ${c.cyan(a.name)}`);
+            console.log(`  ${c.bold("ID:")}             ${a.id}`);
+            console.log(`  ${c.bold("Description:")}    ${a.description}`);
+            console.log(`  ${c.bold("Role:")}           ${a.role}`);
+            console.log(`  ${c.bold("Wallet:")}         ${c.dim(a.walletAddress)}`);
+            console.log(`  ${c.bold("Created:")}        ${c.dim(a.createdAt)}`);
           }
           console.log(
-            `\nPage ${meta.pagination.page} of ${meta.pagination.pageCount} (${meta.pagination.total} total)`
+            `\n${c.dim(`Page ${meta.pagination.page} of ${meta.pagination.pageCount} (${meta.pagination.total} total)`)}`
           );
         } else {
           console.log("ID\tNAME\tROLE\tWALLET");
@@ -514,10 +515,10 @@ export function registerAgentCommands(program: Command): void {
           (c) => [`Chain ${c.chainId}`, `${c.tokenAddress ?? "Not tokenized"}`]
         );
 
-        console.log("\nAgent Details:");
+        console.log(`\n${c.bold("Agent Details:")}`);
         printTable([
           ["ID", agentData.id],
-          ["Name", agentData.name],
+          ["Name", c.cyan(agentData.name)],
           ["Description", agentData.description],
           ["Role", agentData.role],
           ["Wallet Address", agentData.walletAddress ?? "N/A"],
@@ -527,7 +528,7 @@ export function registerAgentCommands(program: Command): void {
           ...chainRows,
         ]);
 
-        console.log("\nOfferings:");
+        console.log(`\n${c.bold("Offerings:")}`);
         if (agentData.offerings?.length) {
           for (const o of agentData.offerings) {
             printTable([
@@ -544,7 +545,7 @@ export function registerAgentCommands(program: Command): void {
           console.log("  N/A");
         }
 
-        console.log("\nResources:");
+        console.log(`\n${c.bold("Resources:")}`);
         if (agentData.resources?.length) {
           for (const r of agentData.resources) {
             printTable([

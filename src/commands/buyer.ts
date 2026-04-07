@@ -8,7 +8,7 @@ import {
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { registerJob, isLegacyJob, getLegacyJobChainId } from "../lib/config";
 import { CliError } from "../lib/errors";
-
+import { c } from "../lib/color";
 export function registerBuyerCommands(program: Command): void {
   const buyer = program
     .command("buyer")
@@ -93,9 +93,9 @@ export function registerBuyerCommands(program: Command): void {
               hookAddress: opts.hook ?? (opts.fundTransfer ? "default" : "N/A"),
             });
           } else {
-            console.log(`\nJob #${jobId} created successfully!`);
-            console.log(`  Provider:    ${maskAddress(opts.provider)}`);
-            console.log(`  Evaluator:   ${maskAddress(evaluator)}`);
+            console.log(`\n${c.green(`Job #${jobId} created successfully!`)}`);
+            console.log(`  Provider:    ${c.dim(maskAddress(opts.provider))}`);
+            console.log(`  Evaluator:   ${c.dim(maskAddress(evaluator))}`);
             console.log(`  Description: ${opts.description}`);
             console.log(`  Chain:       ${opts.chainId}`);
           }
@@ -159,7 +159,7 @@ export function registerBuyerCommands(program: Command): void {
               amount: opts.amount,
             });
           } else {
-            console.log(`\nJob #${opts.jobId} funded with ${opts.amount} USDC`);
+            console.log(`\n${c.green(`Job #${opts.jobId} funded with ${opts.amount} USDC`)}`);
           }
         } finally {
           await agent.stop();
@@ -213,7 +213,7 @@ export function registerBuyerCommands(program: Command): void {
               reason: opts.reason,
             });
           } else {
-            console.log(`\nJob #${opts.jobId} completed — escrow released to seller`);
+            console.log(`\n${c.green(`Job #${opts.jobId} completed`)} — escrow released to seller`);
           }
         } finally {
           await agent.stop();
@@ -267,7 +267,7 @@ export function registerBuyerCommands(program: Command): void {
               reason: opts.reason,
             });
           } else {
-            console.log(`\nJob #${opts.jobId} rejected — escrow returned to buyer`);
+            console.log(`\n${c.red(`Job #${opts.jobId} rejected`)} — escrow returned to buyer`);
             if (opts.reason !== "Rejected") {
               console.log(`  Reason: ${opts.reason}`);
             }
@@ -372,8 +372,8 @@ export function registerBuyerCommands(program: Command): void {
               offering: offering.name,
             });
           } else {
-            console.log(`\nJob #${jobId} created from offering "${offering.name}"`);
-            console.log(`  Provider: ${maskAddress(opts.provider)}`);
+            console.log(`\n${c.green(`Job #${jobId} created from offering "${offering.name}"`)}`);
+            console.log(`  Provider: ${c.dim(maskAddress(opts.provider))}`);
             console.log(`  Chain:    ${opts.chainId}`);
           }
         } finally {

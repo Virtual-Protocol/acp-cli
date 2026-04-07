@@ -1,8 +1,9 @@
 import * as readline from "readline";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import { CliError } from "../lib/errors";import type {
-  AgentResource,
+import { CliError } from "../lib/errors";
+import { c } from "../lib/color";
+import type {  AgentResource,
   CreateResourceBody,
   UpdateResourceBody,
 } from "../lib/api/agent";
@@ -210,7 +211,7 @@ export function registerResourceCommands(program: Command): void {
           return;
         }
 
-        console.log("\nResource created successfully!\n");
+        console.log(`\n${c.green("Resource created successfully!")}\n`);
         printResource(created);
       } catch (err) {
         outputError(
@@ -329,7 +330,7 @@ export function registerResourceCommands(program: Command): void {
           return;
         }
 
-        console.log("\nResource updated successfully!\n");
+        console.log(`\n${c.green("Resource updated successfully!")}\n`);
         printResource(updated);
       } catch (err) {
         outputError(
@@ -402,7 +403,7 @@ export function registerResourceCommands(program: Command): void {
             deletedResource: selected.name,
           });
         } else {
-          console.log(`\nResource '${selected.name}' deleted successfully.`);
+          console.log(`\n${c.green(`Resource '${selected.name}' deleted successfully.`)}`);
         }
       } catch (err) {
         outputError(
