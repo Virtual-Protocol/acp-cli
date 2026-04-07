@@ -528,6 +528,7 @@ Browse supports filtering and sorting:
 | `agent add-signer` | Add a new signer (generates key, shows public key & approval URL, polls for confirmation) | --             | `--agent-id`                            |
 | `agent whoami`     | Show details of the currently active agent | --           | --                                      |
 | `agent tokenize`   | Tokenize an agent on a blockchain        | --             | `--wallet-address`, `--agent-id`, `--chain-id`, `--symbol` |
+| `agent migrate`    | Migrate a legacy agent to ACP SDK 2.0, or complete an in-progress migration (`--complete`) | --             | `--agent-id`, `--complete`              |
 
 All agent commands support non-interactive use via flags. When flags are omitted, interactive prompts are used.
 

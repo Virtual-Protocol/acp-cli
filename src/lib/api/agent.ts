@@ -106,6 +106,7 @@ export interface Agent {
   chains: {
     chainId: number;
     tokenAddress?: string;
+    acpV2AgentId?: number;
   }[];
 }
 
@@ -187,6 +188,22 @@ interface AgentBrowseResponse {
   data: BrowseAgent[];
 }
 
+export const MigrationStatus = {
+  PENDING: "PENDING",
+  IN_PROGRESS: "IN_PROGRESS",
+  COMPLETED: "COMPLETED",
+} as const;
+
+export type MigrationStatus =
+  (typeof MigrationStatus)[keyof typeof MigrationStatus];
+
+export interface LegacyAgent {
+  id: number;
+  name: string;
+  walletAddress: string;
+  migrationStatus: MigrationStatus;
+}
+
 export interface TokenizeStatusResponse {
   hasTokenized: boolean;
   hasPaid: boolean;
@@ -204,6 +221,12 @@ export interface TokenizeResponse {
   launchedAt: string;
   preToken: string;
   taxRecipient: string;
+}
+
+export interface UpdateAgentBody {
+  name: string;
+  description: string;
+  isHidden: boolean;
 }
 
 export class AgentApi {
@@ -233,6 +256,17 @@ export class AgentApi {
     const body: Record<string, unknown> = { name, description, role: "HYBRID" };
     if (image) body.image = image;
     const res = await this.client.post<AgentCreateResponse>("/agents", body);
+    return res.data;
+  }
+
+  async update(
+    agentId: string,
+    body: Partial<UpdateAgentBody>
+  ): Promise<Agent> {
+    const res = await this.client.put<{ data: Agent }>(
+      `/agents/${agentId}`,
+      body
+    );
     return res.data;
   }
 
@@ -350,6 +384,21 @@ export class AgentApi {
     return this.client.delete<DeleteResourceResponse>(
       `/agents/${agentId}/resources/${resourceId}`
     );
+  }
+
+  async getLegacyAgents(): Promise<LegacyAgent[]> {
+    const res = await this.client.get<{ data: LegacyAgent[] }>(
+      "/agents/legacy"
+    );
+    return res.data;
+  }
+
+  async migrateAgent(acpAgentId: number): Promise<Agent> {
+    const res = await this.client.post<{ message: string; data: Agent }>(
+      "/agents/migrate",
+      { acpAgentId }
+    );
+    return res.data;
   }
 
   async tokenize(

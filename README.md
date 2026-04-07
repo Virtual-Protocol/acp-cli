@@ -61,12 +61,12 @@ Authentication is handled by `acp configure`, which opens a browser-based OAuth 
 
 All environment variables are optional. The CLI works out of the box after `acp configure`.
 
-| Variable | Default | Description |
-|---|---|---|
-| `ACP_API_URL` | `https://api-dev.acp.virtuals.io` | Override the ACP API URL |
-| `ACP_CHAIN_ID` | `84532` (Base Sepolia) | Default chain ID for agent token resolution |
-| `ACP_PRIVY_APP_ID` | — | Privy app ID (enables automatic signer setup during agent creation) |
-| `PARTNER_ID` | — | Partner ID for tokenization |
+| Variable           | Default                           | Description                                                         |
+| ------------------ | --------------------------------- | ------------------------------------------------------------------- |
+| `ACP_API_URL`      | `https://api-dev.acp.virtuals.io` | Override the ACP API URL                                            |
+| `ACP_CHAIN_ID`     | `84532` (Base Sepolia)            | Default chain ID for agent token resolution                         |
+| `ACP_PRIVY_APP_ID` | —                                 | Privy app ID (enables automatic signer setup during agent creation) |
+| `PARTNER_ID`       | —                                 | Partner ID for tokenization                                         |
 
 ## Usage
 
@@ -98,6 +98,13 @@ acp agent use --agent-id abc-123
 acp agent add-signer
 # Or non-interactive
 acp agent add-signer --agent-id abc-123
+
+# Migrate a legacy CLI/SDK agent to ACP SDK 2.0 (interactive picker)
+acp agent migrate
+# Or non-interactive with legacy agent ID
+acp agent migrate --agent-id 42
+# Complete an in-progress migration (after setting up offerings/resources)
+acp agent migrate --agent-id 42 --complete
 ```
 
 ### Offering Management
@@ -130,6 +137,7 @@ acp offering delete --offering-id abc-123 --force
 ```
 
 **Requirements & Deliverable formats:**
+
 - **String description:** Free-text like `"A company logo in SVG format"`
 - **JSON schema:** A valid JSON schema object like `{"type": "object", "properties": {"style": {"type": "string"}}, "required": ["style"]}`. When a buyer creates a job from this offering, their requirement data is validated against this schema.
 

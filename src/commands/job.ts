@@ -1,7 +1,11 @@
 import type { Command } from "commander";
 import type { JobSession, JobRoomEntry } from "acp-node-v2";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import { getWalletAddress, createAgentFromConfig, createLegacyBuyerAdapter } from "../lib/agentFactory";
+import {
+  getWalletAddress,
+  createAgentFromConfig,
+  createLegacyBuyerAdapter,
+} from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { formatUnits } from "viem";
 import { isLegacyJob, getLegacyJobChainId } from "../lib/config";
@@ -55,7 +59,9 @@ export function registerJobCommands(program: Command): void {
             console.log(`Active jobs (${allJobs.length}):\n`);
             for (const j of allJobs) {
               console.log(
-                `  Job ID:           ${j.onChainJobId}${j.legacy ? " [legacy]" : ""}`
+                `  Job ID:           ${j.onChainJobId}${
+                  j.legacy ? " [legacy]" : ""
+                }`
               );
               console.log(`  Chain ID:         ${j.chainId}`);
               console.log(`  Client:           ${j.clientAddress}`);
@@ -63,10 +69,7 @@ export function registerJobCommands(program: Command): void {
               console.log(`  Evaluator:        ${j.evaluatorAddress}`);
               if (!j.legacy) {
                 console.log(
-                  `  Budget:           ${formatUnits(
-                    BigInt(j.budget),
-                    6
-                  )} USDC`
+                  `  Budget:           ${formatUnits(BigInt(j.budget), 6)} USDC`
                 );
               } else {
                 console.log(`  Budget:           ${j.budget} USDC`);
@@ -78,7 +81,9 @@ export function registerJobCommands(program: Command): void {
               console.log();
             }
           } else {
-            console.log("JOB_ID\tCHAIN\tCLIENT\tPROVIDER\tBUDGET\tSTATUS\tLEGACY");
+            console.log(
+              "JOB_ID\tCHAIN\tCLIENT\tPROVIDER\tBUDGET\tSTATUS\tLEGACY"
+            );
             for (const j of allJobs) {
               const budget = !j.legacy
                 ? formatUnits(BigInt(j.budget), 6)
@@ -100,12 +105,13 @@ export function registerJobCommands(program: Command): void {
       "Get full job history including status and all messages (REST, no socket connection needed)"
     )
     .requiredOption("--job-id <id>", "On-chain job ID")
-    .requiredOption("--chain-id <id>", "Chain ID", "84532")
+    .requiredOption("--chain-id <id>", "Chain ID")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
         if (isLegacyJob(opts.jobId)) {
-          const legacyChainId = getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
+          const legacyChainId =
+            getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
           const adapter = await createLegacyBuyerAdapter(legacyChainId);
           const legacyJob = await adapter.getJob(Number(opts.jobId));
           if (!legacyJob) {
@@ -224,7 +230,9 @@ export function registerJobCommands(program: Command): void {
                 console.log(`  Status: ${status}`);
                 console.log(`  Available: ${tools.join(", ")}`);
               } else {
-                console.log(`\nJob #${jobId} reached terminal state: ${status}`);
+                console.log(
+                  `\nJob #${jobId} reached terminal state: ${status}`
+                );
               }
             }
           }
@@ -235,7 +243,10 @@ export function registerJobCommands(program: Command): void {
         if (timeoutSec) {
           setTimeout(() => {
             if (!settled) {
-              outputError(json, `Timed out after ${timeoutSec}s waiting for job ${jobId}`);
+              outputError(
+                json,
+                `Timed out after ${timeoutSec}s waiting for job ${jobId}`
+              );
               process.exit(4);
             }
           }, timeoutSec * 1000);
@@ -273,27 +284,30 @@ export function registerJobCommands(program: Command): void {
           // V2: watch via SSE
           const agent = await createAgentFromConfig();
 
-          agent.on("entry", async (session: JobSession, _entry: JobRoomEntry) => {
-            if (session.jobId !== jobId) return;
+          agent.on(
+            "entry",
+            async (session: JobSession, _entry: JobRoomEntry) => {
+              if (session.jobId !== jobId) return;
 
-            const status = session.status;
-            const tools = session.availableTools().map((t) => t.name);
-            const actionable = tools.filter((t) => t !== "wait");
+              const status = session.status;
+              const tools = session.availableTools().map((t) => t.name);
+              const actionable = tools.filter((t) => t !== "wait");
 
-            const eventData = {
-              jobId: session.jobId,
-              chainId: session.chainId,
-              status,
-              roles: session.roles,
-              availableTools: tools,
-              entry: _entry,
-            };
+              const eventData = {
+                jobId: session.jobId,
+                chainId: session.chainId,
+                status,
+                roles: session.roles,
+                availableTools: tools,
+                entry: _entry,
+              };
 
-            if (status === "completed") return done(1, eventData);
-            if (status === "rejected") return done(2, eventData);
-            if (status === "expired") return done(3, eventData);
-            if (actionable.length > 0) return done(0, eventData);
-          });
+              if (status === "completed") return done(1, eventData);
+              if (status === "rejected") return done(2, eventData);
+              if (status === "expired") return done(3, eventData);
+              if (actionable.length > 0) return done(0, eventData);
+            }
+          );
 
           await agent.start();
 

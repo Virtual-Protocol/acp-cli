@@ -1,12 +1,20 @@
 import * as readline from "readline";
 import type { Command } from "commander";
-import { isJson, outputResult, outputError, isTTY } from "../lib/output";
+import {
+  isJson,
+  outputResult,
+  outputError,
+  isTTY,
+  maskAddress,
+} from "../lib/output";
 import { CliError } from "../lib/errors";
 import {
   AgentApi,
+  MigrationStatus,
   TokenizeResponse,
   TokenizeStatusResponse,
   type Agent,
+  LegacyAgent,
 } from "../lib/api/agent";
 import { getClient } from "../lib/api/client";
 import {
@@ -28,6 +36,15 @@ import { storeSignerKey } from "../lib/signerKeychain";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { EvmAcpClient, SUPPORTED_CHAINS } from "acp-node-v2";
 
+function parseLegacyId(raw: string, json: boolean): number | null {
+  const id = parseInt(raw, 10);
+  if (isNaN(id)) {
+    outputError(json, "Agent ID must be a number.");
+    return null;
+  }
+  return id;
+}
+
 async function resolveAgent(
   agentApi: AgentApi,
   opts: { walletAddress?: string; agentId?: string },
@@ -40,7 +57,7 @@ async function resolveAgent(
       outputError(
         json,
         `Failed to fetch agent: ${
-          err instanceof Error ? err : String(err)
+          err instanceof Error ? err.message : String(err)
         }`
       );
       process.exit(1);
@@ -64,7 +81,7 @@ async function resolveAgent(
       outputError(
         json,
         `Failed to fetch agents: ${
-          err instanceof Error ? err : String(err)
+          err instanceof Error ? err.message : String(err)
         }`
       );
       process.exit(1);
@@ -77,7 +94,7 @@ async function runAddSignerFlow(
   api: AgentApi,
   json: boolean,
   agent: Agent
-): Promise<void> {
+): Promise<boolean> {
   // 1. Generate key pair and persist private key to keychain
   let keypair: P256KeyPair;
   try {
@@ -86,10 +103,10 @@ async function runAddSignerFlow(
     outputError(
       json,
       `Failed to generate key pair: ${
-        err instanceof Error ? err : String(err)
+        err instanceof Error ? err.message : String(err)
       }`
     );
-    return;
+    return false;
   }
 
   // 2. Get add signer URL
@@ -103,10 +120,10 @@ async function runAddSignerFlow(
     outputError(
       json,
       `Failed to add signer: ${
-        err instanceof Error ? err : String(err)
+        err instanceof Error ? err.message : String(err)
       }`
     );
-    return;
+    return false;
   }
 
   // 3. Present the URL and public key for the user to verify and approve
@@ -138,7 +155,7 @@ async function runAddSignerFlow(
 
       if (!statusRes.data.status) {
         outputError(json, "Signer registration not found. Please try again.");
-        return;
+        return false;
       }
 
       if (statusRes.data.status === "completed") {
@@ -153,7 +170,7 @@ async function runAddSignerFlow(
 
     if (Date.now() - startTime >= TIMEOUT_MS) {
       outputError(json, "Signer registration timed out. Please try again.");
-      return;
+      return false;
     }
   }
 
@@ -171,6 +188,7 @@ async function runAddSignerFlow(
   } else {
     console.log(`\nSigner added to ${agent.name} successfully!`);
   }
+  return true;
 }
 
 export function registerAgentCommands(program: Command): void {
@@ -242,7 +260,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to create agent: ${
-            err instanceof Error ? err : String(err)
+            err instanceof Error ? err.message : String(err)
           }`
         );
         return;
@@ -330,7 +348,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to list agents: ${
-            err instanceof Error ? err : String(err)
+            err instanceof Error ? err.message : String(err)
           }`
         );
       }
@@ -355,7 +373,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err : String(err)
+              err instanceof Error ? err.message : String(err)
             }`
           );
           return;
@@ -401,7 +419,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err : String(err)
+              err instanceof Error ? err.message : String(err)
             }`
           );
           return;
@@ -432,21 +450,27 @@ export function registerAgentCommands(program: Command): void {
 
       const activeWallet = getActiveWallet();
       if (!activeWallet) {
-        outputError(json, new CliError(
-          "No active agent set.",
-          "NO_ACTIVE_AGENT",
-          "Run `acp agent use` to set an active agent."
-        ));
+        outputError(
+          json,
+          new CliError(
+            "No active agent set.",
+            "NO_ACTIVE_AGENT",
+            "Run `acp agent use` to set an active agent."
+          )
+        );
         return;
       }
 
       const agentId = getAgentId(activeWallet);
       if (!agentId) {
-        outputError(json, new CliError(
-          "Agent ID not found for active wallet.",
-          "NO_ACTIVE_AGENT",
-          "Run `acp agent list` or `acp agent use` to populate it."
-        ));
+        outputError(
+          json,
+          new CliError(
+            "Agent ID not found for active wallet.",
+            "NO_ACTIVE_AGENT",
+            "Run `acp agent list` or `acp agent use` to populate it."
+          )
+        );
         return;
       }
 
@@ -457,7 +481,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch agent: ${
-            err instanceof Error ? err : String(err)
+            err instanceof Error ? err.message : String(err)
           }`
         );
         return;
@@ -470,7 +494,7 @@ export function registerAgentCommands(program: Command): void {
 
       if (isTTY()) {
         const chainRows: [string, string][] = (agentData.chains ?? []).map(
-          (c, i) => [`Chain ${c.chainId}`, `${c.tokenAddress ?? "Not tokenized"}`]
+          (c) => [`Chain ${c.chainId}`, `${c.tokenAddress ?? "Not tokenized"}`]
         );
 
         console.log("\nAgent Details:");
@@ -517,7 +541,11 @@ export function registerAgentCommands(program: Command): void {
           console.log("  N/A");
         }
       } else {
-        console.log(`${agentData.name}\t${agentData.role}\t${agentData.walletAddress ?? "N/A"}\t${agentData.id}`);
+        console.log(
+          `${agentData.name}\t${agentData.role}\t${
+            agentData.walletAddress ?? "N/A"
+          }\t${agentData.id}`
+        );
       }
     });
 
@@ -544,7 +572,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to fetch agents: ${
-              err instanceof Error ? err : String(err)
+              err instanceof Error ? err.message : String(err)
             }`
           );
           return;
@@ -598,7 +626,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to fetch tokenize details: ${
-            err instanceof Error ? err : String(err)
+            err instanceof Error ? err.message : String(err)
           }`
         );
         return;
@@ -640,7 +668,8 @@ export function registerAgentCommands(program: Command): void {
       let txHash = "";
 
       if (tokenizeDetails.hasPaid) {
-        if (!json) console.log("\nPayment already received, skipping transfer.");
+        if (!json)
+          console.log("\nPayment already received, skipping transfer.");
       } else {
         const previousWallet = getActiveWallet();
         setActiveWallet(selected.walletAddress);
@@ -673,7 +702,7 @@ export function registerAgentCommands(program: Command): void {
           outputError(
             json,
             `Failed to send payment: ${
-              err instanceof Error ? err : String(err)
+              err instanceof Error ? err.message : String(err)
             }`
           );
           return;
@@ -685,7 +714,10 @@ export function registerAgentCommands(program: Command): void {
       // Step 5: Call tokenize API
       let tokenizeResponse: TokenizeResponse;
       try {
-        if (!json) console.log(`Tokenizing your agent on chain ID ${selectedChain.id}...`);
+        if (!json)
+          console.log(
+            `Tokenizing your agent on chain ID ${selectedChain.id}...`
+          );
 
         tokenizeResponse = await agentApi.tokenize(
           selected.id,
@@ -697,7 +729,7 @@ export function registerAgentCommands(program: Command): void {
         outputError(
           json,
           `Failed to tokenize agent: ${
-            err instanceof Error ? err : String(err)
+            err instanceof Error ? err.message : String(err)
           }`
         );
         return;
@@ -713,6 +745,216 @@ export function registerAgentCommands(program: Command): void {
           agentId: selected.id,
           agentName: selected.name,
           tokenizeResponse,
+        });
+      }
+    });
+
+  agent
+    .command("migrate")
+    .option("--agent-id <id>", "Agent ID")
+    .option("--complete", "Complete a migration")
+    .description(
+      "Migrate a legacy agent to ACP SDK 2.0, or complete an in-progress migration"
+    )
+    .action(async (opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+
+      // Complete agent migration flow
+      if (opts.complete) {
+        if (!opts.agentId) {
+          outputError(
+            json,
+            "Please provide the agent ID to complete migration."
+          );
+          return;
+        }
+        const numericId = parseLegacyId(opts.agentId, json);
+        if (numericId === null) return;
+
+        let legacyAgents: LegacyAgent[];
+        try {
+          legacyAgents = await agentApi.getLegacyAgents();
+        } catch (err) {
+          outputError(
+            json,
+            `Failed to fetch legacy agents: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+          return;
+        }
+
+        const match = legacyAgents.find((a) => a.id === numericId);
+        if (!match) {
+          outputError(
+            json,
+            `Agent with ID ${numericId} not found in legacy agents.`
+          );
+          return;
+        }
+
+        const startMigrationCommand = `acp agent migrate --agent-id ${match.id}`;
+
+        switch (match.migrationStatus) {
+          case MigrationStatus.PENDING:
+            outputError(
+              json,
+              `Agent "${match.name}" is not yet created. Run ${startMigrationCommand} to start migrating the agent.`
+            );
+            return;
+          case MigrationStatus.COMPLETED:
+            outputError(
+              json,
+              `Agent "${match.name}" has already been migrated.`
+            );
+            return;
+          case MigrationStatus.IN_PROGRESS:
+            break;
+          default:
+            outputError(
+              json,
+              `Agent "${match.name}" has an unexpected migration status: ${match.migrationStatus}.`
+            );
+            return;
+        }
+
+        const agents = await agentApi.list();
+        const selectedAgent = agents.data.find((a) =>
+          a.chains.find((c) => c.acpV2AgentId === numericId)
+        );
+
+        if (!selectedAgent) {
+          outputError(
+            json,
+            `No migrated agent found linked to legacy agent ID ${numericId}.`
+          );
+          return;
+        }
+
+        await agentApi.update(selectedAgent.id, { isHidden: false });
+
+        setActiveWallet(selectedAgent.walletAddress);
+        setAgentId(selectedAgent.walletAddress, selectedAgent.id);
+
+        if (json) {
+          outputResult(json, {
+            success: true,
+            activeAgent: match.name,
+            walletAddress: match.walletAddress,
+          });
+        } else {
+          console.log(
+            `\nAgent "${match.name}" has been migrated successfully! This is your active agent now.`
+          );
+        }
+        return;
+      }
+
+      // Main migrate flow
+      let legacyAgents: LegacyAgent[];
+      try {
+        legacyAgents = await agentApi.getLegacyAgents();
+      } catch (err) {
+        outputError(
+          json,
+          `Failed to fetch legacy agents: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return;
+      }
+
+      if (legacyAgents.length === 0) {
+        outputError(json, "No legacy agents to migrate.");
+        return;
+      }
+
+      let selected: LegacyAgent;
+      const instructions =
+        "Before proceeding, read migration.md and ensure all prerequisites are complete.";
+
+      if (opts.agentId) {
+        const numericId = parseLegacyId(opts.agentId, json);
+        if (numericId === null) return;
+        const found = legacyAgents.find((a) => a.id === numericId);
+        if (!found) {
+          outputError(
+            json,
+            `Agent with ID ${opts.agentId} not found in legacy agents.`
+          );
+          return;
+        }
+        selected = found;
+      } else {
+        selected = await selectOption(
+          "Select an agent to migrate:",
+          legacyAgents,
+          (a) =>
+            `${a.name} ${maskAddress(a.walletAddress)} [${a.migrationStatus}]`
+        );
+      }
+
+      const completeMigrationCommand = `acp agent migrate --agent-id ${selected.id} --complete`;
+
+      switch (selected.migrationStatus) {
+        case MigrationStatus.IN_PROGRESS:
+          outputError(
+            json,
+            `Agent "${selected.name}" migration is in progress. Run ${completeMigrationCommand} to complete the migration.`
+          );
+          return;
+        case MigrationStatus.COMPLETED:
+          outputError(
+            json,
+            `Agent "${selected.name}" has already been migrated.`
+          );
+          return;
+        case MigrationStatus.PENDING:
+          break;
+        default:
+          outputError(
+            json,
+            `Agent "${selected.name}" has an unexpected migration status: ${selected.migrationStatus}.`
+          );
+          return;
+      }
+
+      if (!json) {
+        console.log(`\nMigrating "${selected.name}"...`);
+      }
+
+      let migratedAgent: Agent;
+      try {
+        migratedAgent = await agentApi.migrateAgent(selected.id);
+      } catch (err) {
+        outputError(
+          json,
+          `Failed to migrate agent: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return;
+      }
+
+      if (!json) {
+        console.log("Migration initiated. Setting up signer...\n");
+      }
+
+      const signerOk = await runAddSignerFlow(agentApi, json, migratedAgent);
+      if (!signerOk) return;
+
+      if (!json) {
+        console.log(
+          `Your agent has been created. ${instructions}\n\nWhen you are ready to activate this agent, run:\n\n  ${completeMigrationCommand}`
+        );
+      } else {
+        outputResult(json, {
+          success: true,
+          acpAgentId: selected.id,
+          agentName: selected.name,
+          instructions,
+          nextStep: completeMigrationCommand,
         });
       }
     });

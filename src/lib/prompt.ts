@@ -8,12 +8,13 @@ export function prompt(
   return new Promise((resolve) => rl.question(question, resolve));
 }
 
-export function printTable(rows: [string, string][]): void {
-  const col1 = Math.max(...rows.map(([label]) => label.length));
-  const col2 = Math.max(...rows.map(([, value]) => value.length));
+export function printTable(rows: [string, string | null][]): void {
+  const normalized = rows.map(([label, value]): [string, string] => [label, value ?? "N/A"]);
+  const col1 = Math.max(...normalized.map(([label]) => label.length));
+  const col2 = Math.max(...normalized.map(([, value]) => value.length));
   const line = `+${"-".repeat(col1 + 2)}+${"-".repeat(col2 + 2)}+`;
   console.log(line);
-  for (const [label, value] of rows) {
+  for (const [label, value] of normalized) {
     console.log(`| ${label.padEnd(col1)} | ${value.padEnd(col2)} |`);
   }
   console.log(line);
