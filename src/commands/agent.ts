@@ -200,6 +200,7 @@ export function registerAgentCommands(program: Command): void {
     .option("--name <name>", "Agent name")
     .option("--description <text>", "Agent description")
     .option("--image <url>", "Agent image URL")
+    .option("--signer", "Automatically set up a signer after creation")
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
@@ -288,8 +289,24 @@ export function registerAgentCommands(program: Command): void {
         ["Wallet Address", created.walletAddress ?? "N/A"],
       ]);
 
-      const privyAppId = process.env.ACP_PRIVY_APP_ID;
-      if (!privyAppId) {
+      let setupSigner = opts.signer === true;
+
+      if (!setupSigner) {
+        const signerRl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        const answer = await new Promise<string>((resolve) =>
+          signerRl.question(
+            "\nWould you like to set up a signer for this agent? (y/N) ",
+            resolve
+          )
+        );
+        signerRl.close();
+        setupSigner = answer.toLowerCase() === "y";
+      }
+
+      if (!setupSigner) {
         return;
       }
 

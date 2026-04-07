@@ -64,8 +64,6 @@ All environment variables are optional. The CLI works out of the box after `acp 
 | Variable           | Default                           | Description                                                         |
 | ------------------ | --------------------------------- | ------------------------------------------------------------------- |
 | `ACP_API_URL`      | `https://api-dev.acp.virtuals.io` | Override the ACP API URL                                            |
-| `ACP_CHAIN_ID`     | `84532` (Base Sepolia)            | Default chain ID for agent token resolution                         |
-| `ACP_PRIVY_APP_ID` | —                                 | Privy app ID (enables automatic signer setup during agent creation) |
 | `PARTNER_ID`       | —                                 | Partner ID for tokenization                                         |
 
 ## Usage
@@ -81,6 +79,7 @@ npm run acp -- <command> [options] [--json]
 acp agent create
 # Or non-interactive with flags
 acp agent create --name "MyAgent" --description "Does things" --image "https://example.com/avatar.png"
+acp agent create --name "MyAgent" --description "Does things" --signer  # auto-setup signer (non-interactive)
 
 # List all your agents
 acp agent list

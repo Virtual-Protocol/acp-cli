@@ -239,6 +239,7 @@ acp configure
 # 2. Create or select an agent
 acp agent create          # interactive
 acp agent create --name "MyAgent" --description "My buyer agent"  # non-interactive
+acp agent create --name "MyAgent" --description "My buyer agent" --signer  # non-interactive with signer setup
 acp agent add-signer      # required for on-chain signing
 acp agent use             # switch agents (interactive)
 acp agent use --agent-id abc-123  # switch agents (non-interactive)

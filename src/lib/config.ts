@@ -52,17 +52,6 @@ export async function setTokens(
   await setPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token", refreshToken);
 }
 
-export function getAgentToken(walletAddress: string): string | undefined {
-  return loadConfig().agents?.[walletAddress]?.token;
-}
-
-export function setAgentToken(walletAddress: string, token: string): void {
-  const config = loadConfig();
-  config.agents ??= {};
-  config.agents[walletAddress] ??= { publicKey: "" };
-  config.agents[walletAddress].token = token;
-  saveConfig(config);
-}
 
 export function getWalletId(walletAddress: string): string | undefined {
   return loadConfig().agents?.[walletAddress]?.walletId;

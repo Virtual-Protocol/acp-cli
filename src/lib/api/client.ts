@@ -1,5 +1,4 @@
 import {
-  getAgentToken,
   getRefreshToken,
   getToken,
   isTokenExpired,
@@ -61,18 +60,7 @@ export class ApiClient {
   }
 }
 
-async function resolveToken(
-  walletAddress: string | undefined,
-  apiUrl: string
-): Promise<string> {
-  if (walletAddress) {
-    let token = getAgentToken(walletAddress);
-    if (!token || isTokenExpired(token)) {
-      const chainId = Number(process.env.ACP_CHAIN_ID || "84532");
-      token = await AuthApi.fetchAndStoreToken(walletAddress, chainId, apiUrl);
-    }
-    return token;
-  }
+async function resolveToken(apiUrl: string): Promise<string> {
   const token = await getToken();
   if (!token) {
     throw new CliError(
@@ -115,7 +103,7 @@ export async function getClient(walletAddress?: string): Promise<{
   authApi: AuthApi;
 }> {
   const apiUrl = process.env.ACP_API_URL || ACP_SERVER_URL;
-  const token = await resolveToken(walletAddress, apiUrl);
+  const token = await resolveToken(apiUrl);
   const httpClient = new ApiClient(apiUrl, token);
   return {
     agentApi: new AgentApi(httpClient),

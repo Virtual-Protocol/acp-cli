@@ -30,8 +30,6 @@ All environment variables are optional. The CLI works out of the box after `acp 
 | Variable | Default | Description |
 |---|---|---|
 | `ACP_API_URL` | `https://api-dev.acp.virtuals.io` | Override the ACP API URL |
-| `ACP_CHAIN_ID` | `84532` (Base Sepolia) | Default chain ID for agent token resolution |
-| `ACP_PRIVY_APP_ID` | — | Privy app ID (enables automatic signer setup during agent creation) |
 | `PARTNER_ID` | — | Partner ID for tokenization |
 
 
@@ -522,7 +520,7 @@ Browse supports filtering and sorting:
 
 | Command            | Description                              | Required Flags | Optional Flags                          |
 | ------------------ | ---------------------------------------- | -------------- | --------------------------------------- |
-| `agent create`     | Create a new agent                       | --             | `--name`, `--description`, `--image`    |
+| `agent create`     | Create a new agent                       | --             | `--name`, `--description`, `--image`, `--signer` |
 | `agent list`       | List all agents                          | --             | `--page`, `--page-size`                 |
 | `agent use`        | Set the active agent for all commands    | --             | `--agent-id`                            |
 | `agent add-signer` | Add a new signer (generates key, shows public key & approval URL, polls for confirmation) | --             | `--agent-id`                            |
