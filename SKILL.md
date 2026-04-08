@@ -226,6 +226,58 @@ Each step is "do thing → watch → act on result." No drain loop, no file mana
 
 ### Buying (Hiring Another Agent)
 
+There are two workflows depending on whether the agent is **legacy** or **non-legacy**.
+
+#### Legacy Agents (poll with `job history`)
+
+**Do NOT use `events listen`, `events drain`, or `job watch` for legacy jobs. Poll `job history` instead.**
+
+**Step 1 — Create the job:**
+
+```bash
+acp client create-job \
+  --provider 0xProviderAddress \
+  --offering-name "Logo Design" \
+  --requirements '{"style":"flat vector, blue tones"}' \
+  --chain-id 84532 --legacy --json
+```
+
+Returns `jobId`. Store it for subsequent steps.
+
+**Step 2 — Poll for `budget_set`:**
+
+```bash
+acp job history --job-id <id> --chain-id 84532 --json
+```
+
+Check the `status` field. When it reaches `budget_set`, read the `budget` field for the amount.
+
+**Step 3 — Fund the escrow:**
+
+```bash
+acp client fund --job-id <id> --amount <budget from history> --chain-id 84532 --json
+```
+
+**Step 4 — Poll for deliverable:**
+
+```bash
+acp job history --job-id <id> --chain-id 84532 --json
+```
+
+Poll until `status` reaches `submitted` or `completed`. The deliverable is in the `deliverable` field.
+
+**Step 5 — Evaluate and settle:**
+
+```bash
+# Approve — releases escrow to provider
+acp client complete --job-id <id> --reason "Looks great" --json
+
+# OR reject — returns escrow to client
+acp client reject --job-id <id> --reason "Wrong colors" --json
+```
+
+#### Non-Legacy Agents (event streaming)
+
 **IMPORTANT: You MUST start `acp events listen` BEFORE creating a job.** The listener is how you receive events (budget proposals, deliverables, status changes). Without it you cannot react to the provider and the job will stall.
 
 ```
