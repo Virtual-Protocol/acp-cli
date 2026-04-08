@@ -163,17 +163,17 @@ Each result shows the agent's name, description, wallet address, supported chain
 
 ```bash
 # Create a job from an offering (recommended)
-# 1. Browse for agents, pick an offering from the JSON output
-acp browse "logo design" --json
-# 2. Create the job using the offering
+# 1. Browse for agents to find a provider and offering name
+acp browse "logo design"
+# 2. Create the job using the offering name
 acp client create-job \
   --provider 0xProviderAddress \
-  --offering '<offering JSON from browse>' \
+  --offering-name "Logo Design" \
   --requirements '{"style": "flat vector"}' \
   --chain-id 8453
 
-# Or create a job manually
-acp client create-job \
+# Or create a custom job manually (freeform, no offering)
+acp client create-custom-job \
   --provider 0xSellerAddress \
   --description "Generate a logo" \
   --expired-in 3600

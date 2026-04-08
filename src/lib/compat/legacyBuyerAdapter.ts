@@ -163,6 +163,13 @@ export class LegacyBuyerAdapter {
   }
 
   /**
+   * Get a legacy agent by wallet address.
+   */
+  async getAgent(walletAddress: string): Promise<LegacyAgent | null> {
+    return this.acpClient.getAgent(walletAddress as Address);
+  }
+
+  /**
    * Map a v1 job phase to v2-style status string.
    */
   static phaseToStatus(phase: AcpJobPhases): string {

@@ -16,8 +16,8 @@ export function registerClientCommands(program: Command): void {
     .description("Client-side commands (create jobs, fund, complete, reject)");
 
   client
-    .command("create-job")
-    .description("Create a new job on-chain")
+    .command("create-custom-job")
+    .description("Create a custom job on-chain with a freeform description")
     .requiredOption("--provider <address>", "Provider wallet address")
     .option(
       "--evaluator <address>",
@@ -62,46 +62,41 @@ export function registerClientCommands(program: Command): void {
 
         // Default: v2 flow
         const agent = await createAgentFromConfig();
-        await agent.start();
-        try {
-          const clientAddress = await agent.getAddress();
-          const evaluator = opts.evaluator ?? clientAddress;
-          const expiredAt =
-            Math.floor(Date.now() / 1000) + Number(opts.expiredIn);
-          const params = {
-            providerAddress: opts.provider,
-            evaluatorAddress: evaluator,
-            expiredAt,
+        const clientAddress = await agent.getAddress();
+        const evaluator = opts.evaluator ?? clientAddress;
+        const expiredAt =
+          Math.floor(Date.now() / 1000) + Number(opts.expiredIn);
+        const params = {
+          providerAddress: opts.provider,
+          evaluatorAddress: evaluator,
+          expiredAt,
+          description: opts.description,
+          hookAddress: opts.hook,
+        };
+
+        const jobId = opts.fundTransfer
+          ? await agent.createFundTransferJob(chainId, params)
+          : await agent.createJob(chainId, params);
+
+        registerJob(jobId.toString(), false, chainId);
+
+        if (json) {
+          outputResult(json, {
+            success: true,
+            action: "create-job",
+            protocol: "v2",
+            jobId: jobId.toString(),
+            provider: opts.provider,
+            evaluator,
             description: opts.description,
-            hookAddress: opts.hook,
-          };
-
-          const jobId = opts.fundTransfer
-            ? await agent.createFundTransferJob(chainId, params)
-            : await agent.createJob(chainId, params);
-
-          registerJob(jobId.toString(), false, chainId);
-
-          if (json) {
-            outputResult(json, {
-              success: true,
-              action: "create-job",
-              protocol: "v2",
-              jobId: jobId.toString(),
-              provider: opts.provider,
-              evaluator,
-              description: opts.description,
-              hookAddress: opts.hook ?? (opts.fundTransfer ? "default" : "N/A"),
-            });
-          } else {
-            console.log(`\n${c.green(`Job #${jobId} created successfully!`)}`);
-            console.log(`  Provider:    ${c.dim(maskAddress(opts.provider))}`);
-            console.log(`  Evaluator:   ${c.dim(maskAddress(evaluator))}`);
-            console.log(`  Description: ${opts.description}`);
-            console.log(`  Chain:       ${opts.chainId}`);
-          }
-        } finally {
-          await agent.stop();
+            hookAddress: opts.hook ?? (opts.fundTransfer ? "default" : "N/A"),
+          });
+        } else {
+          console.log(`\n${c.green(`Job #${jobId} created successfully!`)}`);
+          console.log(`  Provider:    ${c.dim(maskAddress(opts.provider))}`);
+          console.log(`  Evaluator:   ${c.dim(maskAddress(evaluator))}`);
+          console.log(`  Description: ${opts.description}`);
+          console.log(`  Chain:       ${opts.chainId}`);
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
@@ -282,12 +277,12 @@ export function registerClientCommands(program: Command): void {
     });
 
   client
-    .command("create-job-from-offering")
+    .command("create-job")
     .description(
       "Create a job from a provider's offering (validates requirements, auto-calculates expiry)"
     )
     .requiredOption("--provider <address>", "Provider wallet address")
-    .requiredOption("--offering <json>", "Offering JSON object (from browse output)")
+    .requiredOption("--offering-name <name>", "Offering name")
     .requiredOption("--requirements <json>", "Requirements JSON matching the offering schema")
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
     .option(
@@ -298,13 +293,6 @@ export function registerClientCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        let offering: AcpAgentOffering;
-        try {
-          offering = JSON.parse(opts.offering);
-        } catch {
-          throw new Error("Invalid --offering JSON");
-        }
-
         let requirements: Record<string, unknown> | string;
         try {
           requirements = JSON.parse(opts.requirements);
@@ -315,17 +303,38 @@ export function registerClientCommands(program: Command): void {
         const chainId = Number(opts.chainId);
 
         if (opts.legacy) {
+          // Legacy flow: resolve offering from old backend
           const adapter = await createLegacyBuyerAdapter();
+          const legacyAgent = await adapter.getAgent(opts.provider);
+          if (!legacyAgent) {
+            throw new Error(`No legacy agent found for wallet address: ${opts.provider}`);
+          }
+          const matches = legacyAgent.jobOfferings.filter(
+            (o) => o.name === opts.offeringName
+          );
+          if (matches.length === 0) {
+            const available = legacyAgent.jobOfferings.map((o) => o.name).join(", ");
+            throw new Error(
+              `Offering "${opts.offeringName}" not found. Available: ${available || "none"}`
+            );
+          }
+          if (matches.length > 1) {
+            throw new Error(
+              `Multiple offerings named "${opts.offeringName}" found for this provider.`
+            );
+          }
+          const legacyOffering = matches[0];
+
           const jobId = await adapter.createJob({
             providerAddress: opts.provider,
             requirement: requirements,
             amount:
-              offering.priceType === "fixed" ? Number(offering.priceValue) : 0,
+              legacyOffering.priceType === "fixed" ? Number(legacyOffering.price) : 0,
             evaluatorAddress: opts.evaluator,
             expiredAt: new Date(
-              Date.now() + (offering.slaMinutes || 60) * 60 * 1000
+              Date.now() + (legacyOffering.slaMinutes || 60) * 60 * 1000
             ),
-            offeringName: offering.name,
+            offeringName: legacyOffering.name,
             chainId,
           });
 
@@ -337,42 +346,57 @@ export function registerClientCommands(program: Command): void {
             protocol: "legacy",
             jobId: String(jobId),
             provider: opts.provider,
-            offering: offering.name,
+            offering: legacyOffering.name,
           });
           return;
         }
 
-        // Default: v2 flow
+        // Default: v2 flow — resolve offering from v2 backend
         const agent = await createAgentFromConfig();
-        await agent.start();
-        try {
-          const evaluator = opts.evaluator ?? (await agent.getAddress());
-          const jobId = await agent.createJobFromOffering(
-            chainId,
-            offering,
-            opts.provider,
-            requirements,
-            { evaluatorAddress: evaluator }
+        const providerAgent = await agent.getAgentByWalletAddress(opts.provider);
+        if (!providerAgent) {
+          throw new Error(`No agent found for wallet address: ${opts.provider}`);
+        }
+        const matches = providerAgent.offerings.filter(
+          (o: AcpAgentOffering) => o.name === opts.offeringName
+        );
+        if (matches.length === 0) {
+          const available = providerAgent.offerings.map((o: AcpAgentOffering) => o.name).join(", ");
+          throw new Error(
+            `Offering "${opts.offeringName}" not found. Available: ${available || "none"}`
           );
+        }
+        if (matches.length > 1) {
+          throw new Error(
+            `Multiple offerings named "${opts.offeringName}" found for this provider.`
+          );
+        }
+        const offering = matches[0];
 
-          registerJob(jobId.toString(), false, chainId);
+        const evaluator = opts.evaluator ?? (await agent.getAddress());
+        const jobId = await agent.createJobFromOffering(
+          chainId,
+          offering,
+          opts.provider,
+          requirements,
+          { evaluatorAddress: evaluator }
+        );
 
-          if (json) {
-            outputResult(json, {
-              success: true,
-              action: "create-job-from-offering",
-              protocol: "v2",
-              jobId: jobId.toString(),
-              provider: opts.provider,
-              offering: offering.name,
-            });
-          } else {
-            console.log(`\n${c.green(`Job #${jobId} created from offering "${offering.name}"`)}`);
-            console.log(`  Provider: ${c.dim(maskAddress(opts.provider))}`);
-            console.log(`  Chain:    ${opts.chainId}`);
-          }
-        } finally {
-          await agent.stop();
+        registerJob(jobId.toString(), false, chainId);
+
+        if (json) {
+          outputResult(json, {
+            success: true,
+            action: "create-job-from-offering",
+            protocol: "v2",
+            jobId: jobId.toString(),
+            provider: opts.provider,
+            offering: offering.name,
+          });
+        } else {
+          console.log(`\n${c.green(`Job #${jobId} created from offering "${offering.name}"`)}`);
+          console.log(`  Provider: ${c.dim(maskAddress(opts.provider))}`);
+          console.log(`  Chain:    ${opts.chainId}`);
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));

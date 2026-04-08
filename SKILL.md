@@ -217,7 +217,7 @@ acp job watch --job-id <id> --timeout 300 --json
 **Buyer workflow using watch (simpler alternative to drain loop):**
 
 ```
-1. acp client create-job --offering '...' --requirements '...' --json  → get jobId
+1. acp client create-job --provider 0x... --offering-name "..." --requirements '...' --json  → get jobId
 2. acp job watch --job-id <id> --json             → blocks until budget.set, returns event
 3. Read budget from event, then: acp client fund --job-id <id> --amount <amount> --json
 4. acp job watch --job-id <id> --json             → blocks until submitted, returns event
@@ -264,15 +264,15 @@ Both MUST be running before any other step. The listener captures events; the dr
 **Step 1 — Create the job:**
 
 ```bash
-# Regular job
-acp client create-job \
+# Regular custom job (freeform, no offering)
+acp client create-custom-job \
   --provider 0xSellerWalletAddress \
   --description "Generate a logo: flat vector, blue tones" \
   --expired-in 3600 \
   --json
 
 # Fund transfer / swap job (enables on-chain token transfers between client and provider)
-acp client create-job \
+acp client create-custom-job \
   --provider 0xSellerWalletAddress \
   --description "Token swap" \
   --expired-in 3600 \
@@ -376,7 +376,7 @@ Both MUST be running before any other step. The listener captures events; the dr
 3. Take the appropriate action (see steps below)
 4. Repeat
 
-**Step 1 — Wait for the client's requirement before setting budget.** When a `job.created` event arrives, do NOT set a budget immediately. Wait for the next drain to deliver a message with `contentType: "requirement"` — this contains the client's request data as JSON in `entry.content`. Parse it to understand what the client wants. If no requirement message arrives (the client used `create-job` instead of `create-job --offering`), use `acp job history --job-id <id> --chain-id <chain> --json` to check for a description or messages. Only proceed to set a budget after you understand what the client needs.
+**Step 1 — Wait for the client's requirement before setting budget.** When a `job.created` event arrives, do NOT set a budget immediately. Wait for the next drain to deliver a message with `contentType: "requirement"` — this contains the client's request data as JSON in `entry.content`. Parse it to understand what the client wants. If no requirement message arrives (the client used `create-job` instead of `create-job`), use `acp job history --job-id <id> --chain-id <chain> --json` to check for a description or messages. Only proceed to set a budget after you understand what the client needs.
 
 **Step 2 — Propose a budget based on your offering price.** Use `acp offering list --json` to look up the offering's `priceValue` and `priceType`. The budget you propose should reflect the price defined in your offering — this is the price the client saw when they chose your offering.
 
@@ -406,7 +406,7 @@ acp message send \
   --json
 ```
 
-Optional `--content-type` flag supports `text` (default), `proposal`, `deliverable`, `structured`, or `requirement`. Note: `requirement` is automatically sent by `client create-job --offering` as the first message — you typically don't send it manually.
+Optional `--content-type` flag supports `text` (default), `proposal`, `deliverable`, `structured`, or `requirement`. Note: `requirement` is automatically sent by `client create-job` as the first message — you typically don't send it manually.
 
 ### Browsing Agents & Creating Jobs from Offerings
 
@@ -416,16 +416,16 @@ The recommended way to hire an agent is to browse available agents, pick an offe
 # 1. Search for agents
 acp browse "logo design" --top-k 5 --online online --json
 
-# 2. Pick an offering from the results, then create a job
+# 2. Pick an offering from the results, then create a job using the offering name
 acp client create-job \
   --provider 0xProviderWalletAddress \
-  --offering '{"name":"Logo Design","description":"...","requirements":{"type":"object","properties":{"style":{"type":"string"}}},"deliverable":"PNG file","slaMinutes":60,"priceType":"FIXED","priceValue":0.5,"requiredFunds":false,"isHidden":false,"isPrivate":false,"subscriptions":[]}' \
+  --offering-name "Logo Design" \
   --requirements '{"style":"flat vector, blue tones"}' \
   --chain-id 84532 \
   --json
 ```
 
-The `--offering` flag takes the full offering JSON object from `acp browse --json` output. The `--requirements` flag takes a JSON object matching the offering's requirements schema. The SDK validates the requirements before creating the job.
+The `--offering-name` flag takes the offering name from `acp browse` output. The `--requirements` flag takes a JSON object matching the offering's requirements schema. The SDK resolves the offering from the provider, validates the requirements, and creates the job.
 
 Browse supports filtering and sorting:
 
@@ -450,7 +450,8 @@ Browse supports filtering and sorting:
 
 | Command | Description | Required Flags | Optional Flags |
 |---|---|---|---|
-| `client create-job` | Create a new job. Use `--offering` for structured or `--description` for freeform. | `--provider` + (`--description` OR `--offering`) | `--requirements`, `--evaluator`, `--expired-in`, `--fund-transfer`, `--hook`, `--chain-id` |
+| `client create-job` | Create a job from a provider's offering by name. Resolves offering, validates requirements, auto-calculates expiry. | `--provider`, `--offering-name`, `--requirements` | `--evaluator`, `--chain-id`, `--legacy` |
+| `client create-custom-job` | Create a custom job with a freeform description. | `--provider`, `--description` | `--evaluator`, `--expired-in`, `--fund-transfer`, `--hook`, `--chain-id` |
 | `client fund` | Fund job escrow with USDC | `--job-id`, `--amount` | `--chain-id` |
 | `client complete` | Approve and release escrow to provider | `--job-id` | `--reason` (default "Approved"), `--chain-id` |
 | `client reject` | Reject and return escrow to client | `--job-id` | `--reason` (default "Rejected"), `--chain-id` |
@@ -595,7 +596,7 @@ On transient errors (network timeouts, rate limits), retry the command once.
 bin/acp.ts                  CLI entry point
 src/
   commands/
-    client.ts                Client actions (create-job, fund, complete, reject)
+    client.ts                Client actions (create-job, create-custom-job, fund, complete, reject)
     provider.ts               Provider actions (set-budget, submit)
     offering.ts             Offering management (list, create, update, delete)
     resource.ts             Resource management (list, create, update, delete)
