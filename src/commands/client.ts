@@ -9,11 +9,160 @@ import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { registerJob, isLegacyJob, getLegacyJobChainId } from "../lib/config";
 import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
+import { PriceType } from "@virtuals-protocol/acp-node";
 
 export function registerClientCommands(program: Command): void {
   const client = program
     .command("client")
     .description("Client-side commands (create jobs, fund, complete, reject)");
+
+  client
+    .command("create-job")
+    .description(
+      "Create a job from a provider's offering (validates requirements, auto-calculates expiry)"
+    )
+    .requiredOption("--provider <address>", "Provider wallet address")
+    .requiredOption("--offering-name <name>", "Offering name")
+    .requiredOption(
+      "--requirements <json>",
+      "Requirements JSON matching the offering schema"
+    )
+    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .option(
+      "--evaluator <address>",
+      "Evaluator wallet address (defaults to your own)"
+    )
+    .option("--legacy", "Target a legacy (openclaw-cli) provider")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        let requirements: Record<string, unknown> | string;
+        try {
+          requirements = JSON.parse(opts.requirements);
+        } catch {
+          requirements = opts.requirements;
+        }
+
+        const chainId = Number(opts.chainId);
+
+        if (opts.legacy) {
+          // Legacy flow: resolve offering from old backend
+          const adapter = await createLegacyBuyerAdapter();
+          const legacyAgent = await adapter.getAgent(opts.provider);
+          if (!legacyAgent) {
+            throw new Error(
+              `No legacy agent found for wallet address: ${opts.provider}`
+            );
+          }
+          const matches = legacyAgent.jobOfferings.filter(
+            (o) => o.name === opts.offeringName
+          );
+          if (matches.length === 0) {
+            const available = legacyAgent.jobOfferings
+              .map((o) => o.name)
+              .join(", ");
+            throw new Error(
+              `Offering "${opts.offeringName}" not found. Available: ${
+                available || "none"
+              }`
+            );
+          }
+          if (matches.length > 1) {
+            throw new Error(
+              `Multiple offerings named "${opts.offeringName}" found for this provider.`
+            );
+          }
+          const legacyOffering = matches[0];
+
+          const jobId = await adapter.createJob({
+            providerAddress: opts.provider,
+            requirement: requirements,
+            priceType: legacyOffering.priceType,
+            priceValue: Number(legacyOffering.price),
+            evaluatorAddress: opts.evaluator,
+            expiredAt: new Date(
+              Date.now() + (legacyOffering.slaMinutes || 60) * 60 * 1000
+            ),
+            offeringName: legacyOffering.name,
+            chainId,
+          });
+
+          registerJob(String(jobId), true, chainId);
+
+          outputResult(json, {
+            success: true,
+            action: "create-job-from-offering",
+            protocol: "legacy",
+            jobId: String(jobId),
+            provider: opts.provider,
+            offering: legacyOffering.name,
+          });
+          return;
+        }
+
+        // Default: v2 flow — resolve offering from v2 backend
+        const agent = await createAgentFromConfig();
+        const providerAgent = await agent.getAgentByWalletAddress(
+          opts.provider
+        );
+        if (!providerAgent) {
+          throw new Error(
+            `No agent found for wallet address: ${opts.provider}`
+          );
+        }
+        const matches = providerAgent.offerings.filter(
+          (o: AcpAgentOffering) => o.name === opts.offeringName
+        );
+        if (matches.length === 0) {
+          const available = providerAgent.offerings
+            .map((o: AcpAgentOffering) => o.name)
+            .join(", ");
+          throw new Error(
+            `Offering "${opts.offeringName}" not found. Available: ${
+              available || "none"
+            }`
+          );
+        }
+        if (matches.length > 1) {
+          throw new Error(
+            `Multiple offerings named "${opts.offeringName}" found for this provider.`
+          );
+        }
+        const offering = matches[0];
+
+        const evaluator = opts.evaluator ?? (await agent.getAddress());
+        const jobId = await agent.createJobFromOffering(
+          chainId,
+          offering,
+          opts.provider,
+          requirements,
+          { evaluatorAddress: evaluator }
+        );
+
+        registerJob(jobId.toString(), false, chainId);
+
+        if (json) {
+          outputResult(json, {
+            success: true,
+            action: "create-job-from-offering",
+            protocol: "v2",
+            jobId: jobId.toString(),
+            provider: opts.provider,
+            offering: offering.name,
+          });
+        } else {
+          console.log(
+            `\n${c.green(
+              `Job #${jobId} created from offering "${offering.name}"`
+            )}`
+          );
+          console.log(`  Provider: ${c.dim(maskAddress(opts.provider))}`);
+          console.log(`  Chain:    ${opts.chainId}`);
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
 
   client
     .command("create-custom-job")
@@ -42,7 +191,7 @@ export function registerClientCommands(program: Command): void {
           const jobId = await adapter.createJob({
             providerAddress: opts.provider,
             requirement: opts.description,
-            priceType: "fixed",
+            priceType: PriceType.FIXED,
             priceValue: 0,
             evaluatorAddress: opts.evaluator,
             expiredAt: new Date(Date.now() + Number(opts.expiredIn) * 1000),
@@ -156,7 +305,11 @@ export function registerClientCommands(program: Command): void {
               amount: opts.amount,
             });
           } else {
-            console.log(`\n${c.green(`Job #${opts.jobId} funded with ${opts.amount} USDC`)}`);
+            console.log(
+              `\n${c.green(
+                `Job #${opts.jobId} funded with ${opts.amount} USDC`
+              )}`
+            );
           }
         } finally {
           await agent.stop();
@@ -176,7 +329,8 @@ export function registerClientCommands(program: Command): void {
       const json = isJson(cmd);
       try {
         if (isLegacyJob(opts.jobId)) {
-          const legacyChainId = getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
+          const legacyChainId =
+            getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
           const adapter = await createLegacyBuyerAdapter();
           await adapter.completeJob(Number(opts.jobId), opts.reason);
           outputResult(json, {
@@ -210,7 +364,11 @@ export function registerClientCommands(program: Command): void {
               reason: opts.reason,
             });
           } else {
-            console.log(`\n${c.green(`Job #${opts.jobId} completed`)} — escrow released to provider`);
+            console.log(
+              `\n${c.green(
+                `Job #${opts.jobId} completed`
+              )} — escrow released to provider`
+            );
           }
         } finally {
           await agent.stop();
@@ -230,7 +388,8 @@ export function registerClientCommands(program: Command): void {
       const json = isJson(cmd);
       try {
         if (isLegacyJob(opts.jobId)) {
-          const legacyChainId = getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
+          const legacyChainId =
+            getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
           const adapter = await createLegacyBuyerAdapter();
           await adapter.rejectJob(Number(opts.jobId), opts.reason);
           outputResult(json, {
@@ -264,140 +423,17 @@ export function registerClientCommands(program: Command): void {
               reason: opts.reason,
             });
           } else {
-            console.log(`\n${c.red(`Job #${opts.jobId} rejected`)} — escrow returned to client`);
+            console.log(
+              `\n${c.red(
+                `Job #${opts.jobId} rejected`
+              )} — escrow returned to client`
+            );
             if (opts.reason !== "Rejected") {
               console.log(`  Reason: ${opts.reason}`);
             }
           }
         } finally {
           await agent.stop();
-        }
-      } catch (err) {
-        outputError(json, err instanceof Error ? err : String(err));
-      }
-    });
-
-  client
-    .command("create-job")
-    .description(
-      "Create a job from a provider's offering (validates requirements, auto-calculates expiry)"
-    )
-    .requiredOption("--provider <address>", "Provider wallet address")
-    .requiredOption("--offering-name <name>", "Offering name")
-    .requiredOption("--requirements <json>", "Requirements JSON matching the offering schema")
-    .requiredOption("--chain-id <id>", "Chain ID", "8453")
-    .option(
-      "--evaluator <address>",
-      "Evaluator wallet address (defaults to your own)"
-    )
-    .option("--legacy", "Target a legacy (openclaw-cli) provider")
-    .action(async (opts, cmd) => {
-      const json = isJson(cmd);
-      try {
-        let requirements: Record<string, unknown> | string;
-        try {
-          requirements = JSON.parse(opts.requirements);
-        } catch {
-          requirements = opts.requirements;
-        }
-
-        const chainId = Number(opts.chainId);
-
-        if (opts.legacy) {
-          // Legacy flow: resolve offering from old backend
-          const adapter = await createLegacyBuyerAdapter();
-          const legacyAgent = await adapter.getAgent(opts.provider);
-          if (!legacyAgent) {
-            throw new Error(`No legacy agent found for wallet address: ${opts.provider}`);
-          }
-          const matches = legacyAgent.jobOfferings.filter(
-            (o) => o.name === opts.offeringName
-          );
-          if (matches.length === 0) {
-            const available = legacyAgent.jobOfferings.map((o) => o.name).join(", ");
-            throw new Error(
-              `Offering "${opts.offeringName}" not found. Available: ${available || "none"}`
-            );
-          }
-          if (matches.length > 1) {
-            throw new Error(
-              `Multiple offerings named "${opts.offeringName}" found for this provider.`
-            );
-          }
-          const legacyOffering = matches[0];
-
-          const jobId = await adapter.createJob({
-            providerAddress: opts.provider,
-            requirement: requirements,
-            priceType: legacyOffering.priceType as "fixed" | "percentage",
-            priceValue: Number(legacyOffering.price),
-            evaluatorAddress: opts.evaluator,
-            expiredAt: new Date(
-              Date.now() + (legacyOffering.slaMinutes || 60) * 60 * 1000
-            ),
-            offeringName: legacyOffering.name,
-            chainId,
-          });
-
-          registerJob(String(jobId), true, chainId);
-
-          outputResult(json, {
-            success: true,
-            action: "create-job-from-offering",
-            protocol: "legacy",
-            jobId: String(jobId),
-            provider: opts.provider,
-            offering: legacyOffering.name,
-          });
-          return;
-        }
-
-        // Default: v2 flow — resolve offering from v2 backend
-        const agent = await createAgentFromConfig();
-        const providerAgent = await agent.getAgentByWalletAddress(opts.provider);
-        if (!providerAgent) {
-          throw new Error(`No agent found for wallet address: ${opts.provider}`);
-        }
-        const matches = providerAgent.offerings.filter(
-          (o: AcpAgentOffering) => o.name === opts.offeringName
-        );
-        if (matches.length === 0) {
-          const available = providerAgent.offerings.map((o: AcpAgentOffering) => o.name).join(", ");
-          throw new Error(
-            `Offering "${opts.offeringName}" not found. Available: ${available || "none"}`
-          );
-        }
-        if (matches.length > 1) {
-          throw new Error(
-            `Multiple offerings named "${opts.offeringName}" found for this provider.`
-          );
-        }
-        const offering = matches[0];
-
-        const evaluator = opts.evaluator ?? (await agent.getAddress());
-        const jobId = await agent.createJobFromOffering(
-          chainId,
-          offering,
-          opts.provider,
-          requirements,
-          { evaluatorAddress: evaluator }
-        );
-
-        registerJob(jobId.toString(), false, chainId);
-
-        if (json) {
-          outputResult(json, {
-            success: true,
-            action: "create-job-from-offering",
-            protocol: "v2",
-            jobId: jobId.toString(),
-            provider: opts.provider,
-            offering: offering.name,
-          });
-        } else {
-          console.log(`\n${c.green(`Job #${jobId} created from offering "${offering.name}"`)}`);
-          console.log(`  Provider: ${c.dim(maskAddress(opts.provider))}`);
-          console.log(`  Chain:    ${opts.chainId}`);
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));

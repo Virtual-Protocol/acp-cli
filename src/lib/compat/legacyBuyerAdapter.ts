@@ -7,6 +7,7 @@ import AcpClientDefault, {
   baseAcpConfigV2,
   FareAmount,
   AcpJobPhases,
+  PriceType,
 } from "@virtuals-protocol/acp-node";
 
 // Handle CJS/ESM interop — default import may be double-wrapped
@@ -65,7 +66,7 @@ export class LegacyBuyerAdapter {
   async createJob(params: {
     providerAddress: string;
     requirement: string | Record<string, unknown>;
-    priceType: "fixed" | "percentage";
+    priceType: PriceType;
     priceValue: number;
     evaluatorAddress?: string;
     expiredAt?: Date;
@@ -73,11 +74,13 @@ export class LegacyBuyerAdapter {
     chainId: number;
   }): Promise<number> {
     const config = resolveLegacyConfig(params.chainId);
-    const fareAmount = new FareAmount(params.priceValue, config.baseFare);
+    const fareAmount = new FareAmount(
+      params.priceType === PriceType.PERCENTAGE ? 0 : params.priceValue,
+      config.baseFare
+    );
 
     // V1 sellers expect the first memo content to be JSON with shape:
     //   { name: "<offering name>", requirement: { ... } }
-    // See openclaw-acp/src/seller/runtime/seller.ts resolveOfferingName/resolveServiceRequirements
     const serviceRequirement: Record<string, unknown> = {
       name: params.offeringName ?? "",
       priceType: params.priceType,
