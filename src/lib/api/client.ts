@@ -8,7 +8,7 @@ import { CliError } from "../errors";
 import { AuthApi } from "./auth";
 import { AgentApi } from "./agent";
 import { JobApi } from "./job";
-import { ACP_SERVER_URL } from "acp-node-v2";
+import { ACP_SERVER_URL, ACP_TESTNET_SERVER_URL } from "acp-node-v2";
 
 export class ApiClient {
   constructor(private baseUrl: string, private token?: string) {}
@@ -102,7 +102,8 @@ export async function getClient(walletAddress?: string): Promise<{
   jobApi: JobApi;
   authApi: AuthApi;
 }> {
-  const apiUrl = process.env.ACP_API_URL || ACP_SERVER_URL;
+  const isTestnet = process.env.IS_TESTNET === "true";
+  const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
   const token = await resolveToken(apiUrl);
   const httpClient = new ApiClient(apiUrl, token);
   return {

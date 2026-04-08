@@ -5,7 +5,7 @@ import { CliError } from "../lib/errors";
 import { AuthApi } from "../lib/api/auth";
 import { ApiClient } from "../lib/api/client";
 import { setTokens } from "../lib/config";
-import { ACP_SERVER_URL } from "acp-node-v2";
+import { ACP_SERVER_URL, ACP_TESTNET_SERVER_URL } from "acp-node-v2";
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -39,7 +39,8 @@ export function registerConfigureCommand(program: Command): void {
     .description("Authenticate the CLI with ACP")
     .action(async (_opts, cmd) => {
       const json = isJson(cmd);
-      const apiUrl = process.env.ACP_API_URL || ACP_SERVER_URL;
+      const isTestnet = process.env.IS_TESTNET === "true";
+      const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
       const authApi = new AuthApi(new ApiClient(apiUrl));
 
       let url: string;
