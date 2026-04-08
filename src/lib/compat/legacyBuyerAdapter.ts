@@ -50,7 +50,7 @@ export class LegacyBuyerAdapter {
     const connectSocket = !!options?.onNewTask;
 
     const acpClient = new AcpClient({
-      acpContractClient: bridge as any,
+      acpContractClient: bridge,
       onNewTask: options?.onNewTask,
       skipSocketConnection: !connectSocket,
     });
