@@ -1,6 +1,12 @@
 import type { Command } from "commander";
 import type { JobSession, JobRoomEntry } from "acp-node-v2";
-import { isJson, outputResult, outputError, isTTY, maskAddress } from "../lib/output";
+import {
+  isJson,
+  outputResult,
+  outputError,
+  isTTY,
+  maskAddress,
+} from "../lib/output";
 import { c } from "../lib/color";
 import {
   getWalletAddress,
@@ -65,19 +71,34 @@ export function registerJobCommands(program: Command): void {
                 }`
               );
               console.log(`  ${c.bold("Chain ID:")}         ${j.chainId}`);
-              console.log(`  ${c.bold("Client:")}           ${c.dim(j.clientAddress)}`);
-              console.log(`  ${c.bold("Provider:")}         ${c.dim(j.providerAddress)}`);
-              console.log(`  ${c.bold("Evaluator:")}        ${c.dim(j.evaluatorAddress)}`);
+              console.log(
+                `  ${c.bold("Client:")}           ${c.dim(j.clientAddress)}`
+              );
+              console.log(
+                `  ${c.bold("Provider:")}         ${c.dim(j.providerAddress)}`
+              );
+              console.log(
+                `  ${c.bold("Evaluator:")}        ${c.dim(j.evaluatorAddress)}`
+              );
               if (!j.legacy) {
                 console.log(
-                  `  ${c.bold("Budget:")}           ${formatUnits(BigInt(j.budget), 6)} USDC`
+                  `  ${c.bold("Budget:")}           ${formatUnits(
+                    BigInt(j.budget),
+                    6
+                  )} USDC`
                 );
               } else {
-                console.log(`  ${c.bold("Budget:")}           ${j.budget} USDC`);
+                console.log(
+                  `  ${c.bold("Budget:")}           ${j.budget} USDC`
+                );
               }
-              console.log(`  ${c.bold("Status:")}           ${c.status(j.jobStatus)}`);
+              console.log(
+                `  ${c.bold("Status:")}           ${c.status(j.jobStatus)}`
+              );
               if (j.expiredAt) {
-                console.log(`  ${c.bold("Expires At:")}       ${c.dim(j.expiredAt)}`);
+                console.log(
+                  `  ${c.bold("Expires At:")}       ${c.dim(j.expiredAt)}`
+                );
               }
               console.log();
             }
@@ -113,7 +134,7 @@ export function registerJobCommands(program: Command): void {
         if (isLegacyJob(opts.jobId)) {
           const legacyChainId =
             getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
-          const adapter = await createLegacyBuyerAdapter(legacyChainId);
+          const adapter = await createLegacyBuyerAdapter();
           const legacyJob = await adapter.getJob(Number(opts.jobId));
           if (!legacyJob) {
             throw new Error(`Legacy job ${opts.jobId} not found`);
@@ -174,14 +195,20 @@ export function registerJobCommands(program: Command): void {
             entries,
           });
         } else if (isTTY()) {
-          console.log(`${c.bold(`Job ${opts.jobId}`)} ${c.dim(`(chain ${opts.chainId})`)} [v2]`);
+          console.log(
+            `${c.bold(`Job ${opts.jobId}`)} ${c.dim(
+              `(chain ${opts.chainId})`
+            )} [v2]`
+          );
           console.log(`Status: ${c.status(status)}`);
           console.log(`Entries: ${entries.length}\n`);
           for (const e of entries) {
             if (e.kind === "system") {
               console.log(`  ${c.dim("[system]")} ${c.cyan(e.event.type)}`);
             } else {
-              console.log(`  ${c.dim(`[${maskAddress(e.from)}]`)} ${e.content}`);
+              console.log(
+                `  ${c.dim(`[${maskAddress(e.from)}]`)} ${e.content}`
+              );
             }
           }
         } else {
@@ -256,7 +283,7 @@ export function registerJobCommands(program: Command): void {
         if (isLegacyJob(jobId)) {
           // Legacy: watch via old SDK's onNewTask socket
           const legacyChainId = getLegacyJobChainId(jobId);
-          await createLegacyBuyerAdapter(legacyChainId, {
+          await createLegacyBuyerAdapter({
             onNewTask: (job: AcpJob) => {
               if (String(job.id) !== jobId) return;
 

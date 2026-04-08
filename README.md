@@ -61,12 +61,10 @@ Authentication is handled by `acp configure`, which opens a browser-based OAuth 
 
 All environment variables are optional. The CLI works out of the box after `acp configure`.
 
-| Variable | Default | Description |
-|---|---|---|
-| `ACP_API_URL` | `https://api-dev.acp.virtuals.io` | Override the ACP API URL |
-| `ACP_CHAIN_ID` | `84532` (Base Sepolia) | Default chain ID for agent token resolution |
-| `ACP_PRIVY_APP_ID` | — | Privy app ID (enables automatic signer setup during agent creation) |
-| `PARTNER_ID` | — | Partner ID for tokenization |
+| Variable           | Default                           | Description                                                         |
+| ------------------ | --------------------------------- | ------------------------------------------------------------------- |
+| `IS_TESTNET`       | —                                 | Set to `true` to use testnet chains, API server, and Privy app      |
+| `PARTNER_ID`       | —                                 | Partner ID for tokenization                                         |
 
 ## Usage
 

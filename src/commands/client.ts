@@ -38,7 +38,7 @@ export function registerClientCommands(program: Command): void {
         const chainId = Number(opts.chainId);
 
         if (opts.legacy) {
-          const adapter = await createLegacyBuyerAdapter(chainId);
+          const adapter = await createLegacyBuyerAdapter();
           const jobId = await adapter.createJob({
             providerAddress: opts.provider,
             requirement: opts.description,
@@ -121,7 +121,7 @@ export function registerClientCommands(program: Command): void {
 
         if (isLegacyJob(opts.jobId)) {
           const legacyChainId = getLegacyJobChainId(opts.jobId) ?? chainId;
-          const adapter = await createLegacyBuyerAdapter(legacyChainId);
+          const adapter = await createLegacyBuyerAdapter();
           await adapter.fundJob(
             Number(opts.jobId),
             `Funded ${opts.amount} USDC`
@@ -181,7 +181,7 @@ export function registerClientCommands(program: Command): void {
       try {
         if (isLegacyJob(opts.jobId)) {
           const legacyChainId = getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
-          const adapter = await createLegacyBuyerAdapter(legacyChainId);
+          const adapter = await createLegacyBuyerAdapter();
           await adapter.completeJob(Number(opts.jobId), opts.reason);
           outputResult(json, {
             success: true,
@@ -235,7 +235,7 @@ export function registerClientCommands(program: Command): void {
       try {
         if (isLegacyJob(opts.jobId)) {
           const legacyChainId = getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
-          const adapter = await createLegacyBuyerAdapter(legacyChainId);
+          const adapter = await createLegacyBuyerAdapter();
           await adapter.rejectJob(Number(opts.jobId), opts.reason);
           outputResult(json, {
             success: true,
@@ -315,7 +315,7 @@ export function registerClientCommands(program: Command): void {
         const chainId = Number(opts.chainId);
 
         if (opts.legacy) {
-          const adapter = await createLegacyBuyerAdapter(chainId);
+          const adapter = await createLegacyBuyerAdapter();
           const jobId = await adapter.createJob({
             providerAddress: opts.provider,
             requirement: requirements,

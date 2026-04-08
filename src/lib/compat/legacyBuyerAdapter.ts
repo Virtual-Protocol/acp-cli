@@ -36,7 +36,7 @@ export class LegacyBuyerAdapter {
    */
   static async create(
     provider: IEvmProviderAdapter,
-    chainId?: number,
+    chainId: number,
     options?: {
       onNewTask?: LegacyJobEventHandler;
     }
@@ -69,7 +69,7 @@ export class LegacyBuyerAdapter {
     evaluatorAddress?: string;
     expiredAt?: Date;
     offeringName?: string;
-    chainId?: number;
+    chainId: number;
   }): Promise<number> {
     const config = resolveLegacyConfig(params.chainId);
     const fareAmount = new FareAmount(params.amount, config.baseFare);
@@ -191,7 +191,7 @@ export class LegacyBuyerAdapter {
  * Resolve the old SDK config for a given chain ID.
  * Defaults to Base Sepolia testnet.
  */
-function resolveLegacyConfig(chainId?: number): AcpContractConfig {
+function resolveLegacyConfig(chainId: number): AcpContractConfig {
   if (chainId === 8453) {
     return baseAcpConfigV2;
   } else if (chainId === 84532) {

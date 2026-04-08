@@ -2,6 +2,14 @@ import {
   AcpAgent,
   ACP_CONTRACT_ADDRESSES,
   PrivyAlchemyEvmProviderAdapter,
+  PRIVY_APP_ID,
+  ACP_SERVER_URL,
+  ACP_TESTNET_SERVER_URL,
+  EVM_MAINNET_CHAINS,
+  EVM_TESTNET_CHAINS,
+  TESTNET_PRIVY_APP_ID,
+  SseTransport,
+  AcpApiClient,
 } from "acp-node-v2";
 import type { IEvmProviderAdapter } from "acp-node-v2";
 import {
@@ -12,8 +20,13 @@ import {
 } from "./config";
 import { getClient } from "./api/client";
 import { loadSignerKey } from "./signerKeychain";
-import { LegacyBuyerAdapter, type LegacyJobEventHandler } from "./compat/legacyBuyerAdapter";
+import {
+  LegacyBuyerAdapter,
+  type LegacyJobEventHandler,
+} from "./compat/legacyBuyerAdapter";
 import { CliError } from "./errors";
+import { Chain } from "viem";
+import { base, baseSepolia } from "viem/chains";
 
 export function requireEnv(name: string): string {
   const val = process.env[name];
@@ -46,18 +59,27 @@ export async function getWalletIdByAddress(
 }
 
 export async function createAgentFromConfig(): Promise<AcpAgent> {
-  const provider = await createProviderFromConfig();
+  const isTestnet = process.env.IS_TESTNET === "true";
+  const chains = isTestnet ? EVM_TESTNET_CHAINS : EVM_MAINNET_CHAINS;
+  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
 
   return AcpAgent.create({
     contractAddresses: ACP_CONTRACT_ADDRESSES,
-    provider,
+    provider: await createProviderFromConfig(chains, serverUrl, privyAppId),
+    api: new AcpApiClient({ serverUrl }),
+    transport: new SseTransport({ serverUrl }),
   });
 }
 
 /**
  * Create a provider adapter from config — shared between v2 agent and v1 adapter.
  */
-async function createProviderFromConfig(): Promise<IEvmProviderAdapter> {
+async function createProviderFromConfig(
+  chains: Chain[],
+  serverUrl: string,
+  privyAppId: string
+): Promise<IEvmProviderAdapter> {
   const walletAddress = getActiveWallet();
   if (!walletAddress) {
     throw new CliError(
@@ -93,6 +115,9 @@ async function createProviderFromConfig(): Promise<IEvmProviderAdapter> {
     walletAddress: walletAddress as `0x${string}`,
     walletId,
     signerPrivateKey,
+    chains,
+    serverUrl,
+    privyAppId,
   });
 }
 
@@ -100,12 +125,20 @@ async function createProviderFromConfig(): Promise<IEvmProviderAdapter> {
  * Create a LegacyBuyerAdapter for interacting with legacy (openclaw-cli) sellers.
  * Pass onNewTask to connect the old backend's socket and receive real-time events.
  */
-export async function createLegacyBuyerAdapter(
-  chainId?: number,
-  options?: { onNewTask?: LegacyJobEventHandler }
-): Promise<LegacyBuyerAdapter> {
-  const provider = await createProviderFromConfig();
-  return LegacyBuyerAdapter.create(provider, chainId, options);
+export async function createLegacyBuyerAdapter(options?: {
+  onNewTask?: LegacyJobEventHandler;
+}): Promise<LegacyBuyerAdapter> {
+  const isTestnet = process.env.IS_TESTNET === "true";
+  const chain = isTestnet ? baseSepolia : base;
+  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
+
+  const provider = await createProviderFromConfig(
+    [chain],
+    serverUrl,
+    privyAppId
+  );
+  return LegacyBuyerAdapter.create(provider, chain.id, options);
 }
 
 export function getWalletAddress(): string {

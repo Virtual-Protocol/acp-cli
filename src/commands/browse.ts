@@ -48,9 +48,10 @@ function printLegacyAgent(a: {
   name: string;
   walletAddress: string;
   jobOfferings: readonly any[];
-}): void {
+}, chainId: number): void {
   console.log(`  Name:           ${a.name} [legacy]`);
   console.log(`  Wallet:         ${a.walletAddress}`);
+  console.log(`  Chain:          ${chainId}`);
   if (a.jobOfferings.length > 0) {
     console.log(`  Offerings:`);
     for (const o of a.jobOfferings) {
@@ -113,6 +114,7 @@ export function registerBrowseCommand(program: Command): void {
                 slaMinutes: o.slaMinutes,
                 requiredFunds: o.requiredFunds,
               })),
+              chainId: adapter.chainId,
               legacy: true,
             }));
             process.stdout.write(JSON.stringify({ data }) + "\n");
@@ -126,7 +128,7 @@ export function registerBrowseCommand(program: Command): void {
 
           if (isTTY()) {
             for (const a of agents) {
-              printLegacyAgent(a);
+              printLegacyAgent(a, adapter.chainId);
             }
             console.log(`\n${agents.length} legacy agent(s) found.`);
           } else {

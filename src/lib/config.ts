@@ -37,11 +37,15 @@ function saveConfig(config: Config): void {
 }
 
 export async function getToken(): Promise<string | undefined> {
-  return (await getPassword(AUTH_KEYCHAIN_SERVICE, "access-token")) ?? undefined;
+  return (
+    (await getPassword(AUTH_KEYCHAIN_SERVICE, "access-token")) ?? undefined
+  );
 }
 
 export async function getRefreshToken(): Promise<string | undefined> {
-  return (await getPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token")) ?? undefined;
+  return (
+    (await getPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token")) ?? undefined
+  );
 }
 
 export async function setTokens(
@@ -51,7 +55,6 @@ export async function setTokens(
   await setPassword(AUTH_KEYCHAIN_SERVICE, "access-token", accessToken);
   await setPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token", refreshToken);
 }
-
 
 export function getWalletId(walletAddress: string): string | undefined {
   return loadConfig().agents?.[walletAddress]?.walletId;
@@ -131,7 +134,10 @@ export function isTokenExpired(token: string): boolean {
       Buffer.from(token.split(".")[1], "base64url").toString()
     );
     const bufferMs = 5 * 60 * 1000;
-    return typeof payload.exp === "number" && payload.exp * 1000 < Date.now() + bufferMs;
+    return (
+      typeof payload.exp === "number" &&
+      payload.exp * 1000 < Date.now() + bufferMs
+    );
   } catch {
     return true;
   }
