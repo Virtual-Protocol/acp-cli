@@ -3,9 +3,8 @@ import type { Command } from "commander";
 import { isJson, outputResult, outputError } from "../lib/output";
 import { CliError } from "../lib/errors";
 import { AuthApi } from "../lib/api/auth";
-import { ApiClient } from "../lib/api/client";
+import { getClient } from "../lib/api/client";
 import { setTokens } from "../lib/config";
-import { ACP_SERVER_URL, ACP_TESTNET_SERVER_URL } from "acp-node-v2";
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
@@ -39,9 +38,7 @@ export function registerConfigureCommand(program: Command): void {
     .description("Authenticate the CLI with ACP")
     .action(async (_opts, cmd) => {
       const json = isJson(cmd);
-      const isTestnet = process.env.IS_TESTNET === "true";
-      const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
-      const authApi = new AuthApi(new ApiClient(apiUrl));
+      const { authApi } = await getClient();
 
       let url: string;
       let requestId: string;
@@ -50,9 +47,7 @@ export function registerConfigureCommand(program: Command): void {
       } catch (err) {
         outputError(
           json,
-          `Failed to get auth URL: ${
-            err instanceof Error ? err : String(err)
-          }`
+          `Failed to get auth URL: ${err instanceof Error ? err : String(err)}`
         );
         return;
       }
