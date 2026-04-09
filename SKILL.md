@@ -579,6 +579,7 @@ Browse supports filtering and sorting:
 | `agent create`     | Create a new agent                       | --             | `--name`, `--description`, `--image`    |
 | `agent list`       | List all agents                          | --             | `--page`, `--page-size`                 |
 | `agent use`        | Set the active agent for all commands    | --             | `--agent-id`                            |
+| `agent update`     | Update the active agent's name, description, or image | -- | `--name`, `--description`, `--image` |
 | `agent add-signer` | Add a new signer (generates key, shows public key & approval URL, polls for confirmation) | --             | `--agent-id`                            |
 | `agent whoami`     | Show details of the currently active agent | --           | --                                      |
 | `agent tokenize`   | Tokenize an agent on a blockchain        | --             | `--wallet-address`, `--agent-id`, `--chain-id`, `--symbol` |

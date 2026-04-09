@@ -223,6 +223,7 @@ export interface TokenizeResponse {
 export interface UpdateAgentBody {
   name: string;
   description: string;
+  image: string;
   isHidden: boolean;
 }
 

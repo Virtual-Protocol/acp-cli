@@ -89,6 +89,12 @@ acp agent use
 # Or non-interactive
 acp agent use --agent-id abc-123
 
+# Update the active agent's name, description, or image (provide at least one flag)
+acp agent update --name "NewName"
+acp agent update --description "Updated description"
+acp agent update --image "https://example.com/new-avatar.png"
+acp agent update --name "NewName" --description "Updated description" --image "https://example.com/new-avatar.png"
+
 # Add a CLI signer to an existing agent (interactive)
 # Generates a P256 key pair, shows the public key for verification,
 # opens a browser URL for approval, and polls until confirmed.

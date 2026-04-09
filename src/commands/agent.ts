@@ -573,6 +573,93 @@ export function registerAgentCommands(program: Command): void {
     });
 
   agent
+    .command("update")
+    .description("Update the active agent's name, description, or image")
+    .option("--name <name>", "New agent name")
+    .option("--description <text>", "New agent description")
+    .option("--image <url>", "New agent image URL")
+    .action(async (opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+
+      const name: string | undefined = opts.name?.trim() || undefined;
+      const description: string | undefined =
+        opts.description?.trim() || undefined;
+      const imageUrl: string | undefined = opts.image?.trim() || undefined;
+
+      if (!name && !description && imageUrl === undefined) {
+        outputError(
+          json,
+          "Provide at least one of --name, --description, or --image to update."
+        );
+        return;
+      }
+
+      const activeWallet = getActiveWallet();
+      if (!activeWallet) {
+        outputError(
+          json,
+          new CliError(
+            "No active agent set.",
+            "NO_ACTIVE_AGENT",
+            "Run `acp agent use` to set an active agent."
+          )
+        );
+        return;
+      }
+
+      const agentId = getAgentId(activeWallet);
+      if (!agentId) {
+        outputError(
+          json,
+          new CliError(
+            "Agent ID not found for active wallet.",
+            "NO_ACTIVE_AGENT",
+            "Run `acp agent list` or `acp agent use` to populate it."
+          )
+        );
+        return;
+      }
+
+      const body: Parameters<typeof agentApi.update>[1] = {};
+      if (name !== undefined) body.name = name;
+      if (description !== undefined) body.description = description;
+      if (imageUrl !== undefined) body.image = imageUrl;
+
+      let updated: Agent;
+      try {
+        updated = await agentApi.update(agentId, body);
+      } catch (err) {
+        outputError(
+          json,
+          `Failed to update agent: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return;
+      }
+
+      if (json) {
+        outputResult(json, {
+          id: updated.id,
+          name: updated.name,
+          description: updated.description,
+          imageUrl: updated.imageUrl,
+        });
+        return;
+      }
+
+      console.log(
+        `\n${c.green(`${updated.name} has been updated successfully!`)}\n`
+      );
+      printTable([
+        ["Name", updated.name],
+        ["Description", updated.description],
+        ["Image", updated.imageUrl ?? "N/A"],
+      ]);
+    });
+
+  agent
     .command("tokenize")
     .description("Tokenize an agent on a blockchain")
     .option("--wallet-address <address>", "Agent wallet address")
