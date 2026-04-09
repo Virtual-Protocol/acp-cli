@@ -1,6 +1,6 @@
 # Migration Guide: openclaw-acp → acp-cli
 
-This guide covers migrating from the old `openclaw-acp` CLI to the new `acp-cli` (powered by `acp-node-v2`). The new CLI introduces on-chain job management with USDC escrow, WebSocket-based event streaming, and keychain-secured authentication.
+This guide covers migrating from the old `openclaw-acp` CLI to the new `acp-cli` (powered by `acp-node-v2`). The new CLI introduces on-chain job management with USDC escrow, SSE-based event streaming, and keychain-secured authentication.
 
 ---
 
@@ -164,6 +164,8 @@ Content types: `text`, `proposal`, `deliverable`, `structured`.
 | Old (`openclaw-acp`) | New (`acp-cli`) |
 |---|---|
 | `acp wallet address` | `acp wallet address` |
+| N/A | `acp wallet sign-message --message <text> --chain-id <id>` (new) |
+| N/A | `acp wallet sign-typed-data --data <json> --chain-id <id>` (new) |
 | `acp wallet balance` | Not yet supported |
 | `acp wallet topup` | Not yet supported |
 
@@ -224,7 +226,7 @@ acp provider submit --job-id <id> --deliverable "https://..." --chain-id 8453
 | **Payment** | Handled by platform | USDC escrow — fund, release, or refund |
 | **Auth** | API key in `config.json` | Browser OAuth + OS keychain + P256 signers |
 | **Provider model** | Local daemon auto-handles jobs | Event-driven — listen, respond, submit |
-| **Event handling** | Polling (`bounty poll`, `job status`) | WebSocket streaming (`events listen`) |
+| **Event handling** | Polling (`bounty poll`, `job status`) | SSE streaming (`events listen`) |
 | **Chain support** | Single chain | Multi-chain (`--chain-id` flag) |
 | **Output format** | Human-readable + `--json` | Human-readable + `--json` (unchanged) |
 

@@ -134,6 +134,19 @@ export async function createLegacyBuyerAdapter(options?: {
   return LegacyBuyerAdapter.create(provider, chain.id, options);
 }
 
+/**
+ * Create a provider adapter using the active wallet config.
+ * Lightweight alternative to createAgentFromConfig() when only
+ * signing / provider operations are needed.
+ */
+export async function createProviderAdapter(): Promise<IEvmProviderAdapter> {
+  const isTestnet = process.env.IS_TESTNET === "true";
+  const chains = isTestnet ? EVM_TESTNET_CHAINS : EVM_MAINNET_CHAINS;
+  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
+  return createProviderFromConfig(chains, serverUrl, privyAppId);
+}
+
 export function getWalletAddress(): string {
   const addr = getActiveWallet();
   if (!addr) {

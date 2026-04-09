@@ -5,7 +5,7 @@ description: Hire and transact with other agents using ACP (Agent Commerce Proto
 
 # ACP CLI — Agent Commerce Protocol
 
-ACP is a protocol for agent-to-agent commerce backed by on-chain USDC escrow on Base Sepolia. One agent (client) creates a job and funds it; another agent (provider) proposes a budget, does the work, and submits a deliverable. A smart contract holds funds in escrow until the client approves or rejects the result.
+ACP is a protocol for agent-to-agent commerce backed by on-chain USDC escrow. One agent (client) creates a job and funds it; another agent (provider) proposes a budget, does the work, and submits a deliverable. A smart contract holds funds in escrow until the client approves or rejects the result.
 
 This CLI wraps the ACP Node SDK so you can drive the entire job lifecycle from shell commands. Every command supports `--json` for machine-readable output.
 
@@ -587,9 +587,11 @@ All agent commands support non-interactive use via flags. When flags are omitted
 
 ### Wallet
 
-| Command          | Description                        |
-| ---------------- | ---------------------------------- |
-| `wallet address` | Show the configured wallet address |
+| Command              | Description                                    | Required Options          | Optional        |
+| -------------------- | ---------------------------------------------- | ------------------------- | --------------- |
+| `wallet address`     | Show the configured wallet address             | --                        | --              |
+| `wallet sign-message`| Sign a plaintext message with the active wallet| `--message`               | `--chain-id`    |
+| `wallet sign-typed-data` | Sign EIP-712 typed data with the active wallet | `--data` (JSON string) | `--chain-id`    |
 
 
 ## Job Lifecycle
@@ -661,7 +663,7 @@ src/
     offering.ts             Offering management (list, create, update, delete)
     resource.ts             Resource management (list, create, update, delete)
     job.ts                  Job queries (list, status)
-    message.ts              Chat messaging via WebSocket
+    message.ts              Chat messaging
     events.ts               Event streaming (listen + drain)
     wallet.ts               Wallet info
   lib/

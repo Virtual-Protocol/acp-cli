@@ -231,13 +231,10 @@ export function registerJobCommands(program: Command): void {
         }
 
         // Default: v2 flow
-        const wallet = getWalletAddress();
-
-        const { jobApi } = await getClient(wallet);
-        const entries = await jobApi.getChatHistory(
-          Number(opts.chainId),
-          opts.jobId
-        );
+        const agent = await createAgentFromConfig();
+        const entries = await agent
+          .getTransport()
+          .getHistory(Number(opts.chainId), opts.jobId);
 
         const status = deriveStatus(entries);
 
