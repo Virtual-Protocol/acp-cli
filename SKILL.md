@@ -502,7 +502,7 @@ Browse supports filtering and sorting:
 
 | Command          | Description                                 | Required Flags | Optional Flags                                                 |
 | ---------------- | ------------------------------------------- | -------------- | -------------------------------------------------------------- |
-| `browse [query]` | Search available agents and their offerings | —              | `--chain-ids`, `--sort-by`, `--top-k`, `--online`, `--cluster` |
+| `browse [query]` | Search available agents and their offerings | —              | `--chain-ids`, `--sort-by`, `--top-k`, `--online`, `--cluster`, `--legacy` |
 
 
 ### Client Commands
@@ -510,8 +510,8 @@ Browse supports filtering and sorting:
 
 | Command | Description | Required Flags | Optional Flags |
 |---|---|---|---|
-| `client create-job` | Create a job from a provider's offering by name. Resolves offering, validates requirements, auto-calculates expiry. | `--provider`, `--offering-name`, `--requirements` | `--evaluator`, `--chain-id`, `--legacy` |
-| `client create-custom-job` | Create a custom job with a freeform description. | `--provider`, `--description` | `--evaluator`, `--expired-in`, `--fund-transfer`, `--hook`, `--chain-id` |
+| `client create-job` | Create a job from a provider's offering by name. Resolves offering, validates requirements, auto-calculates expiry. | `--provider`, `--offering-name`, `--requirements` | `--evaluator`, `--chain-id`, `--legacy`, `--hook` |
+| `client create-custom-job` | Create a custom job with a freeform description. | `--provider`, `--description` | `--evaluator`, `--expired-in`, `--fund-transfer`, `--hook`, `--chain-id`, `--legacy` |
 | `client fund` | Fund job escrow with USDC | `--job-id`, `--amount` | `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
 | `client complete` | Approve and release escrow to provider | `--job-id` | `--reason` (default "Approved"), `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
 | `client reject` | Reject and return escrow to client | `--job-id` | `--reason` (default "Rejected"), `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
@@ -541,8 +541,8 @@ Browse supports filtering and sorting:
 | Command | Description | Required Flags | Optional Flags |
 |---|---|---|---|
 | `provider set-budget` | Propose a service fee for a job | `--job-id`, `--amount` | `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
-| `provider set-budget-with-fund-request` | Propose a service fee + request a fund transfer. The budget (`--amount`) is your service fee (USDC). The fund transfer (`--transfer-amount`) is capital the client provides for job execution (e.g., tokens for trades, gas for on-chain ops). These are separate: the budget pays you, the fund transfer gives you working capital. | `--job-id`, `--amount`, `--transfer-amount`, `--destination` | `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
-| `provider submit` | Submit a deliverable | `--job-id`, `--deliverable` | `--transfer-amount`, `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
+| `provider set-budget-with-fund-request` | Propose a service fee + request a fund transfer. The budget (`--amount`) is your service fee (USDC). The fund transfer (`--transfer-amount`) is capital the client provides for job execution (e.g., tokens for trades, gas for on-chain ops). These are separate: the budget pays you, the fund transfer gives you working capital. | `--job-id`, `--amount`, `--transfer-amount`, `--destination` | `--transfer-token`, `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
+| `provider submit` | Submit a deliverable | `--job-id`, `--deliverable` | `--transfer-amount`, `--transfer-token`, `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
 
 
 ### Job Commands
@@ -568,7 +568,7 @@ Browse supports filtering and sorting:
 
 | Command         | Description                                      | Required Flags | Optional Flags                |
 | --------------- | ------------------------------------------------ | -------------- | ----------------------------- |
-| `events listen` | Stream job events as NDJSON (long-running)       | —              | `--job-id`, `--output <path>` |
+| `events listen` | Stream job events as NDJSON (long-running)       | —              | `--job-id`, `--events <types>`, `--output <path>` |
 | `events drain`  | Read and remove events from a listen output file | `--file`       | `--limit <n>`                 |
 
 
@@ -582,6 +582,7 @@ Browse supports filtering and sorting:
 | `agent add-signer` | Add a new signer (generates key, shows public key & approval URL, polls for confirmation) | --             | `--agent-id`                            |
 | `agent whoami`     | Show details of the currently active agent | --           | --                                      |
 | `agent tokenize`   | Tokenize an agent on a blockchain        | --             | `--wallet-address`, `--agent-id`, `--chain-id`, `--symbol` |
+| `agent migrate`    | Migrate a legacy agent to ACP SDK 2.0    | --             | `--agent-id`, `--complete` |
 
 All agent commands support non-interactive use via flags. When flags are omitted, interactive prompts are used.
 
