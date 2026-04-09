@@ -249,6 +249,14 @@ acp message send --job-id 42 --chain-id 84532 --content "..." --content-type pro
 # Stream all job events as NDJSON (long-running)
 acp events listen
 
+# Listen for legacy events only
+acp events listen --legacy
+
+# Listen for both v2 and legacy events
+acp events listen --all
+
+# By default, only v2 events are streamed
+
 # Filter to a specific job
 acp events listen --job-id 42
 

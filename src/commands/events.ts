@@ -79,6 +79,8 @@ export function registerEventsCommand(program: Command): void {
       "Comma-separated event types to include (e.g. job.created,budget.set,job.funded)"
     )
     .option("--output <path>", "Append events to a file instead of stdout")
+    .option("--legacy", "Listen only for legacy events")
+    .option("--all", "Listen for both v2 and legacy events")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -94,150 +96,154 @@ export function registerEventsCommand(program: Command): void {
           ? new Set(opts.events.split(",").map((s: string) => s.trim()))
           : undefined;
 
-        agent.on("entry", async (session: JobSession, entry: JobRoomEntry) => {
-          if (opts.jobId && session.jobId !== opts.jobId) return;
+        if (!opts.legacy) {
+          agent.on("entry", async (session: JobSession, entry: JobRoomEntry) => {
+            if (opts.jobId && session.jobId !== opts.jobId) return;
 
-          const entryAny = entry as Record<string, unknown>;
-          const event = entryAny.event as Record<string, unknown> | undefined;
-          const eventType = event?.type as string | undefined;
+            const entryAny = entry as Record<string, unknown>;
+            const event = entryAny.event as Record<string, unknown> | undefined;
+            const eventType = event?.type as string | undefined;
 
-          if (allowedEvents) {
-            if (!eventType || !allowedEvents.has(eventType)) return;
-          }
-
-          const data = {
-            jobId: session.jobId,
-            chainId: session.chainId,
-            status: session.status,
-            legacy: false,
-            roles: session.roles,
-            availableTools: session
-              .availableTools()
-              .map((t: { name: string }) => t.name),
-            entry,
-          };
-
-          if (humanMode) {
-            const time = new Date().toLocaleTimeString("en-GB", {
-              hour12: false,
-            });
-            const tools = data.availableTools.filter(
-              (t: string) => t !== "wait"
-            );
-
-            if (eventType) {
-              const details = formatEventDetails(event!);
-              const toolStr =
-                tools.length > 0 ? c.dim(`  [${tools.join(", ")}]`) : "";
-              process.stdout.write(
-                `${c.dim(time)}  ${c.bold(`Job #${data.jobId}`)}  ${c.status(
-                  data.status
-                )}  ${c.cyan(eventType)}  ${details}${toolStr}\n`
-              );
-            } else {
-              const content = (entryAny.content as string) ?? "";
-              const from = (entryAny.from as string) ?? "unknown";
-              const truncated =
-                content.length > 80 ? content.slice(0, 77) + "..." : content;
-              process.stdout.write(
-                `${c.dim(time)}  ${c.bold(`Job #${data.jobId}`)}  ${c.dim(
-                  `[${maskAddress(from)}]`
-                )} ${truncated}\n`
-              );
+            if (allowedEvents) {
+              if (!eventType || !allowedEvents.has(eventType)) return;
             }
-          } else {
-            writeJson(JSON.stringify(data));
-          }
-        });
 
-        await agent.start();
+            const data = {
+              jobId: session.jobId,
+              chainId: session.chainId,
+              status: session.status,
+              legacy: false,
+              roles: session.roles,
+              availableTools: session
+                .availableTools()
+                .map((t: { name: string }) => t.name),
+              entry,
+            };
 
-        try {
-          const legacyAdapter = await createLegacyBuyerAdapter({
-            onNewTask: async (job: AcpJob, memoToSign?: AcpMemo) => {
-              const jobId = String(job.id);
-              if (opts.jobId && jobId !== opts.jobId) return;
-
-              const status = LegacyBuyerAdapter.phaseToStatus(job.phase);
-              const eventType = phaseToEventType(job.phase);
-
-              const deliverable = await job.getDeliverable();
-              const budget = job.price;
-
-              let fundRequest: FundIntent | null = null;
-
-              if (
-                memoToSign &&
-                memoToSign.payableDetails &&
-                job.phase === AcpJobPhases.NEGOTIATION
-              ) {
-                const requestToken = await agent.resolveRawAssetToken(
-                  memoToSign.payableDetails.token,
-                  memoToSign.payableDetails.amount,
-                  legacyAdapter.chainId
-                );
-
-                fundRequest = {
-                  amount: requestToken.amount,
-                  tokenAddress: requestToken.address,
-                  symbol: requestToken.symbol,
-                  recipient: memoToSign.payableDetails.recipient,
-                };
-              }
-
-              const completedMemo = job.memos.find(
-                (m) => m.nextPhase === AcpJobPhases.COMPLETED
-              );
-              let fundTransfer: FundIntent | null = null;
-
-              if (completedMemo && completedMemo.payableDetails) {
-                const transferToken = await agent.resolveRawAssetToken(
-                  completedMemo.payableDetails.token,
-                  completedMemo.payableDetails.amount,
-                  legacyAdapter.chainId
-                );
-
-                fundTransfer = {
-                  amount: transferToken.amount,
-                  tokenAddress: transferToken.address,
-                  symbol: transferToken.symbol,
-                  recipient: completedMemo.payableDetails.recipient,
-                };
-              }
-
-              const line = JSON.stringify({
-                jobId,
-                chainId: legacyAdapter.chainId,
-                status,
-                legacy: true,
-                roles: ["client"],
-                availableTools: legacyAvailableTools(job.phase),
-                entry: {
-                  kind: "system",
-                  onChainJobId: jobId,
-                  chainId: legacyAdapter.chainId,
-                  event: {
-                    type: eventType,
-                    jobId,
-                    budget,
-                    ...(fundTransfer ? { fundTransfer } : {}),
-                    ...(fundRequest ? { fundRequest } : {}),
-                    ...(deliverable ? { deliverable } : {}),
-                  },
-                  timestamp: Date.now(),
-                },
+            if (humanMode) {
+              const time = new Date().toLocaleTimeString("en-GB", {
+                hour12: false,
               });
-              writeJson(line);
-            },
+              const tools = data.availableTools.filter(
+                (t: string) => t !== "wait"
+              );
+
+              if (eventType) {
+                const details = formatEventDetails(event!);
+                const toolStr =
+                  tools.length > 0 ? c.dim(`  [${tools.join(", ")}]`) : "";
+                process.stdout.write(
+                  `${c.dim(time)}  ${c.bold(`Job #${data.jobId}`)}  ${c.status(
+                    data.status
+                  )}  ${c.cyan(eventType)}  ${details}${toolStr}\n`
+                );
+              } else {
+                const content = (entryAny.content as string) ?? "";
+                const from = (entryAny.from as string) ?? "unknown";
+                const truncated =
+                  content.length > 80 ? content.slice(0, 77) + "..." : content;
+                process.stdout.write(
+                  `${c.dim(time)}  ${c.bold(`Job #${data.jobId}`)}  ${c.dim(
+                    `[${maskAddress(from)}]`
+                  )} ${truncated}\n`
+                );
+              }
+            } else {
+              writeJson(JSON.stringify(data));
+            }
           });
-        } catch (err) {
-          process.stderr.write(
-            JSON.stringify({
-              warning: `Legacy listener failed: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            }) + "\n"
-          );
+
+          await agent.start();
+        }
+
+        if (opts.legacy || opts.all) {
+          try {
+            const legacyAdapter = await createLegacyBuyerAdapter({
+              onNewTask: async (job: AcpJob, memoToSign?: AcpMemo) => {
+                const jobId = String(job.id);
+                if (opts.jobId && jobId !== opts.jobId) return;
+
+                const status = LegacyBuyerAdapter.phaseToStatus(job.phase);
+                const eventType = phaseToEventType(job.phase);
+
+                const deliverable = await job.getDeliverable();
+                const budget = job.price;
+
+                let fundRequest: FundIntent | null = null;
+
+                if (
+                  memoToSign &&
+                  memoToSign.payableDetails &&
+                  job.phase === AcpJobPhases.NEGOTIATION
+                ) {
+                  const requestToken = await agent.resolveRawAssetToken(
+                    memoToSign.payableDetails.token,
+                    memoToSign.payableDetails.amount,
+                    legacyAdapter.chainId
+                  );
+
+                  fundRequest = {
+                    amount: requestToken.amount,
+                    tokenAddress: requestToken.address,
+                    symbol: requestToken.symbol,
+                    recipient: memoToSign.payableDetails.recipient,
+                  };
+                }
+
+                const completedMemo = job.memos.find(
+                  (m) => m.nextPhase === AcpJobPhases.COMPLETED
+                );
+                let fundTransfer: FundIntent | null = null;
+
+                if (completedMemo && completedMemo.payableDetails) {
+                  const transferToken = await agent.resolveRawAssetToken(
+                    completedMemo.payableDetails.token,
+                    completedMemo.payableDetails.amount,
+                    legacyAdapter.chainId
+                  );
+
+                  fundTransfer = {
+                    amount: transferToken.amount,
+                    tokenAddress: transferToken.address,
+                    symbol: transferToken.symbol,
+                    recipient: completedMemo.payableDetails.recipient,
+                  };
+                }
+
+                const line = JSON.stringify({
+                  jobId,
+                  chainId: legacyAdapter.chainId,
+                  status,
+                  legacy: true,
+                  roles: ["client"],
+                  availableTools: legacyAvailableTools(job.phase),
+                  entry: {
+                    kind: "system",
+                    onChainJobId: jobId,
+                    chainId: legacyAdapter.chainId,
+                    event: {
+                      type: eventType,
+                      jobId,
+                      budget,
+                      ...(fundTransfer ? { fundTransfer } : {}),
+                      ...(fundRequest ? { fundRequest } : {}),
+                      ...(deliverable ? { deliverable } : {}),
+                    },
+                    timestamp: Date.now(),
+                  },
+                });
+                writeJson(line);
+              },
+            });
+          } catch (err) {
+            process.stderr.write(
+              JSON.stringify({
+                warning: `Legacy listener failed: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              }) + "\n"
+            );
+          }
         }
 
         const wallet = getWalletAddress();
@@ -245,6 +251,11 @@ export function registerEventsCommand(program: Command): void {
           `${c.green("Listening for events... connected.")}\n`
         );
         process.stderr.write(`Agent: ${maskAddress(wallet)}\n`);
+        if (opts.legacy) {
+          process.stderr.write(`Protocol: ${c.cyan("legacy only")}\n`);
+        } else if (opts.all) {
+          process.stderr.write(`Protocol: ${c.cyan("v2 + legacy")}\n`);
+        }
         if (opts.output) {
           process.stderr.write(`Writing to: ${opts.output}\n`);
         }
@@ -258,7 +269,9 @@ export function registerEventsCommand(program: Command): void {
         }
 
         const shutdown = async () => {
-          await agent.stop();
+          if (!opts.legacy) {
+            await agent.stop();
+          }
           process.exit(0);
         };
         process.on("SIGINT", shutdown);
