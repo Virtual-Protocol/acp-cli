@@ -212,7 +212,7 @@ export function registerAgentCommands(program: Command): void {
       let image: string | undefined = opts.image?.trim() || undefined;
 
       const needsPrompt =
-        !name || !description || (image === undefined && !opts.image);
+        !name || !description || image === undefined;
       let rl: readline.Interface | undefined;
 
       try {
@@ -239,7 +239,7 @@ export function registerAgentCommands(program: Command): void {
           }
         }
 
-        if (image === undefined && !opts.image) {
+        if (image === undefined) {
           if (rl) {
             const imageInput = (
               await prompt(

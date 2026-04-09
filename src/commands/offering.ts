@@ -1,7 +1,6 @@
 import * as readline from "readline";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
 import type {  AgentOffering,
   CreateOfferingBody,
@@ -9,30 +8,8 @@ import type {  AgentOffering,
 } from "../lib/api/agent";
 import { getClient } from "../lib/api/client";
 import { prompt, selectOption, printTable } from "../lib/prompt";
-import { getActiveWallet, getAgentId } from "../lib/config";
 import { validateJsonSchema } from "../lib/validation";
-
-function getActiveAgentId(json: boolean): string | null {
-  const activeWallet = getActiveWallet();
-  if (!activeWallet) {
-    outputError(json, new CliError(
-      "No active agent set.",
-      "NO_ACTIVE_AGENT",
-      "Run `acp agent use` to set an active agent."
-    ));
-    return null;
-  }
-  const agentId = getAgentId(activeWallet);
-  if (!agentId) {
-    outputError(json, new CliError(
-      "Agent ID not found for active wallet.",
-      "NO_ACTIVE_AGENT",
-      "Run `acp agent list` or `acp agent use` to populate it."
-    ));
-    return null;
-  }
-  return agentId;
-}
+import { getActiveAgentId } from "../lib/activeAgent";
 
 function parseSchemaOrString(
   value: string,

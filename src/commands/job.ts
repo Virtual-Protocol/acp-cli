@@ -10,15 +10,14 @@ import {
 import { c } from "../lib/color";
 import type { AcpAgent } from "@virtuals-protocol/acp-node-v2";
 import {
-  getWalletAddress,
   createAgentFromConfig,
   createLegacyBuyerAdapter,
 } from "../lib/agentFactory";
-import { getClient } from "../lib/api/client";
 import { formatUnits } from "viem";
 import { isLegacyJob, getLegacyJobChainId } from "../lib/config";
 import { LegacyBuyerAdapter } from "../lib/compat/legacyBuyerAdapter";
 import { AcpJobPhases, AcpJob, AcpMemo } from "@virtuals-protocol/acp-node";
+import { legacyAvailableTools } from "../lib/activeAgent";
 
 export function registerJobCommands(program: Command): void {
   const job = program.command("job").description("Job queries and monitoring");
@@ -458,17 +457,6 @@ async function extractLegacyPayableInfo(
     symbol: token.symbol,
     recipient: pd.recipient,
   };
-}
-
-function legacyAvailableTools(phase: AcpJobPhases): string[] {
-  switch (phase) {
-    case AcpJobPhases.NEGOTIATION:
-      return ["fund"];
-    case AcpJobPhases.EVALUATION:
-      return ["complete", "reject"];
-    default:
-      return [];
-  }
 }
 
 type JobStatus =

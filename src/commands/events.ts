@@ -25,6 +25,7 @@ import { AcpJobPhases, AcpJob, AcpMemo } from "@virtuals-protocol/acp-node";
 import { FundIntent } from "@virtuals-protocol/acp-node-v2";
 import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
+import { legacyAvailableTools } from "../lib/activeAgent";
 
 function formatEventDetails(event: Record<string, unknown>): string {
   const parts: string[] = [];
@@ -58,17 +59,6 @@ function phaseToEventType(phase: AcpJobPhases): string {
       return "job.expired";
     default:
       return "job.created";
-  }
-}
-
-function v1AvailableTools(phase: AcpJobPhases): string[] {
-  switch (phase) {
-    case AcpJobPhases.NEGOTIATION:
-      return ["fund"];
-    case AcpJobPhases.EVALUATION:
-      return ["complete", "reject"];
-    default:
-      return [];
   }
 }
 
@@ -221,7 +211,7 @@ export function registerEventsCommand(program: Command): void {
                 status,
                 legacy: true,
                 roles: ["client"],
-                availableTools: v1AvailableTools(job.phase),
+                availableTools: legacyAvailableTools(job.phase),
                 entry: {
                   kind: "system",
                   onChainJobId: jobId,

@@ -1,11 +1,11 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 
 export function openBrowser(url: string): void {
-  const cmd =
-    process.platform === "win32"
-      ? `start "" "${url}"`
-      : process.platform === "darwin"
-      ? `open "${url}"`
-      : `xdg-open "${url}"`;
-  exec(cmd);
+  if (process.platform === "win32") {
+    execFile("cmd", ["/c", "start", "", url]);
+  } else if (process.platform === "darwin") {
+    execFile("open", [url]);
+  } else {
+    execFile("xdg-open", [url]);
+  }
 }

@@ -28,14 +28,6 @@ import { CliError } from "./errors";
 import { Chain } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
-export function requireEnv(name: string): string {
-  const val = process.env[name];
-  if (!val) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return val;
-}
-
 export async function getWalletIdByAddress(
   walletAddress: string
 ): Promise<string> {
