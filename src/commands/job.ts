@@ -29,10 +29,8 @@ export function registerJobCommands(program: Command): void {
     .action(async (_opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const wallet = getWalletAddress();
-
-        const { jobApi } = await getClient(wallet);
-        const v2Jobs = await jobApi.getActiveJobs();
+        const agent = await createAgentFromConfig();
+        const v2Jobs = await agent.getApi().getActiveJobs();
 
         const taggedV2 = v2Jobs.map((j: any) => ({ ...j, legacy: false }));
 
@@ -83,14 +81,11 @@ export function registerJobCommands(program: Command): void {
               );
               if (!j.legacy) {
                 console.log(
-                  `  ${c.bold("Budget:")}           ${formatUnits(
-                    BigInt(j.budget),
-                    6
-                  )} USDC`
-                );
-              } else {
-                console.log(
-                  `  ${c.bold("Budget:")}           ${j.budget} USDC`
+                  `  ${c.bold("Budget:")}           ${
+                    j.budget
+                      ? `${formatUnits(BigInt(j.budget), 6)} USDC`
+                      : "N/A"
+                  }`
                 );
               }
               console.log(

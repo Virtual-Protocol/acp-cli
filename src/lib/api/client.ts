@@ -97,7 +97,10 @@ async function resolveToken(apiUrl: string): Promise<string> {
   return result.token;
 }
 
-export async function getClient(walletAddress?: string, unauthenticated?: boolean): Promise<{
+export async function getClient(
+  walletAddress?: string,
+  unauthenticated?: boolean
+): Promise<{
   agentApi: AgentApi;
   jobApi: JobApi;
   authApi: AuthApi;
