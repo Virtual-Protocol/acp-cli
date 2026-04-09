@@ -71,9 +71,8 @@ export class LegacyBuyerAdapter {
     evaluatorAddress?: string;
     expiredAt?: Date;
     offeringName?: string;
-    chainId: number;
   }): Promise<number> {
-    const config = resolveLegacyConfig(params.chainId);
+    const config = resolveLegacyConfig(this.chainId);
     const fareAmount = new FareAmount(
       params.priceType === PriceType.PERCENTAGE ? 0 : params.priceValue,
       config.baseFare

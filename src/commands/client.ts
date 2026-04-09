@@ -85,7 +85,6 @@ export function registerClientCommands(program: Command): void {
               Date.now() + (legacyOffering.slaMinutes || 60) * 60 * 1000
             ),
             offeringName: legacyOffering.name,
-            chainId,
           });
 
           registerJob(String(jobId), true, chainId);
@@ -196,7 +195,6 @@ export function registerClientCommands(program: Command): void {
             priceValue: 0,
             evaluatorAddress: opts.evaluator,
             expiredAt: new Date(Date.now() + Number(opts.expiredIn) * 1000),
-            chainId,
           });
 
           registerJob(String(jobId), true, chainId);
