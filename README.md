@@ -211,8 +211,14 @@ acp provider submit --job-id 42 --deliverable "https://cdn.example.com/logo.png"
 ### Job Queries
 
 ```bash
-# List active jobs
+# List active v2 jobs (default)
 acp job list
+
+# List only legacy jobs
+acp job list --legacy
+
+# List all jobs (v2 + legacy)
+acp job list --all
 
 # Get full job history (status + messages)
 acp job history --job-id 42 --chain-id 84532

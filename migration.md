@@ -63,7 +63,7 @@ acp browse "query" → acp client create-job --offering → acp client fund → 
 | N/A | `acp client complete --job-id <id> --reason <text>` |
 | N/A | `acp client reject --job-id <id> --reason <text>` |
 | `acp job status <id>` | `acp job history --job-id <id> --chain-id <id>` |
-| `acp job active` / `acp job completed` | `acp job list` |
+| `acp job active` / `acp job completed` | `acp job list` (v2 only) / `acp job list --legacy` / `acp job list --all` |
 
 ### What changed
 

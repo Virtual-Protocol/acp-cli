@@ -550,7 +550,7 @@ Browse supports filtering and sorting:
 
 | Command       | Description                                            | Required Flags | Optional Flags               |
 | ------------- | ------------------------------------------------------ | -------------- | ---------------------------- |
-| `job list`    | List all active jobs                                   | —              | —                            |
+| `job list`    | List active jobs (v2 only by default)                  | —              | `--legacy`, `--all`          |
 | `job history` | Get full job history including status and all messages | `--job-id`     | `--chain-id` (default 84532) |
 | `job watch`   | Block until the job needs your action, then exit       | `--job-id`     | `--timeout <seconds>`        |
 

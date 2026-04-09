@@ -26,32 +26,38 @@ export function registerJobCommands(program: Command): void {
   job
     .command("list")
     .description("List active jobs (REST, no socket connection needed)")
-    .action(async (_opts, cmd) => {
+    .option("--legacy", "List only legacy jobs")
+    .option("--all", "List both v2 and legacy jobs")
+    .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const agent = await createAgentFromConfig();
-        const v2Jobs = await agent.getApi().getActiveJobs();
-
-        const taggedV2 = v2Jobs.map((j: any) => ({ ...j, legacy: false }));
-
-        // Also fetch legacy jobs
+        let taggedV2: any[] = [];
         let taggedLegacy: any[] = [];
-        try {
-          const adapter = await createLegacyBuyerAdapter();
-          const legacyJobs = await adapter.getActiveJobs();
-          taggedLegacy = legacyJobs.map((j) => ({
-            onChainJobId: String(j.id),
-            chainId: adapter.chainId,
-            clientAddress: j.clientAddress,
-            providerAddress: j.providerAddress,
-            evaluatorAddress: j.evaluatorAddress,
-            budget: String(j.price),
-            jobStatus: LegacyBuyerAdapter.phaseToStatus(j.phase),
-            expiredAt: "",
-            legacy: true,
-          }));
-        } catch {
-          // Legacy fetch failed — continue with v2 only
+
+        if (!opts.legacy) {
+          const agent = await createAgentFromConfig();
+          const v2Jobs = await agent.getApi().getActiveJobs();
+          taggedV2 = v2Jobs.map((j: any) => ({ ...j, legacy: false }));
+        }
+
+        if (opts.legacy || opts.all) {
+          try {
+            const adapter = await createLegacyBuyerAdapter();
+            const legacyJobs = await adapter.getActiveJobs();
+            taggedLegacy = legacyJobs.map((j) => ({
+              onChainJobId: String(j.id),
+              chainId: adapter.chainId,
+              clientAddress: j.clientAddress,
+              providerAddress: j.providerAddress,
+              evaluatorAddress: j.evaluatorAddress,
+              budget: String(j.price),
+              jobStatus: LegacyBuyerAdapter.phaseToStatus(j.phase),
+              expiredAt: "",
+              legacy: true,
+            }));
+          } catch {
+            // Legacy fetch failed — continue without legacy jobs
+          }
         }
 
         const allJobs = [...taggedV2, ...taggedLegacy];
