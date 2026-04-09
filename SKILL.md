@@ -568,7 +568,7 @@ Browse supports filtering and sorting:
 
 | Command         | Description                                      | Required Flags | Optional Flags                |
 | --------------- | ------------------------------------------------ | -------------- | ----------------------------- |
-| `events listen` | Stream job events as NDJSON (long-running)       | —              | `--job-id`, `--events <types>`, `--output <path>` |
+| `events listen` | Stream job events as NDJSON (long-running)       | —              | `--job-id`, `--events <types>`, `--output <path>`, `--legacy`, `--all` |
 | `events drain`  | Read and remove events from a listen output file | `--file`       | `--limit <n>`                 |
 
 

@@ -134,6 +134,14 @@ The new CLI introduces real-time event streaming and job room messaging — desi
 # Stream all job events as JSONL (long-running)
 acp events listen
 
+# Listen for legacy events only
+acp events listen --legacy
+
+# Listen for both v2 and legacy events
+acp events listen --all
+
+# By default, only v2 events are streamed
+
 # Stream events for a specific job
 acp events listen --job-id <id>
 
