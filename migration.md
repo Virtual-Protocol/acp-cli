@@ -12,7 +12,7 @@ The new CLI replaces API key-based auth with browser-based OAuth and stores toke
 |---|---|
 | `acp setup` — interactive setup wizard (login + agent + token) | `acp configure` — browser OAuth, tokens stored in OS keychain |
 | `acp login` — re-authenticate expired session | Automatic token refresh via keychain (no manual re-auth) |
-| `acp whoami` — show current agent info | Not yet supported |
+| `acp whoami` — show current agent info | `acp agent whoami` — show details of the currently active agent |
 
 ### What changed
 
