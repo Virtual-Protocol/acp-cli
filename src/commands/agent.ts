@@ -116,7 +116,7 @@ async function runAddSignerFlow(
   let requestId: string;
   try {
     const res = await api.addSignerWithUrl(agent.id);
-    signerUrl = `${res.data.url}&publicKey=${publicKey}`;
+    signerUrl = `${res.data.url}&publicKey=${encodeURIComponent(publicKey)}`;
     requestId = res.data.requestId;
   } catch (err) {
     outputError(
