@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import * as readline from "readline";
 import { formatUnits } from "viem";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import { getWalletAddress, createProviderAdapter } from "../lib/agentFactory";
@@ -7,11 +8,12 @@ import { getAgentId, getActiveWallet } from "../lib/config";
 import { CHAIN_NETWORK_MAP } from "../lib/api/agent";
 import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
+import { openBrowser } from "../lib/browser";
+import { selectOption, prompt } from "../lib/prompt";
+import qrcode from "qrcode-terminal";
 
 export function registerWalletCommands(program: Command): void {
-  const wallet = program
-    .command("wallet")
-    .description("Wallet commands");
+  const wallet = program.command("wallet").description("Wallet commands");
 
   wallet
     .command("address")
@@ -103,7 +105,9 @@ export function registerWalletCommands(program: Command): void {
           throw new CliError(
             `Unsupported chain ID: ${chainId}`,
             "VALIDATION_ERROR",
-            `Supported chain IDs: ${Object.entries(CHAIN_NETWORK_MAP).map(([id, name]) => `${id} (${name})`).join(", ")}`
+            `Supported chain IDs: ${Object.entries(CHAIN_NETWORK_MAP)
+              .map(([id, name]) => `${id} (${name})`)
+              .join(", ")}`
           );
         }
 
@@ -133,17 +137,22 @@ export function registerWalletCommands(program: Command): void {
         }
 
         if (isTTY()) {
-          console.log(`\n${c.bold(`Wallet Balance on ${network} (${chainId})`)}\n`);
+          console.log(
+            `\n${c.bold(`Wallet Balance on ${network} (${chainId})`)}\n`
+          );
           console.log(`  ${c.bold("Address:")}  ${c.dim(walletAddress)}\n`);
 
           if (tokens.length === 0) {
             console.log("  No tokens found.\n");
           } else {
-            const header = `  ${c.dim("TOKEN".padEnd(10))}${c.dim("NAME".padEnd(22))}${c.dim("BALANCE".padEnd(24))}${c.dim("USD")}`;
+            const header = `  ${c.dim("TOKEN".padEnd(10))}${c.dim(
+              "NAME".padEnd(22)
+            )}${c.dim("BALANCE".padEnd(24))}${c.dim("USD")}`;
             console.log(header);
             for (const t of tokens) {
               const isNative = t.tokenAddress === null;
-              const symbol = t.tokenMetadata.symbol ?? (isNative ? "ETH" : "???");
+              const symbol =
+                t.tokenMetadata.symbol ?? (isNative ? "ETH" : "???");
               const name = t.tokenMetadata.name ?? (isNative ? "Ether" : "");
               const decimals = t.tokenMetadata.decimals ?? 18;
               const balance = formatUnits(BigInt(t.tokenBalance), decimals);
@@ -152,7 +161,9 @@ export function registerWalletCommands(program: Command): void {
               const value = unitPrice * parseFloat(balance);
               const price = `$${value.toFixed(2)}`;
               console.log(
-                `  ${c.cyan(symbol.padEnd(10))}${name.padEnd(22)}${bal.padEnd(24)}${price}`
+                `  ${c.cyan(symbol.padEnd(10))}${name.padEnd(22)}${bal.padEnd(
+                  24
+                )}${price}`
               );
             }
             console.log("");
@@ -168,9 +179,166 @@ export function registerWalletCommands(program: Command): void {
             const unitPrice = parseFloat(t.tokenPrices?.[0]?.value ?? "0");
             const value = unitPrice * parseFloat(balance);
             console.log(
-              `${symbol}\t${name}\t${balance}\t$${value.toFixed(2)}\t${t.tokenAddress ?? "native"}`
+              `${symbol}\t${name}\t${balance}\t$${value.toFixed(2)}\t${
+                t.tokenAddress ?? "native"
+              }`
             );
           }
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  wallet
+    .command("topup")
+    .description("Add funds to your agent wallet")
+    .option("--method <method>", "Payment method: coinbase or card")
+    .requiredOption("--chain-id <id>", "Chain ID")
+    .option("--amount <amount>", "Amount in USD")
+    .option("--email <email>", "Receipt email (required for card)")
+    .option("--us", "Use US Crossmint keys (for card payments)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const walletAddress = getWalletAddress();
+        const chainId = Number(opts.chainId);
+
+        const provider = await createProviderAdapter();
+        const supportedChainIds = await provider.getSupportedChainIds();
+        if (!supportedChainIds.includes(chainId)) {
+          throw new CliError(
+            `Unsupported chain ID: ${chainId}`,
+            "VALIDATION_ERROR",
+            `Supported chain IDs: ${supportedChainIds.join(", ")}`
+          );
+        }
+        const { agentApi } = await getClient();
+
+        // Determine payment method
+        let method: string;
+        if (opts.method) {
+          method = opts.method;
+        } else if (!isTTY() || json) {
+          throw new CliError(
+            "Payment method required in non-interactive mode.",
+            "VALIDATION_ERROR",
+            "Use --method coinbase, --method card, or --method qr"
+          );
+        } else {
+          const methods = [
+            { label: "Coinbase", value: "coinbase" },
+            { label: "Card", value: "card" },
+            { label: "Manual transfer (QR)", value: "qr" },
+          ];
+          const selected = await selectOption(
+            "\n  How would you like to fund your wallet?\n",
+            methods,
+            (m) => m.label
+          );
+          method = selected.value;
+        }
+
+        if (method === "coinbase") {
+          const result = await agentApi.getCoinbaseUrl(
+            walletAddress,
+            chainId,
+            opts.amount
+          );
+          const { url } = result.data;
+          outputResult(json, { walletAddress, method: "coinbase", url });
+          if (!json && isTTY()) {
+            console.log(`\n  Opening Coinbase Pay in your browser...\n`);
+            openBrowser(url);
+          }
+        } else if (method === "card") {
+          let amount = opts.amount;
+          let email = opts.email;
+
+          if ((!amount || !email) && isTTY() && !json) {
+            const rl = readline.createInterface({
+              input: process.stdin,
+              output: process.stdout,
+            });
+            if (!amount) amount = await prompt(rl, "  Amount (USD): ");
+            if (!email) email = await prompt(rl, "  Receipt email: ");
+            rl.close();
+          }
+
+          if (!amount || !email) {
+            throw new CliError(
+              "Amount and email required for card payment.",
+              "VALIDATION_ERROR",
+              "Use --amount and --email flags"
+            );
+          }
+
+          // Step 1: Init Crossmint order
+          const isUS = opts.us === true;
+          const initResult = await agentApi.initCrossmintOrder(
+            walletAddress,
+            chainId,
+            isUS
+          );
+          let signature: string | undefined;
+
+          // Step 2: Sign challenge if needed
+          if (initResult.data.needsSignature && initResult.data.challenge) {
+            if (!json && isTTY()) {
+              process.stdout.write("  Signing wallet verification...");
+            }
+            signature = await provider.signMessage(
+              chainId,
+              initResult.data.challenge
+            );
+            if (!json && isTTY()) {
+              console.log(` ${c.green("✓")}`);
+            }
+          }
+
+          // Step 3: Complete order
+          const completeResult = await agentApi.completeCrossmintOrder({
+            walletAddress,
+            chainId,
+            amount: Number(amount),
+            receiptEmail: email,
+            signature,
+            isUS,
+          });
+
+          const { checkoutUrl } = completeResult.data;
+          outputResult(json, {
+            walletAddress,
+            method: "card",
+            checkoutUrl,
+          });
+          if (!json && isTTY()) {
+            console.log(`\n  Opening Crossmint checkout in your browser...\n`);
+            openBrowser(checkoutUrl);
+          }
+        } else if (method === "qr") {
+          if (!json && isTTY()) {
+            console.log(`\n  ${c.bold("Wallet:")} ${walletAddress}`);
+            console.log(
+              `  ${c.dim(
+                "Send USDC on chain " + chainId + " to the address above."
+              )}\n`
+            );
+            qrcode.generate(walletAddress, { small: true }, (code) => {
+              for (const line of code.split("\n")) {
+                console.log(`  ${line}`);
+              }
+              console.log("");
+            });
+          } else {
+            outputResult(json, { walletAddress, method: "qr", chainId });
+          }
+        } else {
+          throw new CliError(
+            `Unknown payment method: ${method}`,
+            "VALIDATION_ERROR",
+            "Use --method coinbase, --method card, or --method qr"
+          );
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));

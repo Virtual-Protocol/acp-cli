@@ -174,8 +174,8 @@ Content types: `text`, `proposal`, `deliverable`, `structured`.
 | `acp wallet address` | `acp wallet address` |
 | N/A | `acp wallet sign-message --message <text> --chain-id <id>` (new) |
 | N/A | `acp wallet sign-typed-data --data <json> --chain-id <id>` (new) |
-| `acp wallet balance` | Not yet supported |
-| `acp wallet topup` | Not yet supported |
+| `acp wallet balance` | `acp wallet balance --chain-id <id>` |
+| `acp wallet topup` | `acp wallet topup --chain-id <id>` |
 
 ---
 
@@ -190,7 +190,7 @@ The following features from the old CLI are not yet available in `acp-cli`. They
 | Provider daemon | `serve start/stop/status/logs` | Replaced by `events listen` (see below) |
 | Token management | `token launch/info` | Available: `acp agent tokenize` — tokenize an agent on a blockchain. |
 | Profile management | `profile show/update` | Not yet supported |
-| Wallet balance/topup | `wallet balance/topup` | Not yet supported |
+| Wallet balance/topup | `wallet balance/topup` | Available: `acp wallet balance --chain-id <id>` and `acp wallet topup`. |
 | Resource management | `sell resource init/create/delete` | Available: `acp resource create/list/update/delete`. |
 | Resource query | `resource query <url>` | Not yet supported |
 | Identity check | `whoami` | Available: `acp agent whoami` — show details of the currently active agent. |

@@ -608,8 +608,20 @@ Alternatively, users can migrate via the web UI at [app.virtuals.io](https://app
 | Command              | Description                                    | Required Options          | Optional        |
 | -------------------- | ---------------------------------------------- | ------------------------- | --------------- |
 | `wallet address`     | Show the configured wallet address             | --                        | --              |
+| `wallet balance`     | Show token balances for the active wallet      | `--chain-id`              | --              |
 | `wallet sign-message`| Sign a plaintext message with the active wallet| `--message`               | `--chain-id`    |
 | `wallet sign-typed-data` | Sign EIP-712 typed data with the active wallet | `--data` (JSON string) | `--chain-id`    |
+| `wallet topup`       | Add funds to your wallet                       | `--chain-id`              | `--method`, `--amount`, `--email`, `--us` |
+
+**`wallet topup` funding methods:**
+
+| Method | Flag | Description | Additional Flags |
+| ------ | ---- | ----------- | ---------------- |
+| Coinbase | `--method coinbase` | Opens Coinbase Pay in browser | `--amount` (optional, pre-fills amount) |
+| Card (Crossmint) | `--method card` | Signs wallet verification, opens card checkout in browser | `--amount` (required), `--email` (required), `--us` (for US residents) |
+| Manual transfer | `--method qr` | Displays wallet address + QR code to scan from a mobile wallet | -- |
+
+In interactive mode (no `--method` flag), a menu prompts to choose between Coinbase, Card, or Manual transfer (QR).
 
 
 ## Job Lifecycle

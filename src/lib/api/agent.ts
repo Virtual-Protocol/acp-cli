@@ -437,6 +437,43 @@ export class AgentApi {
     );
   }
 
+  async getCoinbaseUrl(
+    walletAddress: string,
+    chainId: number,
+    amount?: string
+  ): Promise<{ data: { url: string } }> {
+    return this.client.post("/topup/coinbase-url", {
+      walletAddress,
+      chainId,
+      amount,
+    });
+  }
+
+  async initCrossmintOrder(
+    walletAddress: string,
+    chainId: number,
+    isUS: boolean = false
+  ): Promise<{
+    data: { needsSignature: boolean; challenge?: string };
+  }> {
+    return this.client.post("/topup/crossmint-init", {
+      walletAddress,
+      chainId,
+      isUS,
+    });
+  }
+
+  async completeCrossmintOrder(data: {
+    walletAddress: string;
+    chainId: number;
+    amount: number;
+    receiptEmail: string;
+    signature?: string;
+    isUS?: boolean;
+  }): Promise<{ data: { checkoutUrl: string } }> {
+    return this.client.post("/topup/crossmint-complete", data);
+  }
+
   async tokenize(
     agentId: string,
     chainId: number,

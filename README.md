@@ -283,11 +283,30 @@ Each event line includes the job ID, chain ID, status, your roles, available act
 # Show configured wallet address
 acp wallet address
 
+# Show token balances
+acp wallet balance --chain-id 8453
+
 # Sign a plaintext message
 acp wallet sign-message --message "hello world" --chain-id 8453
 
 # Sign EIP-712 typed data
 acp wallet sign-typed-data --data '{"domain":{},"types":{"EIP712Domain":[]},"primaryType":"EIP712Domain","message":{}}' --chain-id 8453
+
+# Add funds to your wallet (interactive — choose a funding method)
+acp wallet topup --chain-id 8453
+
+# Three ways to fund:
+#
+# 1. Coinbase — opens Coinbase Pay in your browser
+acp wallet topup --chain-id 8453 --method coinbase
+acp wallet topup --chain-id 8453 --method coinbase --amount 50  # pre-fill amount
+#
+# 2. Card (Crossmint) — signs wallet verification, opens card checkout in browser
+acp wallet topup --chain-id 8453 --method card --amount 50 --email user@example.com
+acp wallet topup --chain-id 8453 --method card --amount 50 --email user@example.com --us  # US residents
+#
+# 3. Manual transfer (QR) — shows wallet address + QR code to scan
+acp wallet topup --chain-id 8453 --method qr
 ```
 
 ## Job Lifecycle
