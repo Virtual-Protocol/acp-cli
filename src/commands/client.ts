@@ -256,8 +256,8 @@ export function registerClientCommands(program: Command): void {
     .command("fund")
     .description("Fund a job with the agreed budget (USDC)")
     .requiredOption("--job-id <id>", "On-chain job ID")
-    .requiredOption("--amount <usdc>", "USDC amount to fund")
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .option("--amount <usdc>", "USDC amount to fund")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -268,14 +268,14 @@ export function registerClientCommands(program: Command): void {
           const adapter = await createLegacyBuyerAdapter();
           await adapter.fundJob(
             Number(opts.jobId),
-            `Funded ${opts.amount} USDC`
+            opts.amount ? `Funded ${opts.amount} USDC` : `Funded`
           );
           outputResult(json, {
             success: true,
             action: "fund",
             protocol: "legacy",
             jobId: opts.jobId,
-            amount: opts.amount,
+            ...(opts.amount ? { amount: opts.amount } : {}),
           });
           return;
         }
@@ -294,19 +294,25 @@ export function registerClientCommands(program: Command): void {
           }
 
           await session.fetchJob();
-          await session.fund(AssetToken.usdc(Number(opts.amount), chainId));
+          await session.fund(
+            opts.amount
+              ? AssetToken.usdc(Number(opts.amount), chainId)
+              : undefined
+          );
           if (json) {
             outputResult(json, {
               success: true,
               action: "fund",
               protocol: "v2",
               jobId: opts.jobId,
-              amount: opts.amount,
+              ...(opts.amount ? { amount: opts.amount } : {}),
             });
           } else {
             console.log(
               `\n${c.green(
-                `Job #${opts.jobId} funded with ${opts.amount} USDC`
+                opts.amount
+                  ? `Job #${opts.jobId} funded with ${opts.amount} USDC`
+                  : `Job #${opts.jobId} funded`
               )}`
             );
           }
