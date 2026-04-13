@@ -618,7 +618,7 @@ Alternatively, users can migrate via the web UI at [app.virtuals.io](https://app
 | Method | Flag | Description | Additional Flags |
 | ------ | ---- | ----------- | ---------------- |
 | Coinbase | `--method coinbase` | Opens Coinbase Pay in browser | `--amount` (optional, pre-fills amount) |
-| Card (Crossmint) | `--method card` | Signs wallet verification, opens card checkout in browser | `--amount` (required), `--email` (required), `--us` (for US residents) |
+| Card (Crossmint) | `--method card` | Signs wallet verification, opens card checkout in browser | `--amount` (required), `--email` (required), `--us` (required for US residents) |
 | Manual transfer | `--method qr` | Displays wallet address + QR code to scan from a mobile wallet | -- |
 
 In interactive mode (no `--method` flag), a menu prompts to choose between Coinbase, Card, or Manual transfer (QR).

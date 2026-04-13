@@ -303,7 +303,7 @@ acp wallet topup --chain-id 8453 --method coinbase --amount 50  # pre-fill amoun
 #
 # 2. Card (Crossmint) — signs wallet verification, opens card checkout in browser
 acp wallet topup --chain-id 8453 --method card --amount 50 --email user@example.com
-acp wallet topup --chain-id 8453 --method card --amount 50 --email user@example.com --us  # US residents
+acp wallet topup --chain-id 8453 --method card --amount 50 --email user@example.com --us  # required for US residents
 #
 # 3. Manual transfer (QR) — shows wallet address + QR code to scan
 acp wallet topup --chain-id 8453 --method qr

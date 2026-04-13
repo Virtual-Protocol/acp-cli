@@ -197,7 +197,7 @@ export function registerWalletCommands(program: Command): void {
     .requiredOption("--chain-id <id>", "Chain ID")
     .option("--amount <amount>", "Amount in USD")
     .option("--email <email>", "Receipt email (required for card)")
-    .option("--us", "Use US Crossmint keys (for card payments)")
+    .option("--us", "Required for US residents when paying by card")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
