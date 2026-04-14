@@ -1,4 +1,5 @@
 import {
+  getCurrentOwnerWallet,
   getRefreshToken,
   getToken,
   isTokenExpired,
@@ -63,7 +64,8 @@ export class ApiClient {
 }
 
 async function resolveToken(apiUrl: string): Promise<string> {
-  const token = await getToken();
+  const ownerWallet = getCurrentOwnerWallet();
+  const token = await getToken(ownerWallet);
   if (!token) {
     throw new CliError(
       "Not authenticated.",
@@ -76,7 +78,7 @@ async function resolveToken(apiUrl: string): Promise<string> {
     return token;
   }
 
-  const refreshToken = await getRefreshToken();
+  const refreshToken = await getRefreshToken(ownerWallet);
   if (!refreshToken) {
     throw new CliError(
       "Session expired.",
@@ -95,14 +97,11 @@ async function resolveToken(apiUrl: string): Promise<string> {
     );
   }
 
-  await setTokens(result.token, result.refreshToken);
+  await setTokens(result.token, result.refreshToken, ownerWallet);
   return result.token;
 }
 
-export async function getClient(
-  walletAddress?: string,
-  unauthenticated?: boolean
-): Promise<{
+export async function getClient(unauthenticated?: boolean): Promise<{
   agentApi: AgentApi;
   authApi: AuthApi;
 }> {
@@ -114,8 +113,4 @@ export async function getClient(
     agentApi: new AgentApi(httpClient),
     authApi: new AuthApi(httpClient),
   };
-}
-
-export async function getAgentApi(walletAddress?: string): Promise<AgentApi> {
-  return (await getClient(walletAddress)).agentApi;
 }

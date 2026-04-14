@@ -18,6 +18,7 @@ interface JobRegistryEntry {
 }
 
 interface Config {
+  ownerWallet?: string;
   activeWallet?: string;
   agents?: Record<string, AgentConfig>;
   jobRegistry?: Record<string, JobRegistryEntry>;
@@ -35,24 +36,43 @@ function saveConfig(config: Config): void {
   writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
 }
 
-export async function getToken(): Promise<string | undefined> {
+export async function getToken(
+  walletAddress?: string
+): Promise<string | undefined> {
   return (
-    (await getPassword(AUTH_KEYCHAIN_SERVICE, "access-token")) ?? undefined
+    (await getPassword(
+      AUTH_KEYCHAIN_SERVICE,
+      `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`
+    )) ?? undefined
   );
 }
 
-export async function getRefreshToken(): Promise<string | undefined> {
+export async function getRefreshToken(
+  walletAddress?: string
+): Promise<string | undefined> {
   return (
-    (await getPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token")) ?? undefined
+    (await getPassword(
+      AUTH_KEYCHAIN_SERVICE,
+      `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`
+    )) ?? undefined
   );
 }
 
 export async function setTokens(
   accessToken: string,
-  refreshToken: string
+  refreshToken: string,
+  walletAddress?: string
 ): Promise<void> {
-  await setPassword(AUTH_KEYCHAIN_SERVICE, "access-token", accessToken);
-  await setPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token", refreshToken);
+  await setPassword(
+    AUTH_KEYCHAIN_SERVICE,
+    `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
+    accessToken
+  );
+  await setPassword(
+    AUTH_KEYCHAIN_SERVICE,
+    `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
+    refreshToken
+  );
 }
 
 export function getWalletId(walletAddress: string): string | undefined {
@@ -93,6 +113,16 @@ export function setAgentId(walletAddress: string, id: string): void {
 
 export function getActiveWallet(): string | undefined {
   return loadConfig().activeWallet;
+}
+
+export function getCurrentOwnerWallet(): string | undefined {
+  return loadConfig().ownerWallet;
+}
+
+export function setCurrentOwnerWallet(walletAddress: string): void {
+  const config = loadConfig();
+  config.ownerWallet = walletAddress;
+  saveConfig(config);
 }
 
 export function setActiveWallet(walletAddress: string): void {

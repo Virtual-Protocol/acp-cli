@@ -3,7 +3,7 @@ import { isJson, outputResult, outputError } from "../lib/output";
 import { CliError } from "../lib/errors";
 import { AuthApi } from "../lib/api/auth";
 import { getClient } from "../lib/api/client";
-import { setTokens } from "../lib/config";
+import { setCurrentOwnerWallet, setTokens } from "../lib/config";
 import { openBrowser } from "../lib/browser";
 
 const POLL_INTERVAL_MS = 2000;
@@ -12,7 +12,11 @@ const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 async function waitForToken(
   authApi: AuthApi,
   requestId: string
-): Promise<{ token: string; refreshToken: string } | null> {
+): Promise<{
+  token: string;
+  refreshToken: string;
+  walletAddress: string;
+} | null> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -28,7 +32,7 @@ export function registerConfigureCommand(program: Command): void {
     .description("Authenticate the CLI with ACP")
     .action(async (_opts, cmd) => {
       const json = isJson(cmd);
-      const { authApi } = await getClient(undefined, true);
+      const { authApi } = await getClient(true);
 
       let url: string;
       let requestId: string;
@@ -66,7 +70,8 @@ export function registerConfigureCommand(program: Command): void {
         return;
       }
 
-      await setTokens(result.token, result.refreshToken);
+      setCurrentOwnerWallet(result.walletAddress);
+      await setTokens(result.token, result.refreshToken, result.walletAddress);
 
       if (json) {
         outputResult(json, {

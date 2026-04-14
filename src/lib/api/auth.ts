@@ -5,7 +5,7 @@ interface CliUrlResponse {
 }
 
 interface CliTokenResponse {
-  data: { token: string; refreshToken: string };
+  data: { token: string; refreshToken: string; walletAddress: string };
 }
 
 export class AuthApi {
@@ -16,15 +16,21 @@ export class AuthApi {
     return res.data;
   }
 
-  async pollCliToken(
-    requestId: string
-  ): Promise<{ token: string; refreshToken: string } | null> {
+  async pollCliToken(requestId: string): Promise<{
+    token: string;
+    refreshToken: string;
+    walletAddress: string;
+  } | null> {
     try {
       const res = await this.client.get<CliTokenResponse>("/auth/cli/token", {
         requestId,
       });
       if (!res.data.token) return null;
-      return { token: res.data.token, refreshToken: res.data.refreshToken };
+      return {
+        token: res.data.token,
+        refreshToken: res.data.refreshToken,
+        walletAddress: res.data.walletAddress,
+      };
     } catch {
       return null;
     }
