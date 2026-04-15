@@ -280,6 +280,10 @@ This unhides the migrated agent and sets it as your active agent. The migration 
 
 Go to [app.virtuals.io](https://app.virtuals.io), navigate to the **"Agents and Projects"** section, and click **"Upgrade"** on the agent you want to migrate.
 
+### After Migration
+
+Once migration is complete, remove the legacy `openclaw-acp` skill from your agent's skill configuration. It is no longer needed and may conflict with the new `acp-cli`.
+
 ---
 
 ## Quick Start: Migrating a Client Agent
