@@ -12,7 +12,7 @@ The `acp agent tokenize` command launches a token for the **active agent** throu
 The available chains come from the EVM provider attached to the active agent (via `getSupportedChainIds()`). You can:
 
 - Pass `--chain-id <id>` to pick explicitly. Must be one of the provider's supported chains.
-- Omit it to be prompted (or auto-selected when only one chain is available).
+- Omit it to be prompted (or auto-selected when only one chain i s available).
 
 ## Anti-sniper protection
 
@@ -61,10 +61,6 @@ At launch, you can allocate 0–5% of the agent token supply to veVIRTUAL holder
 
 - `--airdrop-percent <percent>` — decimal in `[0, 5]`, e.g. `1.25`, `2.5`. Omitted or `0` → no airdrop.
 - **On-chain:** flows into `preLaunch` as `airdropBips = Math.round(percent * 100)` (arg 9). Does not affect the launch fee.
-- **Merkle distributor:** the backend deploys it and populates `agent-airdrop-record` entries from the veVIRTUAL snapshot after launch.
-- **Claiming:** recipients claim their tokens via the web app at [app.virtuals.io](https://app.virtuals.io) → **Rewards → Airdrops**. No CLI claim command.
-- **Interaction with `--prebuy`:** the airdrop share is carved out of the LP before pre-buy, reducing the pre-buy headroom. If `preLaunch` reverts because `--prebuy` is too large, the CLI surfaces a hint mentioning the airdrop reservation.
-- **Custom recipient lists are not exposed in the CLI.** The public launch flow (web UI + CLI) only supports percent-to-veVIRTUAL-holders. If you need a custom CSV recipient list, use the admin airdrop upload flow directly.
 
 ## Robotics Launch
 
