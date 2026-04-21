@@ -593,7 +593,7 @@ Browse supports filtering and sorting:
 | `agent update`     | Update the active agent's name, description, or image | -- | `--name`, `--description`, `--image` |
 | `agent add-signer` | Add a new signer (generates key, shows public key & approval URL, polls for confirmation) | --             | `--agent-id`                            |
 | `agent whoami`     | Show details of the currently active agent | --           | --                                      |
-| `agent tokenize`   | Tokenize an agent on a blockchain        | --             | `--wallet-address`, `--agent-id`, `--chain-id`, `--symbol` |
+| `agent tokenize`   | Tokenize the active agent on a blockchain (requires signer; chain list resolved from EVM provider) | -- | `--chain-id`, `--symbol`, `--anti-sniper`, `--prebuy` (VIRTUAL tokens to spend at launch), `--acf` (Capital Formation; higher on-chain fee), `--60-days` (60 Days Experiment; reversible launch, 60-day cliff on pre-buy), `--airdrop-percent` (0–5; allocate supply to veVIRTUAL holders), `--robotics` (Eastworld-eligible launch; Strapi metadata only, no on-chain/fee effect), `--configure` |
 | `agent migrate`    | Migrate a legacy agent to ACP SDK 2.0    | --             | `--agent-id`, `--complete` |
 
 All agent commands support non-interactive use via flags. When flags are omitted, interactive prompts are used.

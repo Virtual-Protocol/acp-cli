@@ -115,6 +115,41 @@ acp agent migrate --agent-id 123 --complete
 # under the "Agents and Projects" section — click "Upgrade".
 ```
 
+### Tokenization
+
+Tokenizes the **active agent**. Requires a signer — run `acp agent add-signer` first if you haven't. The chain list is resolved from the agent's EVM provider.
+
+```bash
+# Launch a token for the active agent (interactive)
+acp agent tokenize
+
+# Launch on a specific chain with a symbol
+acp agent tokenize --chain-id 8453 --symbol MYTOKEN
+
+# Skip anti-sniper (default is 60 seconds)
+acp agent tokenize --anti-sniper 0
+
+# Pre-buy 100 VIRTUAL of the new token at launch
+acp agent tokenize --chain-id 8453 --symbol MYTOKEN --prebuy 100
+
+# Enable Capital Formation (higher launch fee; enables dev allocation + sell wall)
+acp agent tokenize --chain-id 8453 --symbol MYTOKEN --acf
+
+# Enable 60 Days Experiment (reversible launch; 60-day cliff on pre-buy; Vibes tokenomics)
+acp agent tokenize --chain-id 8453 --symbol MYTOKEN --60-days
+
+# Allocate 2.5% of supply to veVIRTUAL holders as an airdrop
+acp agent tokenize --chain-id 8453 --symbol MYTOKEN --airdrop-percent 2.5
+
+# Mark as a Robotics (Eastworld-eligible) launch
+acp agent tokenize --chain-id 8453 --symbol MYTOKEN --robotics
+
+# Pick anti-sniper, pre-buy, ACF, 60 Days Experiment, airdrop, and Robotics interactively
+acp agent tokenize --configure
+```
+
+See [docs/tokenization.md](docs/tokenization.md) for prerequisites, anti-sniper, pre-buy, ACF, 60 Days Experiment, and airdrop details.
+
 ### Offering Management
 
 ```bash
