@@ -102,9 +102,15 @@ async function waitForReceipt(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      await provider.getTransactionReceipt(chainId, txHash);
+      const receipt = await provider.getTransactionReceipt(chainId, txHash);
+      if (receipt.status === "reverted") {
+        throw new Error(`Transaction ${txHash} reverted on-chain.`);
+      }
       return;
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("reverted")) {
+        throw err;
+      }
       await new Promise((r) => setTimeout(r, intervalMs));
     }
   }
