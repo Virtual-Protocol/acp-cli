@@ -86,7 +86,9 @@ export async function checkVirtualBalance(
   const required = BigInt(requiredWei);
   if (balance < required) {
     throw new Error(
-      `Insufficient VIRTUAL balance. Need ${formatEther(required)}, have ${formatEther(balance)}.`
+      `Insufficient VIRTUAL balance. Need ${formatEther(
+        required
+      )}, have ${formatEther(balance)}.`
     );
   }
 }
@@ -138,8 +140,11 @@ export async function callPreLaunch(
     ],
   });
 
-  return provider.sendTransaction(chainId, {
+  const txHash = await provider.sendTransaction(chainId, {
     to: bondingV5Address as `0x${string}`,
     data,
   });
+
+  await waitForReceipt(provider, chainId, txHash);
+  return txHash;
 }
