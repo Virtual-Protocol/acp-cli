@@ -504,7 +504,8 @@ export class AgentApi {
     needAcf?: boolean,
     isProject60days?: boolean,
     airdropPercent?: number,
-    isRobotics?: boolean
+    isRobotics?: boolean,
+    prebuyAmount?: string
   ): Promise<PrepareLaunchResponse> {
     const payload: Record<string, unknown> = {
       chainId,
@@ -521,6 +522,9 @@ export class AgentApi {
       payload.airdropPercent = airdropPercent;
     }
     if (isRobotics) payload.isRobotics = true;
+    if (prebuyAmount && prebuyAmount !== "0") {
+      payload.prebuyAmount = prebuyAmount;
+    }
 
     const res = await this.client.post<{ data: PrepareLaunchResponse }>(
       `/agents/${agentId}/prepare-launch`,
@@ -538,4 +542,6 @@ export interface PrepareLaunchResponse {
     bondingConfig: string;
   };
   launchFee: string;
+  approveCalldata: string;
+  preLaunchCalldata: string;
 }

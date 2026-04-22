@@ -1,28 +1,6 @@
-import { encodeFunctionData, erc20Abi, formatEther } from "viem";
-import { bondingV5Abi } from "../abis/bondingV5Abi";
-import { bondingConfigAbi } from "../abis/bondingConfigAbi";
+import { erc20Abi, formatEther } from "viem";
 import { createAgentFromConfig } from "./agentFactory";
 import { EvmAcpClient } from "@virtuals-protocol/acp-node-v2";
-
-export interface LaunchConfig {
-  antiSniperTaxType: number;
-  airdropBips: number;
-  needAcf: boolean;
-  isProject60days: boolean;
-  launchMode: number;
-  purchaseAmount: string;
-  startTime: number;
-}
-
-export const DEFAULT_LAUNCH_CONFIG: LaunchConfig = {
-  antiSniperTaxType: 1,
-  airdropBips: 0,
-  needAcf: false,
-  isProject60days: false,
-  launchMode: 0,
-  purchaseAmount: "0",
-  startTime: 0,
-};
 
 function getEvmProvider() {
   return createAgentFromConfig().then((agent) => {
@@ -32,42 +10,6 @@ function getEvmProvider() {
     }
     return client.getProvider();
   });
-}
-
-export async function approveVirtualToken(
-  chainId: number,
-  virtualTokenAddress: string,
-  spender: string,
-  amount: string
-): Promise<string> {
-  const provider = await getEvmProvider();
-  const data = encodeFunctionData({
-    abi: erc20Abi,
-    functionName: "approve",
-    args: [spender as `0x${string}`, BigInt(amount)],
-  });
-
-  const txHash = await provider.sendTransaction(chainId, {
-    to: virtualTokenAddress as `0x${string}`,
-    data,
-  });
-
-  await waitForReceipt(provider, chainId, txHash as `0x${string}`);
-  return txHash;
-}
-
-export async function readLaunchFee(
-  chainId: number,
-  bondingConfig: string,
-  needAcf: boolean
-): Promise<bigint> {
-  const provider = await getEvmProvider();
-  return (await provider.readContract(chainId, {
-    abi: bondingConfigAbi,
-    address: bondingConfig as `0x${string}`,
-    functionName: "calculateLaunchFee",
-    args: [false, needAcf],
-  })) as bigint;
 }
 
 export async function checkVirtualBalance(
@@ -117,40 +59,32 @@ async function waitForReceipt(
   throw new Error(`Timed out waiting for receipt of ${txHash}`);
 }
 
-export async function callPreLaunch(
+export async function sendApprove(
   chainId: number,
-  bondingV5Address: string,
-  agent: { name: string; imageUrl?: string },
-  symbol: string,
-  launchFee: string,
-  config: LaunchConfig
+  virtualTokenAddress: string,
+  approveCalldata: string
 ): Promise<string> {
   const provider = await getEvmProvider();
-  const data = encodeFunctionData({
-    abi: bondingV5Abi,
-    functionName: "preLaunch",
-    args: [
-      agent.name,
-      symbol,
-      [0, 1, 2, 4],
-      "",
-      agent.imageUrl ?? "",
-      ["", "", "", ""],
-      BigInt(launchFee) + BigInt(config.purchaseAmount),
-      BigInt(config.startTime),
-      config.launchMode,
-      config.airdropBips,
-      config.needAcf,
-      config.antiSniperTaxType,
-      config.isProject60days,
-    ],
+  const txHash = await provider.sendTransaction(chainId, {
+    to: virtualTokenAddress as `0x${string}`,
+    data: approveCalldata as `0x${string}`,
   });
 
+  await waitForReceipt(provider, chainId, txHash as `0x${string}`);
+  return txHash;
+}
+
+export async function sendPreLaunch(
+  chainId: number,
+  bondingV5Address: string,
+  preLaunchCalldata: string
+): Promise<string> {
+  const provider = await getEvmProvider();
   const txHash = await provider.sendTransaction(chainId, {
     to: bondingV5Address as `0x${string}`,
-    data,
+    data: preLaunchCalldata as `0x${string}`,
   });
 
-  await waitForReceipt(provider, chainId, txHash);
+  await waitForReceipt(provider, chainId, txHash as `0x${string}`);
   return txHash;
 }

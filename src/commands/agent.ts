@@ -36,11 +36,9 @@ import {
 import { generateKeyPair as generateNativeKeyPair } from "../lib/acpCliSigner";
 import { openBrowser } from "../lib/browser";
 import {
-  approveVirtualToken,
-  callPreLaunch,
   checkVirtualBalance,
-  DEFAULT_LAUNCH_CONFIG,
-  readLaunchFee,
+  sendApprove,
+  sendPreLaunch,
 } from "../lib/tokenize";
 import { createProviderAdapter } from "../lib/agentFactory";
 import * as viemChains from "viem/chains";
@@ -1023,8 +1021,6 @@ export function registerAgentCommands(program: Command): void {
           rl.close();
         }
       }
-      const airdropBips = Math.round(airdropPercent * 100);
-
       // Step 6d: Robotics Launch
       let isRobotics = false;
       if (opts.robotics) {
@@ -1064,7 +1060,8 @@ export function registerAgentCommands(program: Command): void {
           needAcf,
           isProject60days,
           airdropPercent,
-          isRobotics
+          isRobotics,
+          prebuyVirtualWei > 0n ? prebuyVirtualWei.toString() : undefined
         );
       } catch (err) {
         outputError(
@@ -1076,28 +1073,13 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      const { virtualId, contracts } = prepareLaunchResponse;
+      const { virtualId, contracts, launchFee, approveCalldata, preLaunchCalldata } =
+        prepareLaunchResponse;
 
-      // Step 8: Read live launch fee on-chain (authoritative; reflects ACF surcharge)
-      let launchFeeWei: bigint;
-      try {
-        launchFeeWei = await readLaunchFee(
-          selectedChain.id,
-          contracts.bondingConfig,
-          needAcf
-        );
-      } catch (err) {
-        outputError(
-          json,
-          `Failed to read launch fee from bondingConfig: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-        return;
-      }
+      const launchFeeWei = BigInt(launchFee);
       const totalApprovalWei = launchFeeWei + prebuyVirtualWei;
 
-      // Step 9: On-chain — approve VIRTUAL token + call preLaunch
+      // Step 8: On-chain — approve VIRTUAL token + call preLaunch
       let preLaunchTxHash: string;
       try {
         await checkVirtualBalance(
@@ -1131,28 +1113,17 @@ export function registerAgentCommands(program: Command): void {
         }
         if (!json) console.log(`Approving VIRTUAL token...`);
 
-        await approveVirtualToken(
+        await sendApprove(
           selectedChain.id,
           contracts.virtualToken,
-          contracts.bondingV5,
-          totalApprovalWei.toString()
+          approveCalldata
         );
 
         if (!json) console.log(`Calling preLaunch contract...`);
-        preLaunchTxHash = await callPreLaunch(
+        preLaunchTxHash = await sendPreLaunch(
           selectedChain.id,
           contracts.bondingV5,
-          selected,
-          symbol,
-          launchFeeWei.toString(),
-          {
-            ...DEFAULT_LAUNCH_CONFIG,
-            antiSniperTaxType,
-            purchaseAmount: prebuyVirtualWei.toString(),
-            needAcf,
-            isProject60days,
-            airdropBips,
-          }
+          preLaunchCalldata
         );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
