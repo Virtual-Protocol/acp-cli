@@ -542,7 +542,7 @@ export class AgentApi {
     const params: Record<string, string> = { rating: String(rating) };
     if (review) params.review = review;
     const res = await this.client.post<{ data: JobFeedbackTx }>(
-      `/jobs/${chainId}/${onChainJobId}/feedback`,
+      `/jobs/${chainId}/${onChainJobId}/feedback-data`,
       { rating, review }
     );
     return res.data;
