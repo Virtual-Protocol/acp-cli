@@ -541,9 +541,9 @@ export class AgentApi {
   ): Promise<JobFeedbackTx> {
     const params: Record<string, string> = { rating: String(rating) };
     if (review) params.review = review;
-    const res = await this.client.get<{ data: JobFeedbackTx }>(
+    const res = await this.client.post<{ data: JobFeedbackTx }>(
       `/jobs/${chainId}/${onChainJobId}/feedback`,
-      params
+      { rating, review }
     );
     return res.data;
   }
