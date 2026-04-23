@@ -593,10 +593,26 @@ Browse supports filtering and sorting:
 | `agent update`     | Update the active agent's name, description, or image | -- | `--name`, `--description`, `--image` |
 | `agent add-signer` | Add a new signer (generates key, shows public key & approval URL, polls for confirmation) | --             | `--agent-id`                            |
 | `agent whoami`     | Show details of the currently active agent | --           | --                                      |
-| `agent tokenize`   | Tokenize an agent on a blockchain        | --             | `--wallet-address`, `--agent-id`, `--chain-id`, `--symbol` |
+| `agent tokenize`   | Launch a token for the active agent (requires signer, VIRTUAL for launch fee, ETH for gas) | -- | `--chain-id`, `--symbol`, `--anti-sniper <0\|1\|2>`, `--prebuy <virtuals>`, `--acf`, `--60-days`, `--airdrop-percent <0-5>`, `--robotics`, `--configure` |
 | `agent migrate`    | Migrate a legacy agent to ACP SDK 2.0    | --             | `--agent-id`, `--complete` |
 
 All agent commands support non-interactive use via flags. When flags are omitted, interactive prompts are used.
+
+#### Tokenize options
+
+Without `--configure`, the defaults below apply automatically — the CLI will not prompt for these options. Only `--chain-id` and `--symbol` are prompted when omitted.
+
+| Flag | Description | Default |
+| ---- | ----------- | ------- |
+| `--chain-id <id>` | Chain to launch on (must be supported by the agent's provider) | Prompted |
+| `--symbol <symbol>` | Token symbol (uppercased) | Prompted |
+| `--anti-sniper <0\|1\|2>` | Anti-sniper transfer tax: `0` = off, `1` = 60 seconds, `2` = 98 minutes | `1` |
+| `--prebuy <virtuals>` | VIRTUAL to spend buying the token at launch (wallet must hold launch fee + prebuy) | `0` |
+| `--acf` | Enable Capital Formation (higher launch fee, dev allocation tokenomics, sell wall; caps prebuy at ≤50% of LP) | Off |
+| `--60-days` | 60 Days Experiment — reversible launch with a 60-day cliff on pre-bought tokens instead of 1 month | Off |
+| `--airdrop-percent <percent>` | Allocate 0–5% of token supply to veVIRTUAL holders | `0` |
+| `--robotics` | Mark as Eastworld-eligible Robotics launch | Off |
+| `--configure` | Interactive prompts for all options above (skips any already passed via flags) | Off |
 
 ### Migrating Legacy Agents
 
