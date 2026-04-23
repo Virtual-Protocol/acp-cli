@@ -1277,8 +1277,6 @@ export function registerAgentCommands(program: Command): void {
 
       // Step 4: Send transaction using the agent's wallet
       const previousWallet = getActiveWallet();
-      setActiveWallet(selected.walletAddress);
-      const newWalletProvider = await createProviderAdapter();
 
       let payload: Erc8004RegisterPayload = {
         type: registerData.type,
@@ -1286,6 +1284,9 @@ export function registerAgentCommands(program: Command): void {
       };
 
       try {
+        setActiveWallet(selected.walletAddress);
+        const newWalletProvider = await createProviderAdapter();
+
         if (!json) {
           console.log(
             `\nRegistering ${selected.name} on ${selectedChain.name}...`
