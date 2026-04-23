@@ -86,6 +86,9 @@ acp agent tokenize [--chain-id <id>] [--symbol <symbol>] [--anti-sniper <0|1|2>]
 - `--airdrop-percent <percent>` — airdrop allocation to veVIRTUAL holders (0–5). Respected with or without `--configure`.
 - `--robotics` — mark as a Robotics (Eastworld-eligible) launch. Respected with or without `--configure`.
 - `--configure` — interactive pickers for anti-sniper, pre-buy, ACF, 60 Days Experiment, airdrop, and Robotics (blank / `N` to skip). Skipped for values already passed via flags.
+
+Without `--configure`, the defaults below apply automatically — the CLI will not prompt for these options. Only `--chain-id` and `--symbol` are prompted when omitted.
+
 - Defaults: anti-sniper `1` (60 seconds), no pre-buy, ACF off, 60 Days Experiment off, no airdrop, Robotics off.
 
 ### Examples
