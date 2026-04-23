@@ -581,4 +581,53 @@ export class AgentApi {
     );
     return res.data;
   }
+
+  async prepareLaunch(
+    agentId: string,
+    chainId: number,
+    symbol: string,
+    antiSniperTaxType?: number,
+    needAcf?: boolean,
+    isProject60days?: boolean,
+    airdropPercent?: number,
+    isRobotics?: boolean,
+    prebuyAmount?: string
+  ): Promise<PrepareLaunchResponse> {
+    const payload: Record<string, unknown> = {
+      chainId,
+      symbol,
+      antiSniperTaxType,
+    };
+
+    const partnerId = process.env.PARTNER_ID;
+    if (partnerId) payload.partnerId = partnerId;
+
+    if (needAcf) payload.needAcf = true;
+    if (isProject60days) payload.isProject60days = true;
+    if (airdropPercent !== undefined && airdropPercent > 0) {
+      payload.airdropPercent = airdropPercent;
+    }
+    if (isRobotics) payload.isRobotics = true;
+    if (prebuyAmount && prebuyAmount !== "0") {
+      payload.prebuyAmount = prebuyAmount;
+    }
+
+    const res = await this.client.post<{ data: PrepareLaunchResponse }>(
+      `/agents/${agentId}/prepare-launch`,
+      payload
+    );
+    return res.data;
+  }
+}
+
+export interface PrepareLaunchResponse {
+  virtualId: number;
+  contracts: {
+    bondingV5: string;
+    virtualToken: string;
+    bondingConfig: string;
+  };
+  launchFee: string;
+  approveCalldata: string;
+  preLaunchCalldata: string;
 }

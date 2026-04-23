@@ -12,8 +12,6 @@ import { c } from "../lib/color";
 import {
   AgentApi,
   MigrationStatus,
-  TokenizeResponse,
-  TokenizeStatusResponse,
   type Agent,
   LegacyAgent,
   Erc8004RegisterTx,
@@ -31,6 +29,7 @@ import {
   setWalletId,
   setActiveWallet,
   getActiveWallet,
+  getPublicKey,
   setAgentId,
   getAgentId,
 } from "../lib/config";
@@ -40,8 +39,15 @@ import {
   createAgentFromConfig,
   createProviderAdapter,
 } from "../lib/agentFactory";
-import { EvmAcpClient, SUPPORTED_CHAINS } from "@virtuals-protocol/acp-node-v2";
+import { EvmAcpClient } from "@virtuals-protocol/acp-node-v2";
+import {
+  checkVirtualBalance,
+  sendApprove,
+  sendPreLaunch,
+} from "../lib/tokenize";
 import * as viemChains from "viem/chains";
+import { formatEther, parseEther } from "viem";
+import { formatChainId } from "../lib/chains";
 
 function parseLegacyId(raw: string, json: boolean): number | null {
   const id = parseInt(raw, 10);
@@ -531,31 +537,15 @@ export function registerAgentCommands(program: Command): void {
       }
 
       if (isTTY()) {
-        const acpAgent = await createAgentFromConfig();
-        const client = acpAgent.getClient();
-
-        let chains = agentData.chains;
-
-        if (client instanceof EvmAcpClient) {
-          const supportedChainIds = await client
-            .getProvider()
-            .getSupportedChainIds();
-
-          const existingChainIds = new Set(chains.map((c) => c.chainId));
-          const missingChains = supportedChainIds
-            .filter((id) => !existingChainIds.has(id))
-            .map((id) => ({ chainId: id }));
-
-          chains = [...chains, ...missingChains];
-        }
-
-        const chainRows: [string, string][] = chains.flatMap((c) => [
-          [`Chain ${c.chainId} Token`, c.tokenAddress ?? "Not tokenized"],
-          [
-            `Chain ${c.chainId} ERC-8004`,
-            c.erc8004AgentId ? String(c.erc8004AgentId) : "Not registered",
-          ],
-        ]);
+        const tokenized = (agentData.chains ?? []).find(
+          (ch) => ch.tokenAddress
+        );
+        const tokenRow: [string, string] = tokenized
+          ? [
+              "Token",
+              `${tokenized.tokenAddress} [${formatChainId(tokenized.chainId)}]`,
+            ]
+          : ["Token", "Not tokenized"];
 
         console.log(`\n${c.bold("Agent Details:")}`);
         printTable([
@@ -568,7 +558,7 @@ export function registerAgentCommands(program: Command): void {
           ["Hidden", agentData.isHidden ? "Yes" : "No"],
           ["Image", agentData.imageUrl ?? "N/A"],
           ["Created", agentData.createdAt],
-          ...chainRows,
+          tokenRow,
         ]);
 
         console.log(`\n${c.bold("Offerings:")}`);
@@ -698,90 +688,160 @@ export function registerAgentCommands(program: Command): void {
 
   agent
     .command("tokenize")
-    .description("Tokenize an agent on a blockchain")
-    .option("--wallet-address <address>", "Agent wallet address")
-    .option("--agent-id <id>", "Agent ID")
+    .description("Tokenize the active agent on a blockchain")
     .option("--chain-id <id>", "Chain ID to tokenize on")
     .option("--symbol <symbol>", "Token symbol")
+    .option(
+      "--anti-sniper <type>",
+      "Anti-sniper protection: 0 (none), 1 (60s), 2 (98min)"
+    )
+    .option(
+      "--prebuy <virtuals>",
+      "Pre-buy amount in VIRTUAL tokens to spend at launch (e.g. 100 = 100 VIRTUAL)"
+    )
+    .option(
+      "--acf",
+      "Enable Agent Capital Formation (higher launch fee; enables dev allocation + sell wall)"
+    )
+    .option(
+      "--60-days",
+      "Enable 60 Days Experiment mode (reversible launch; 60-day cliff on pre-buy; Vibes tokenomics)"
+    )
+    .option(
+      "--airdrop-percent <percent>",
+      "Airdrop allocation to veVIRTUAL holders (0–5%, e.g. 1.25)"
+    )
+    .option("--robotics", "Mark as a Robotics (Eastworld-eligible) launch")
+    .option("--configure", "Show advanced launch configuration options")
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
-      // Step 1: Select agent
-      let selected = await resolveAgent(agentApi, opts, json);
-
-      if (!selected) {
-        let agents: Agent[];
-        try {
-          const result = await agentApi.list();
-          agents = result.data;
-        } catch (err) {
-          outputError(
-            json,
-            `Failed to fetch agents: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          );
-          return;
-        }
-
-        if (agents.length === 0) {
-          outputError(json, "No agents found. Run `acp agent create` first.");
-          return;
-        }
-
-        selected = await selectFromList(
-          "Choose the agent to tokenize:",
-          agents
+      // Step 1: Resolve the active agent
+      const activeWallet = getActiveWallet();
+      if (!activeWallet) {
+        outputError(
+          json,
+          new CliError(
+            "No active agent set.",
+            "NO_ACTIVE_AGENT",
+            "Run `acp agent use` to set an active agent."
+          )
         );
+        return;
       }
 
-      // Step 2: Select chain
-      let selectedChain: (typeof SUPPORTED_CHAINS)[number];
-      if (opts.chainId) {
-        const match = SUPPORTED_CHAINS.find(
-          (c) => c.id.toString() === opts.chainId
+      // Step 2: Ensure a signer is registered for this agent
+      if (!getPublicKey(activeWallet)) {
+        outputError(
+          json,
+          new CliError(
+            "No signer configured for the active agent.",
+            "NO_SIGNER",
+            "Run `acp agent add-signer` to register a signing key before tokenizing."
+          )
         );
-        if (!match) {
-          outputError(
-            json,
-            `Unsupported chain ID: ${
-              opts.chainId
-            }. Supported: ${SUPPORTED_CHAINS.map(
-              (c) => `${c.name} (${c.id})`
-            ).join(", ")}`
-          );
-          return;
-        }
-        selectedChain = match;
-      } else {
-        selectedChain = await selectOption(
-          "\nChoose a chain to tokenize on:",
-          SUPPORTED_CHAINS,
-          (chain) => chain.name
-        );
+        return;
       }
 
-      // Check tokenize status
-      let tokenizeDetails: TokenizeStatusResponse;
+      const agentId = getAgentId(activeWallet);
+      if (!agentId) {
+        outputError(
+          json,
+          new CliError(
+            "Agent ID not found for active wallet.",
+            "NO_ACTIVE_AGENT",
+            "Run `acp agent list` or `acp agent use` to populate it."
+          )
+        );
+        return;
+      }
+
+      let selected: Agent;
       try {
-        tokenizeDetails = await agentApi.getTokenizeDetails(
-          selected.id,
-          selectedChain.id
-        );
+        selected = await agentApi.getById(agentId);
       } catch (err) {
         outputError(
           json,
-          `Failed to fetch tokenize details: ${
+          `Failed to fetch agent: ${
             err instanceof Error ? err.message : String(err)
           }`
         );
         return;
       }
 
-      if (tokenizeDetails.hasTokenized) {
-        outputError(json, `${selected.name} has already been tokenized.`);
+      // Step 2b: Ensure agent has not already been tokenized
+      const existingToken = selected.chains?.find((c) => c.tokenAddress);
+      if (existingToken) {
+        outputError(
+          json,
+          new CliError(
+            `Agent ${
+              selected.name
+            } is already tokenized on chain ${formatChainId(
+              existingToken.chainId
+            )}.`,
+            "ALREADY_TOKENIZED",
+            "Each agent can only be tokenized once on a single chain."
+          )
+        );
         return;
+      }
+
+      // Step 3: Resolve chain options from the EVM provider
+      let providerChains: { id: number; name: string }[];
+      try {
+        const provider = await createProviderAdapter();
+        const chainIds = await provider.getSupportedChainIds();
+        const chainById = new Map<number, string>(
+          (Object.values(viemChains) as { id?: number; name?: string }[])
+            .filter(
+              (c) => typeof c?.id === "number" && typeof c?.name === "string"
+            )
+            .map((c) => [c.id as number, c.name as string])
+        );
+        providerChains = chainIds.map((id) => ({
+          id,
+          name: chainById.get(id) ?? `Chain ${id}`,
+        }));
+      } catch (err) {
+        outputError(
+          json,
+          `Failed to load provider chains: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return;
+      }
+
+      if (providerChains.length === 0) {
+        outputError(json, "Provider has no supported chains.");
+        return;
+      }
+
+      let selectedChain: (typeof providerChains)[number];
+      if (opts.chainId) {
+        const match = providerChains.find(
+          (c) => c.id.toString() === opts.chainId
+        );
+        if (!match) {
+          outputError(
+            json,
+            `Unsupported chain ID: ${opts.chainId}. Supported: ${providerChains
+              .map((c) => `${c.name} (${c.id})`)
+              .join(", ")}`
+          );
+          return;
+        }
+        selectedChain = match;
+      } else if (providerChains.length === 1) {
+        selectedChain = providerChains[0];
+      } else {
+        selectedChain = await selectOption(
+          "\nChoose a chain to tokenize on:",
+          providerChains,
+          (chain) => chain.name
+        );
       }
 
       // Step 3: Input token symbol
@@ -811,87 +871,305 @@ export function registerAgentCommands(program: Command): void {
         }
       }
 
-      // Step 4: Pay if not already paid
-      let txHash = "";
+      // Step 4: Anti-sniper selection
+      let antiSniperTaxType = 1; // default: 60 seconds
+      if (opts.antiSniper !== undefined) {
+        const parsed = Number(opts.antiSniper);
+        if (![0, 1, 2].includes(parsed)) {
+          outputError(
+            json,
+            `Invalid anti-sniper type: ${opts.antiSniper}. Must be 0, 1, or 2.`
+          );
+          return;
+        }
+        antiSniperTaxType = parsed;
+      } else if (opts.configure && !json) {
+        const antiSniperChoice = await selectOption(
+          "\nChoose anti-sniper protection duration:",
+          [
+            { value: 1, label: "60 seconds (default)" },
+            { value: 0, label: "None (0 seconds)" },
+            { value: 2, label: "98 minutes" },
+          ],
+          (opt) => opt.label
+        );
+        antiSniperTaxType = antiSniperChoice.value;
+      }
 
-      if (tokenizeDetails.hasPaid) {
-        if (!json)
-          console.log("\nPayment already received, skipping transfer.");
-      } else {
-        const previousWallet = getActiveWallet();
-        setActiveWallet(selected.walletAddress);
-
+      // Step 5: Pre-buy amount (VIRTUAL to spend at launch)
+      let prebuyVirtualWei = 0n;
+      const parsePrebuy = (raw: string): bigint | null => {
+        const trimmed = raw.trim();
+        if (!trimmed) return 0n;
+        if (!/^\d*\.?\d+$/.test(trimmed)) return null;
         try {
-          if (!json) console.log(`Sending payment for tokenization...`);
-
-          const acpAgent = await createAgentFromConfig();
-          const client = acpAgent.getClient();
-
-          if (!(client instanceof EvmAcpClient)) {
+          const wei = parseEther(trimmed as `${number}`);
+          return wei < 0n ? null : wei;
+        } catch {
+          return null;
+        }
+      };
+      if (opts.prebuy !== undefined) {
+        const wei = parsePrebuy(String(opts.prebuy));
+        if (wei === null) {
+          outputError(
+            json,
+            `Invalid --prebuy value: ${opts.prebuy}. Must be a non-negative number of VIRTUAL tokens.`
+          );
+          return;
+        }
+        prebuyVirtualWei = wei;
+      } else if (opts.configure && !json) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        try {
+          const raw = await prompt(
+            rl,
+            "\nPre-buy amount in VIRTUAL tokens (blank to skip): "
+          );
+          const wei = parsePrebuy(raw);
+          if (wei === null) {
             outputError(
               json,
-              "Only EVM chains are supported for tokenization."
+              `Invalid pre-buy value: ${raw}. Must be a non-negative number.`
             );
             return;
           }
-
-          const provider = client.getProvider();
-
-          const result = await provider.sendCalls(selectedChain.id, [
-            {
-              to: tokenizeDetails.paymentToken as `0x${string}`,
-              data: tokenizeDetails.paymentData as `0x${string}`,
-            },
-          ]);
-
-          txHash = Array.isArray(result) ? result[0] : result;
-        } catch (err) {
-          outputError(
-            json,
-            `Failed to send payment: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          );
-          return;
+          prebuyVirtualWei = wei;
         } finally {
-          if (previousWallet) setActiveWallet(previousWallet);
+          rl.close();
         }
       }
 
-      // Step 5: Call tokenize API
-      let tokenizeResponse: TokenizeResponse;
-      try {
-        if (!json)
-          console.log(
-            `Tokenizing your agent on chain ID ${selectedChain.id}...`
-          );
+      // Step 6: Capital Formation (ACF) toggle
+      let needAcf = false;
+      if (opts.acf) {
+        needAcf = true;
+      } else if (opts.configure && !json) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        try {
+          const raw = (
+            await prompt(rl, "\nEnable Capital Formation (ACF)? (y/N): ")
+          )
+            .trim()
+            .toLowerCase();
+          needAcf = raw === "y" || raw === "yes";
+        } finally {
+          rl.close();
+        }
+      }
 
-        tokenizeResponse = await agentApi.tokenize(
+      // Step 6b: 60 Days Experiment toggle
+      let isProject60days = false;
+      if (opts["60Days"]) {
+        isProject60days = true;
+      } else if (opts.configure && !json) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        try {
+          const raw = (await prompt(rl, "\nEnable 60 Days Experiment? (y/N): "))
+            .trim()
+            .toLowerCase();
+          isProject60days = raw === "y" || raw === "yes";
+        } finally {
+          rl.close();
+        }
+      }
+
+      // Step 6c: Airdrop percent (0–5%)
+      let airdropPercent = 0;
+      const parseAirdropPercent = (raw: string): number | null => {
+        const trimmed = raw.trim();
+        if (!trimmed) return 0;
+        if (!/^\d*\.?\d+$/.test(trimmed)) return null;
+        const n = Number(trimmed);
+        if (!Number.isFinite(n) || n < 0 || n > 5) return null;
+        return n;
+      };
+      if (opts.airdropPercent !== undefined) {
+        const n = parseAirdropPercent(String(opts.airdropPercent));
+        if (n === null) {
+          outputError(
+            json,
+            `Invalid --airdrop-percent value: ${opts.airdropPercent}. Must be a number between 0 and 5.`
+          );
+          return;
+        }
+        airdropPercent = n;
+      } else if (opts.configure && !json) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        try {
+          const raw = await prompt(
+            rl,
+            "\nAirdrop percentage to veVIRTUAL holders (0–5, blank to skip): "
+          );
+          const n = parseAirdropPercent(raw);
+          if (n === null) {
+            outputError(
+              json,
+              `Invalid airdrop percent: ${raw}. Must be a number between 0 and 5.`
+            );
+            return;
+          }
+          airdropPercent = n;
+        } finally {
+          rl.close();
+        }
+      }
+      // Step 6d: Robotics Launch
+      let isRobotics = false;
+      if (opts.robotics) {
+        isRobotics = true;
+      } else if (opts.configure && !json) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        try {
+          const raw = (
+            await prompt(
+              rl,
+              "\nMark as Robotics (Eastworld-eligible) launch? (y/N): "
+            )
+          )
+            .trim()
+            .toLowerCase();
+          isRobotics = raw === "y" || raw === "yes";
+        } finally {
+          rl.close();
+        }
+      }
+
+      // Step 7: Prepare launch (backend creates virtual + saves launchInfo)
+      let prepareLaunchResponse: Awaited<
+        ReturnType<typeof agentApi.prepareLaunch>
+      >;
+      try {
+        if (!json) console.log(`\nPreparing token launch...`);
+
+        prepareLaunchResponse = await agentApi.prepareLaunch(
           selected.id,
           selectedChain.id,
           symbol,
-          txHash
+          antiSniperTaxType,
+          needAcf,
+          isProject60days,
+          airdropPercent,
+          isRobotics,
+          prebuyVirtualWei > 0n ? prebuyVirtualWei.toString() : undefined
         );
       } catch (err) {
         outputError(
           json,
-          `Failed to tokenize agent: ${
+          `Failed to prepare launch: ${
             err instanceof Error ? err.message : String(err)
           }`
         );
         return;
       }
 
+      const {
+        virtualId,
+        contracts,
+        launchFee,
+        approveCalldata,
+        preLaunchCalldata,
+      } = prepareLaunchResponse;
+
+      const launchFeeWei = BigInt(launchFee);
+      const totalApprovalWei = launchFeeWei + prebuyVirtualWei;
+
+      // Step 8: On-chain — approve VIRTUAL token + call preLaunch
+      let preLaunchTxHash: string;
+      try {
+        await checkVirtualBalance(
+          selectedChain.id,
+          contracts.virtualToken,
+          selected.walletAddress,
+          totalApprovalWei.toString()
+        );
+        if (!json && needAcf) {
+          console.log(
+            `Launch fee (with ACF): ${formatEther(launchFeeWei)} VIRTUAL`
+          );
+        }
+        if (!json && isProject60days) {
+          console.log(
+            `60 Days Experiment enabled — pre-buy tokens will follow a 60-day cliff.`
+          );
+        }
+        if (!json && airdropPercent > 0) {
+          console.log(
+            `Airdrop: allocating ${airdropPercent}% of supply to veVIRTUAL holders.`
+          );
+        }
+        if (!json && isRobotics) {
+          console.log(`Robotics Launch: enabled (Eastworld eligibility).`);
+        }
+        if (!json && prebuyVirtualWei > 0n) {
+          console.log(
+            `Pre-buying ${formatEther(prebuyVirtualWei)} VIRTUAL of $${symbol}`
+          );
+        }
+        if (!json) console.log(`Approving VIRTUAL token...`);
+
+        await sendApprove(
+          selectedChain.id,
+          contracts.virtualToken,
+          approveCalldata
+        );
+
+        if (!json) console.log(`Calling preLaunch contract...`);
+        preLaunchTxHash = await sendPreLaunch(
+          selectedChain.id,
+          contracts.bondingV5,
+          preLaunchCalldata
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const hints: string[] = [];
+        if (needAcf && prebuyVirtualWei > 0n) {
+          hints.push("with ACF enabled, pre-buy must be ≤50% of LP");
+        }
+        if (airdropPercent > 0 && prebuyVirtualWei > 0n) {
+          hints.push(
+            `airdrop reserves ${airdropPercent}% of supply before LP, reducing pre-buy headroom`
+          );
+        }
+        const hint = hints.length
+          ? ` Hint: ${hints.join("; ")}; reduce --prebuy and retry.`
+          : "";
+        outputError(json, `Failed to launch token: ${msg}${hint}`);
+        return;
+      }
+
       if (!json) {
         console.log(
-          `\nAgent ${selected.name} tokenized successfully as $${symbol}, token address: ${tokenizeResponse.preToken}`
+          `\nAgent ${selected.name} tokenized successfully as $${symbol}`
         );
+        console.log(`Transaction: ${preLaunchTxHash}`);
       } else {
         outputResult(json, {
           success: true,
           agentId: selected.id,
           agentName: selected.name,
-          tokenizeResponse,
+          virtualId,
+          txHash: preLaunchTxHash,
+          needAcf,
+          isProject60days,
+          airdropPercent,
+          isRobotics,
+          launchFee: launchFeeWei.toString(),
         });
       }
     });

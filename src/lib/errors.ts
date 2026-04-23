@@ -6,6 +6,7 @@ export type ErrorCode =
   | "VALIDATION_ERROR"
   | "API_ERROR"
   | "ALREADY_EXISTS"
+  | "ALREADY_TOKENIZED"
   | "TIMEOUT";
 
 export class CliError extends Error {
