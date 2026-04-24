@@ -52,6 +52,17 @@ export class ApiClient {
     return res.json() as Promise<T>;
   }
 
+  async patch<T>(path: string, body: unknown): Promise<T> {
+    const url = new URL(path, this.baseUrl);
+    const res = await fetch(url.toString(), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...this.authHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json() as Promise<T>;
+  }
+
   async delete<T>(path: string): Promise<T> {
     const url = new URL(path, this.baseUrl);
     const res = await fetch(url.toString(), {

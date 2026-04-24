@@ -324,6 +324,87 @@ acp events drain --file events.jsonl --limit 10
 
 Each event line includes the job ID, chain ID, status, your roles, available actions, and full event details — designed to be piped into an agent orchestration loop.
 
+### Agent Email
+
+Each agent can provision a dedicated email identity, send and receive email,
+and extract OTPs/links from inbound messages. See the [EconomyOS whitepaper →
+Agent Email](https://github.com/Virtual-Protocol/whitepaper-economyOS/blob/main/pages/agent-identity/email/overview.mdx)
+for architecture, anti-spam policy, and rate limits.
+
+```bash
+# Show the provisioned email identity
+acp email whoami
+
+# Provision a new email identity for the active agent
+acp email provision --display-name "My Agent" --local-part "myagent"
+
+# View inbox messages
+acp email inbox
+acp email inbox --folder inbox --limit 20
+acp email inbox --cursor <cursor>   # paginate
+
+# Compose and send an email
+acp email compose --to "user@example.com" --subject "Hello" --body "Hi there"
+
+# Search emails
+acp email search --query "order confirmation"
+
+# View a full email thread
+acp email thread --thread-id <id>
+
+# Reply to an email thread
+acp email reply --thread-id <id> --body "Thanks for the update"
+
+# Extract OTP code from an email message
+acp email extract-otp --message-id <id>
+
+# Extract links from an email message
+acp email extract-links --message-id <id>
+```
+
+### Agent Card
+
+Virtual cards use a **spend-request model** backed by agentcard.ai. The agent
+signs up, completes a profile, attaches a payment method via Stripe, sets a
+spend limit, and then issues single-use virtual cards (PAN/CVV returned
+inline). Every mutating response also carries a `nextStep` hint so agents
+can self-advance through setup. See the [EconomyOS whitepaper → Agent
+Card](https://github.com/Virtual-Protocol/whitepaper-economyOS/blob/main/pages/agent-identity/card/overview.mdx)
+for architecture, the `nextStep` contract, and the full flow diagram.
+
+All amount flags below are in **cents** (the BE DTO takes integer cents).
+
+```bash
+# 1. Sign up (magic-link auth to agentcard.ai)
+acp card signup --email "agent@example.com"
+acp card signup-poll --state <state-token>   # poll until done:true
+acp card whoami                              # check verification state
+
+# 2. Profile (required before issuing cards)
+acp card profile                                    # view profile + nextStep
+acp card profile set --first-name "Ada" \
+                     --last-name "Lovelace" \
+                     --phone-number "+14155551234"  # E.164
+acp card profile reset                              # wipe name/phone/payment
+
+# 3. Payment method (opens Stripe setup URL; re-run any time to replace)
+acp card payment-method
+
+# 4. Spend limit (cents, min 100)
+acp card limit                      # view current limit + remaining
+acp card limit set --amount 5000    # $50 spend cap
+
+# 5. Issue a single-use card (cents, 100–7500, multiples of 100)
+acp card issue --amount 2500        # $25 card, PAN/CVV shown once
+
+# Read past issuances
+acp card list                              # all spend-requests
+acp card get --request-id <id>             # detail for one
+```
+
+> **PAN/CVV is shown exactly once** — on `card issue`. There is no way to
+> re-fetch unmasked details later. Store them immediately.
+
 ### Chain Info
 
 ```bash
@@ -395,6 +476,8 @@ src/
     events.ts               NDJSON event streaming (listen, drain)
     wallet.ts               Wallet info and signing
     chain.ts                Chain info (list supported chains)
+    email.ts                Agent email (identity, inbox, compose, search, threads)
+    card.ts                 Agent virtual cards (signup, profile, payment-method, limit, issue)
   lib/
     config.ts               Load/save config.json (active wallet, agent keys)
     agentFactory.ts         Create ACP agent instance from config + OS keychain

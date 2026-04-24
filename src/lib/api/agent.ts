@@ -212,6 +212,198 @@ export interface TokenizeStatusResponse {
   paymentData: string;
 }
 
+// ── Agent Email types ───────────────────────────────────────────────
+
+// GET /identity returns the stored AgentEmailIdentity row (or null). Shape
+// matches the TypeORM entity; `metadata.jwt` is encrypted and not useful
+// to the caller, so we don't surface it in the CLI renderer.
+export interface AgentEmailIdentity {
+  id: string;
+  agentId: string;
+  emailAddress: string;
+  externalAgentId: string | null;
+  externalTenantId: string | null;
+  status: "active" | "suspended";
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmailMessage {
+  id: string;
+  threadId: string;
+  direction: "inbound" | "outbound";
+  from: string;
+  to: string[];
+  subject: string;
+  preview: string;
+  receivedAt: string;
+  isRead: boolean;
+  spamClassification: string | null;
+}
+
+export interface InboxResponse {
+  messages: EmailMessage[];
+  nextCursor: string | null;
+}
+
+export interface ComposeEmailResponse {
+  messageId: string;
+  threadId: string;
+}
+
+export interface ThreadMessage {
+  id: string;
+  direction: "inbound" | "outbound";
+  from: string;
+  to: string[];
+  subject: string;
+  textBody: string;
+  htmlBody: string;
+  receivedAt: string;
+  attachments: { id: string; filename: string; mimeType: string; sizeBytes: string }[];
+}
+
+export interface ThreadResponse {
+  id: string;
+  subject: string;
+  status: string;
+  messages: ThreadMessage[];
+}
+
+export interface ExtractOtpResponse {
+  otp: string | null;
+}
+
+export interface ExtractLinksResponse {
+  links: { url: string; text: string; category: string }[];
+}
+
+export interface SearchEmailsResponse {
+  messages: EmailMessage[];
+}
+
+// ── Agent Card types ────────────────────────────────────────────────
+//
+// The card API uses a spend-request model: the agent sets up a profile,
+// attaches a payment method via Stripe, sets a spend limit, then issues
+// single-use virtual cards (PAN/CVV inline). No checkout flow, no refunds.
+//
+// Every mutating response carries a `nextStep` hint so callers can advance
+// the setup flow without inferring state from field nulls.
+
+export type NextStepAction =
+  | "signup"
+  | "pollSignup"
+  | "updateProfile"
+  | "addPaymentMethod"
+  | "completePaymentMethod"
+  | "setLimit"
+  | "issueCard";
+
+export interface NextStep {
+  action: NextStepAction;
+  endpoint: string;
+  hint: string;
+  // Only populated for `updateProfile` — lists the profile fields still null.
+  missing?: string[];
+}
+
+export interface CardSignupResponse {
+  state: string;
+  nextStep: NextStep;
+}
+
+export interface CardSignupPollResponse {
+  done: boolean;
+  email?: string;
+  nextStep: NextStep;
+}
+
+export interface CardWhoamiResponse {
+  email: string | null;
+  verified: boolean;
+  nextStep: NextStep | null;
+}
+
+export interface CardPaymentMethod {
+  id: string;
+  brand: string;
+  last4: string;
+  expMonth: number;
+  expYear: number;
+}
+
+export interface CardProfileResponse {
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  phoneNumber: string | null;
+  hasPaymentMethod: boolean;
+  paymentMethod: CardPaymentMethod | null;
+  spendLimitCents: number;
+  locked: boolean;
+  nextStep: NextStep | null;
+}
+
+export interface CardProfileResetResponse {
+  ok: true;
+  nextStep: NextStep | null;
+}
+
+export interface CardPaymentMethodSetupResponse {
+  url: string;
+  nextStep: NextStep;
+}
+
+export interface CardLimitResponse {
+  spendLimitCents: number;
+  spentCents: number;
+  remainingCents: number;
+  nextStep: NextStep;
+}
+
+// Returned inline from POST /card/request. The caller receives PAN/CVV
+// exactly once — there is no way to re-fetch unmasked details later.
+export interface IssuedCardResponse {
+  id: string;
+  amountCents: number;
+  expiresAt: string;
+  pan: string;
+  cvv: string;
+  last4?: string;
+  expiryMonth: number;
+  expiryYear: number;
+  zip?: string;
+  cardholderName?: string;
+  nextStep: NextStep;
+}
+
+// Returned by GET /card/request and GET /card/request/:requestId. Unlike
+// IssuedCardResponse, card-identifying fields (pan/cvv/etc.) are optional
+// because they are only present while the request is still active.
+export interface SpendRequest {
+  id: string;
+  amountCents: number;
+  status: string;
+  createdAt: string;
+  expiresAt: string;
+  issuedAt?: string;
+  capturedAmountCents?: number | null;
+  capturedAt?: string | null;
+  last4?: string;
+  pan?: string;
+  cvv?: string;
+  expiryMonth?: number;
+  expiryYear?: number;
+  zip?: string;
+  cardholderName?: string;
+}
+
+export interface SpendRequestListResponse {
+  requests: SpendRequest[];
+}
+
 export interface TokenizeResponse {
   id: number;
   name: string;
@@ -464,6 +656,200 @@ export class AgentApi {
       { acpAgentId }
     );
     return res.data;
+  }
+
+  // ── Agent Email methods ──────────────────────────────────────────
+
+  async getEmailIdentity(
+    agentId: string
+  ): Promise<AgentEmailIdentity | null> {
+    const res = await this.client.get<{ data: AgentEmailIdentity | null }>(
+      `/agents/${agentId}/email/identity`
+    );
+    return res.data;
+  }
+
+  async provisionEmailIdentity(
+    agentId: string,
+    displayName: string,
+    localPart: string
+  ): Promise<{ emailAddress: string }> {
+    const res = await this.client.post<{ data: { emailAddress: string } }>(
+      `/agents/${agentId}/email/identity`,
+      { displayName, localPart }
+    );
+    return res.data;
+  }
+
+  async getEmailInbox(
+    agentId: string,
+    opts?: { folder?: string; cursor?: string; limit?: number }
+  ): Promise<InboxResponse> {
+    const params: Record<string, string> = {};
+    if (opts?.folder) params.folder = opts.folder;
+    if (opts?.cursor) params.cursor = opts.cursor;
+    if (opts?.limit !== undefined) params.limit = String(opts.limit);
+    const res = await this.client.get<{ data: InboxResponse }>(
+      `/agents/${agentId}/email/inbox`,
+      params
+    );
+    return res.data;
+  }
+
+  async composeEmail(
+    agentId: string,
+    payload: { to: string; subject: string; textBody: string; htmlBody?: string }
+  ): Promise<ComposeEmailResponse> {
+    const res = await this.client.post<{ data: ComposeEmailResponse }>(
+      `/agents/${agentId}/email/compose`,
+      payload
+    );
+    return res.data;
+  }
+
+  async searchEmails(agentId: string, query: string): Promise<SearchEmailsResponse> {
+    const res = await this.client.get<{ data: SearchEmailsResponse }>(
+      `/agents/${agentId}/email/search`,
+      { q: query }
+    );
+    return res.data;
+  }
+
+  async getEmailThread(agentId: string, threadId: string): Promise<ThreadResponse> {
+    const res = await this.client.get<{ data: ThreadResponse }>(
+      `/agents/${agentId}/email/threads/${threadId}`
+    );
+    return res.data;
+  }
+
+  async replyToEmailThread(
+    agentId: string,
+    threadId: string,
+    payload: { textBody: string; htmlBody?: string }
+  ): Promise<{ messageId: string }> {
+    const res = await this.client.post<{ data: { messageId: string } }>(
+      `/agents/${agentId}/email/threads/${threadId}/reply`,
+      payload
+    );
+    return res.data;
+  }
+
+  async extractOtp(agentId: string, messageId: string): Promise<ExtractOtpResponse> {
+    const res = await this.client.post<{ data: ExtractOtpResponse }>(
+      `/agents/${agentId}/email/messages/${messageId}/extract-otp`,
+      {}
+    );
+    return res.data;
+  }
+
+  async extractLinks(agentId: string, messageId: string): Promise<ExtractLinksResponse> {
+    const res = await this.client.post<{ data: ExtractLinksResponse }>(
+      `/agents/${agentId}/email/messages/${messageId}/extract-links`,
+      {}
+    );
+    return res.data;
+  }
+
+  // ── Agent Card methods ──────────────────────────────────────────
+
+  async cardSignup(agentId: string, email: string): Promise<CardSignupResponse> {
+    return this.client.post<CardSignupResponse>(
+      `/agents/${agentId}/card/signup`,
+      { email }
+    );
+  }
+
+  async cardSignupPoll(agentId: string, state: string): Promise<CardSignupPollResponse> {
+    return this.client.get<CardSignupPollResponse>(
+      `/agents/${agentId}/card/signup/poll`,
+      { state }
+    );
+  }
+
+  async cardWhoami(agentId: string): Promise<CardWhoamiResponse> {
+    return this.client.get<CardWhoamiResponse>(
+      `/agents/${agentId}/card/whoami`
+    );
+  }
+
+  // -- Profile --
+
+  async cardGetProfile(agentId: string): Promise<CardProfileResponse> {
+    return this.client.get<CardProfileResponse>(
+      `/agents/${agentId}/card/profile`
+    );
+  }
+
+  async cardUpdateProfile(
+    agentId: string,
+    patch: { firstName?: string; lastName?: string; phoneNumber?: string }
+  ): Promise<CardProfileResponse> {
+    return this.client.patch<CardProfileResponse>(
+      `/agents/${agentId}/card/profile`,
+      patch
+    );
+  }
+
+  async cardResetProfile(agentId: string): Promise<CardProfileResetResponse> {
+    return this.client.delete<CardProfileResetResponse>(
+      `/agents/${agentId}/card/profile`
+    );
+  }
+
+  // -- Payment method --
+
+  async cardStartPaymentMethodSetup(
+    agentId: string
+  ): Promise<CardPaymentMethodSetupResponse> {
+    return this.client.post<CardPaymentMethodSetupResponse>(
+      `/agents/${agentId}/card/payment-method`,
+      {}
+    );
+  }
+
+  // -- Spend limit --
+
+  async cardGetLimit(agentId: string): Promise<CardLimitResponse> {
+    return this.client.get<CardLimitResponse>(
+      `/agents/${agentId}/card/limit`
+    );
+  }
+
+  async cardSetLimit(
+    agentId: string,
+    amountCents: number
+  ): Promise<CardLimitResponse> {
+    return this.client.post<CardLimitResponse>(
+      `/agents/${agentId}/card/limit`,
+      { amountCents }
+    );
+  }
+
+  // -- Spend requests (issue + read cards) --
+
+  async cardIssue(
+    agentId: string,
+    amountCents: number
+  ): Promise<IssuedCardResponse> {
+    return this.client.post<IssuedCardResponse>(
+      `/agents/${agentId}/card/request`,
+      { amountCents }
+    );
+  }
+
+  async cardListRequests(agentId: string): Promise<SpendRequestListResponse> {
+    return this.client.get<SpendRequestListResponse>(
+      `/agents/${agentId}/card/request`
+    );
+  }
+
+  async cardGetRequest(
+    agentId: string,
+    requestId: string
+  ): Promise<SpendRequest> {
+    return this.client.get<SpendRequest>(
+      `/agents/${agentId}/card/request/${requestId}`
+    );
   }
 
   async getAgentAssets(

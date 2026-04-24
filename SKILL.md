@@ -596,6 +596,50 @@ Browse supports filtering and sorting:
 | `events drain`  | Read and remove events from a listen output file | `--file`       | `--limit <n>`                 |
 
 
+### Agent Email
+
+See the [EconomyOS whitepaper → Agent Email](https://github.com/Virtual-Protocol/whitepaper-economyOS/blob/main/pages/agent-identity/email/overview.mdx)
+for architecture, anti-spam policy, and rate limits.
+
+| Command | Description | Required Flags | Optional Flags |
+|---|---|---|---|
+| `email whoami` | Show the provisioned email identity | — | — |
+| `email provision` | Provision a new email identity | — | `--display-name`, `--local-part` |
+| `email inbox` | View inbox messages | — | `--folder`, `--cursor`, `--limit` |
+| `email compose` | Compose and send an email | — | `--to`, `--subject`, `--body`, `--html-body` |
+| `email search` | Search emails by query | `--query` | — |
+| `email thread` | View a full email thread | `--thread-id` | — |
+| `email reply` | Reply to an email thread | `--thread-id` | `--body`, `--html-body` |
+| `email extract-otp` | Extract OTP code from an email message | `--message-id` | — |
+| `email extract-links` | Extract links from an email message | `--message-id` | — |
+
+### Agent Card
+
+Spend-request model. Setup order: **signup → profile → payment method →
+limit → issue**. Every mutating response includes a `nextStep` hint
+(`{ action, endpoint, hint }`) so the agent can advance without inferring
+state from field nulls. `nextStep: null` means nothing left to do (either
+already ready to issue, or account locked).
+
+See the [EconomyOS whitepaper → Agent Card](https://github.com/Virtual-Protocol/whitepaper-economyOS/blob/main/pages/agent-identity/card/overview.mdx)
+for architecture, the full `nextStep` contract, and setup diagrams. All
+amount flags below are **cents** (the BE DTO takes integer cents).
+
+| Command | Description | Required Flags | Optional Flags |
+|---|---|---|---|
+| `card signup` | Start magic-link signup with agentcard.ai | — | `--email` |
+| `card signup-poll` | Poll for magic-link completion (returns `done`) | `--state` | — |
+| `card whoami` | Lightweight session check (email + verified) | — | — |
+| `card profile` | View profile + current `nextStep` | — | — |
+| `card profile set` | Update profile fields (at least one required) | — | `--first-name`, `--last-name`, `--phone-number` (E.164) |
+| `card profile reset` | Wipe name/phone/payment method (keeps token + limit) | — | — |
+| `card payment-method` | Create Stripe setup session; open returned `url`. Re-run to replace the saved method (accounts hold at most one). | — | — |
+| `card limit` | View current spend limit + `spent`/`remaining` | — | — |
+| `card limit set` | Set spend limit (cents, min 100) | — | `--amount` |
+| `card issue` | Issue a single-use virtual card (cents, 100–7500, multiples of 100). Returns PAN/CVV inline **once**. | — | `--amount` |
+| `card list` | List spend-requests issued by this agent | — | — |
+| `card get` | Retrieve a spend-request by ID | `--request-id` | — |
+
 ### Agent Management
 
 | Command            | Description                              | Required Flags | Optional Flags                          |
@@ -740,6 +784,8 @@ src/
     events.ts               Event streaming (listen + drain)
     wallet.ts               Wallet info
     chain.ts                Chain info (list supported chains)
+    email.ts                Agent email (identity, inbox, compose, search, threads)
+    card.ts                 Agent virtual cards (signup, profile, payment-method, limit, issue)
   lib/
     agentFactory.ts         Creates AcpAgent from config + OS keychain
     rest.ts                 REST client for job queries

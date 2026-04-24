@@ -13,6 +13,8 @@ import { registerBrowseCommand } from "../src/commands/browse";
 import { registerOfferingCommands } from "../src/commands/offering";
 import { registerResourceCommands } from "../src/commands/resource";
 import { registerChainCommands } from "../src/commands/chain";
+import { registerEmailCommands } from "../src/commands/email";
+import { registerCardCommands } from "../src/commands/card";
 
 program
   .name("acp")
@@ -36,5 +38,7 @@ registerBrowseCommand(program);
 registerOfferingCommands(program);
 registerResourceCommands(program);
 registerChainCommands(program);
+registerEmailCommands(program);
+registerCardCommands(program);
 
 program.parse();
