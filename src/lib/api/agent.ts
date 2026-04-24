@@ -106,6 +106,7 @@ export interface Agent {
     chainId: number;
     tokenAddress?: string;
     acpV2AgentId?: number;
+    erc8004AgentId?: number;
   }[];
   builderCode: string;
 }
@@ -220,6 +221,43 @@ export interface TokenizeResponse {
   launchedAt: string;
   preToken: string;
   taxRecipient: string;
+}
+
+export interface Erc8004RegisterTx {
+  type: "register" | "set-agent-wallet";
+  data: {
+    to?: string;
+    data?: string;
+    typedData?: {
+      domain: {
+        name: string;
+        version: string;
+        chainId: number;
+        verifyingContract: string;
+      };
+      types: Record<string, unknown>;
+      deadline: number;
+      agentId: string;
+      newWallet: string;
+      owner: string;
+    };
+  };
+}
+
+export interface Erc8004RegisterPayload {
+  type: "register" | "set-agent-wallet";
+  chainId: number;
+  signature?: string;
+  ownerAddress?: string;
+  deadline?: string;
+  txHash?: string;
+}
+
+export interface JobFeedbackTx {
+  txData?: {
+    to: string;
+    data: string;
+  };
 }
 
 export interface TokenInfo {
@@ -472,6 +510,54 @@ export class AgentApi {
     isUS?: boolean;
   }): Promise<{ data: { checkoutUrl: string } }> {
     return this.client.post("/topup/crossmint-complete", data);
+  }
+
+  async getErc8004RegisterData(
+    agentId: string,
+    chainId: number
+  ): Promise<Erc8004RegisterTx> {
+    const res = await this.client.get<{ data: Erc8004RegisterTx }>(
+      `/agents/${agentId}/erc8004/register?chainId=${chainId}`
+    );
+    return res.data;
+  }
+
+  async confirmErc8004Register(
+    agentId: string,
+    payload: Erc8004RegisterPayload
+  ): Promise<string> {
+    const res = await this.client.post<{ message: string }>(
+      `/agents/${agentId}/erc8004/register`,
+      payload
+    );
+    return res.message;
+  }
+
+  async getJobFeedbackData(
+    chainId: number,
+    onChainJobId: string,
+    rating: number,
+    review?: string
+  ): Promise<JobFeedbackTx> {
+    const params: Record<string, string> = { rating: String(rating) };
+    if (review) params.review = review;
+    const res = await this.client.post<{ data: JobFeedbackTx }>(
+      `/jobs/${chainId}/${onChainJobId}/feedback-data`,
+      { rating, review }
+    );
+    return res.data;
+  }
+
+  async confirmJobFeedback(
+    chainId: number,
+    onChainJobId: string,
+    txnHash: string
+  ): Promise<string> {
+    const res = await this.client.post<{ message: string }>(
+      `/jobs/${chainId}/${onChainJobId}/feedback`,
+      { txnHash }
+    );
+    return res.message;
   }
 
   async tokenize(

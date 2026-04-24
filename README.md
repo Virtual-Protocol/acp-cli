@@ -113,6 +113,12 @@ acp agent migrate --agent-id 123 --complete
 
 # Alternatively, migrate via the web UI at app.virtuals.io
 # under the "Agents and Projects" section — click "Upgrade".
+
+# Register an agent on the ERC-8004 identity registry
+# Interactive — prompts to pick agent and chain
+acp agent register-erc8004
+# Or non-interactive
+acp agent register-erc8004 --agent-id abc-123 --chain-id 84532
 ```
 
 ### Tokenization
@@ -239,7 +245,13 @@ acp client complete --job-id 42 --chain-id 8453 --reason "Looks great"
 
 # Reject a deliverable (returns escrow to client)
 acp client reject --job-id 42 --chain-id 8453 --reason "Wrong colors"
+
+# Leave a review on a completed job (rating 1-5, optional text up to 250 chars)
+acp client review --job-id 42 --chain-id 8453 --rating 5
+acp client review --job-id 42 --chain-id 8453 --rating 5 --review "Great work"
 ```
+
+If the provider is registered on the ERC-8004 reputation registry, the review is submitted on-chain; otherwise it's recorded off-chain only.
 
 ### Provider Commands
 

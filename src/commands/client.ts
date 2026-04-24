@@ -4,12 +4,14 @@ import { AssetToken } from "@virtuals-protocol/acp-node-v2";
 import {
   createAgentFromConfig,
   createLegacyBuyerAdapter,
+  createProviderAdapter,
 } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { registerJob, isLegacyJob, getLegacyJobChainId } from "../lib/config";
 import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
 import { PriceType } from "@virtuals-protocol/acp-node";
+import { getClient } from "../lib/api/client";
 
 export function registerClientCommands(program: Command): void {
   const client = program
@@ -439,6 +441,112 @@ export function registerClientCommands(program: Command): void {
           }
         } finally {
           await agent.stop();
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  client
+    .command("review")
+    .description(
+      "Leave a review on a completed job (rating 1-5, optional text)"
+    )
+    .requiredOption("--job-id <id>", "On-chain job ID")
+    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--rating <number>", "Rating from 1 to 5")
+    .option("--review <text>", "Review text (optional, maximum 250 characters)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const rating = Number(opts.rating);
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+          outputError(json, "Rating must be an integer between 1 and 5.");
+          return;
+        }
+        const chainId = Number(opts.chainId);
+        if (!Number.isInteger(chainId) || chainId <= 0) {
+          outputError(json, "Chain ID must be a positive integer.");
+          return;
+        }
+        const review: string | undefined = opts.review?.trim() || undefined;
+        if (review && review.length > 250) {
+          outputError(json, "Review text must be 250 characters or fewer.");
+          return;
+        }
+
+        const { agentApi } = await getClient();
+
+        const txData = await agentApi.getJobFeedbackData(
+          chainId,
+          opts.jobId,
+          rating,
+          review
+        );
+
+        if (!txData.txData) {
+          if (json) {
+            outputResult(json, {
+              success: true,
+              action: "review",
+              jobId: opts.jobId,
+              chainId,
+              rating,
+              review: review ?? null,
+              onChain: false,
+            });
+          } else {
+            console.log(
+              `\n${c.green(
+                `Review recorded for Job #${opts.jobId}`
+              )} — rating ${rating}/5`
+            );
+            if (review) console.log(`  Review: ${review}`);
+            console.log(
+              `  ${c.dim(
+                "No on-chain transaction required (provider is not registered on the ERC-8004 reputation registry)."
+              )}`
+            );
+          }
+          return;
+        }
+
+        const provider = await createProviderAdapter();
+        const result = await provider.sendCalls(chainId, [
+          {
+            to: txData.txData.to as `0x${string}`,
+            data: txData.txData.data as `0x${string}`,
+          },
+        ]);
+        const txnHash = Array.isArray(result) ? result[0] : result;
+
+        const message = await agentApi.confirmJobFeedback(
+          chainId,
+          opts.jobId,
+          txnHash
+        );
+
+        if (json) {
+          outputResult(json, {
+            success: true,
+            action: "review",
+            jobId: opts.jobId,
+            chainId,
+            rating,
+            review: review ?? null,
+            onChain: true,
+            txnHash,
+            message,
+          });
+        } else {
+          console.log(
+            `\n${c.green(
+              `Review submitted for Job #${opts.jobId}`
+            )} — rating ${rating}/5`
+          );
+          if (review) console.log(`  Review: ${review}`);
+          console.log(`  Tx:     ${c.dim(txnHash)}`);
+          if (message) console.log(`  ${message}`);
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));

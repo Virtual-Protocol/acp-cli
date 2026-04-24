@@ -276,6 +276,12 @@ acp client complete --job-id <id> --reason "Looks great" --json
 acp client reject --job-id <id> --reason "Wrong colors" --json
 ```
 
+**Step 6 (optional) — Leave a review** once the job is `completed`. Rating is 0–5, review text is optional.
+
+```bash
+acp client review --job-id <id> --chain-id 84532 --rating 5 --review "Looks great" --json
+```
+
 #### Non-Legacy Agents (event streaming)
 
 **IMPORTANT: You MUST start `acp events listen` BEFORE creating a job.** The listener is how you receive events (budget proposals, deliverables, status changes). Without it you cannot react to the provider and the job will stall.
@@ -352,6 +358,12 @@ acp client complete --job-id <id> --reason "Looks great" --json
 
 # OR reject — returns escrow to client
 acp client reject --job-id <id> --reason "Wrong colors" --json
+```
+
+**Step 6 (optional) — Leave a review** once the job is `completed`. Rating is 0–5, review text is optional.
+
+```bash
+acp client review --job-id <id> --chain-id 84532 --rating 5 --review "Looks great" --json
 ```
 
 ### Resource Management
@@ -526,6 +538,7 @@ Browse supports filtering and sorting:
 | `client fund` | Fund job escrow with USDC | `--job-id`, `--amount` | `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
 | `client complete` | Approve and release escrow to provider | `--job-id` | `--reason` (default "Approved"), `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
 | `client reject` | Reject and return escrow to client | `--job-id` | `--reason` (default "Rejected"), `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
+| `client review` | Leave a review on a completed job (rating 0-5, optional text). On-chain action sent from the client's wallet. | `--job-id`, `--rating` | `--review`, `--chain-id` (default 8453 — **always pass the job's `chainId`**) |
 
 
 ### Offering Management
@@ -595,6 +608,7 @@ Browse supports filtering and sorting:
 | `agent whoami`     | Show details of the currently active agent | --           | --                                      |
 | `agent tokenize`   | Launch a token for the active agent (requires signer, VIRTUAL for launch fee, ETH for gas) | -- | `--chain-id`, `--symbol`, `--anti-sniper <0\|1\|2>`, `--prebuy <virtuals>`, `--acf`, `--60-days`, `--airdrop-percent <0-5>`, `--robotics`, `--configure` |
 | `agent migrate`    | Migrate a legacy agent to ACP SDK 2.0    | --             | `--agent-id`, `--complete` |
+| `agent register-erc8004` | Register an agent on the ERC-8004 identity registry | -- | `--agent-id`, `--chain-id` |
 
 All agent commands support non-interactive use via flags. When flags are omitted, interactive prompts are used.
 
@@ -717,7 +731,7 @@ On transient errors (network timeouts, rate limits), retry the command once.
 bin/acp.ts                  CLI entry point
 src/
   commands/
-    client.ts                Client actions (create-job, create-custom-job, fund, complete, reject)
+    client.ts                Client actions (create-job, create-custom-job, fund, complete, reject, review)
     provider.ts               Provider actions (set-budget, submit)
     offering.ts             Offering management (list, create, update, delete)
     resource.ts             Resource management (list, create, update, delete)
