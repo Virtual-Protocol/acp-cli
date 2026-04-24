@@ -90,7 +90,7 @@ export function registerEmailCommands(program: Command): void {
             ["Agent ID", identity.agentId],
             ["Email", identity.emailAddress],
             ["Status", identity.status],
-            ["Created", new Date(identity.createdAt).toLocaleString()],
+            ["Created", formatDate(identity.createdAt)],
           ]);
         }
       } catch (err) {
