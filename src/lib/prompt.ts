@@ -8,14 +8,31 @@ export function prompt(
   return new Promise((resolve) => rl.question(question, resolve));
 }
 
+// CSI SGR sequences like `\x1b[2m` / `\x1b[38;5;12m` — what picocolors
+// wraps values with. We strip these only for width measurement so the
+// table keeps its colors but lines up correctly. Plain ASCII / unicode
+// widths still use `.length`, which is fine for the Latin-ish text the
+// CLI emits today.
+const ANSI_CSI = /\x1b\[[0-9;]*m/g;
+function visibleLength(s: string): number {
+  return s.replace(ANSI_CSI, "").length;
+}
+
 export function printTable(rows: [string, string | null][]): void {
-  const normalized = rows.map(([label, value]): [string, string] => [label, value ?? "N/A"]);
-  const col1 = Math.max(...normalized.map(([label]) => label.length));
-  const col2 = Math.max(...normalized.map(([, value]) => value.length));
+  const normalized = rows.map(([label, value]): [string, string] => [
+    label,
+    value ?? "N/A",
+  ]);
+  const col1 = Math.max(...normalized.map(([label]) => visibleLength(label)));
+  const col2 = Math.max(...normalized.map(([, value]) => visibleLength(value)));
   const line = `+${"-".repeat(col1 + 2)}+${"-".repeat(col2 + 2)}+`;
   console.log(line);
   for (const [label, value] of normalized) {
-    console.log(`| ${label.padEnd(col1)} | ${value.padEnd(col2)} |`);
+    // Pad manually instead of String.prototype.padEnd so ANSI escapes
+    // aren't counted toward the padding budget.
+    const labelPad = " ".repeat(col1 - visibleLength(label));
+    const valuePad = " ".repeat(col2 - visibleLength(value));
+    console.log(`| ${label}${labelPad} | ${value}${valuePad} |`);
   }
   console.log(line);
 }
