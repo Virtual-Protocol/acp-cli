@@ -304,6 +304,13 @@ acp wallet sign-message --message "hello world" --chain-id 8453
 # Sign EIP-712 typed data
 acp wallet sign-typed-data --data '{"domain":{},"types":{"EIP712Domain":[]},"primaryType":"EIP712Domain","message":{}}' --chain-id 8453
 
+# Broadcast a transaction (--value is wei, --data is optional calldata)
+acp wallet send-transaction --chain-id 8453 --to 0xRecipient --value 1000000000000000
+acp wallet send-transaction --chain-id 8453 --to 0xContract --data 0xa9059cbb...
+# Note: requires the agent's Transaction Mode to be set to "Unrestricted" in the agent
+# dashboard. In "Restricted" mode (the default), only transactions to Virtuals contracts
+# are allowed and others fail with a generic "Bad Request" 
+
 # Add funds to your wallet (interactive — choose a funding method)
 acp wallet topup --chain-id 8453
 

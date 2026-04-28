@@ -624,6 +624,7 @@ Alternatively, users can migrate via the web UI at [app.virtuals.io](https://app
 | `wallet balance`     | Show token balances for the active wallet      | `--chain-id`              | --              |
 | `wallet sign-message`| Sign a plaintext message with the active wallet| `--message`               | `--chain-id`    |
 | `wallet sign-typed-data` | Sign EIP-712 typed data with the active wallet | `--data` (JSON string) | `--chain-id`    |
+| `wallet send-transaction` | Broadcast an EVM transaction from the active wallet (requires Unrestricted Transaction Mode for non-Virtuals contracts) | `--to`, `--chain-id` | `--data` (hex), `--value` (wei) |
 | `wallet topup`       | Add funds to your wallet                       | `--chain-id`              | `--method`, `--amount`, `--email`, `--us` |
 
 **`wallet topup` funding methods:**
@@ -694,6 +695,10 @@ Error: No active agent set.
 Errors without a `code` field are unstructured (typically propagated from the SDK or network layer). Agents should handle these as generic errors and retry once.
 
 On transient errors (network timeouts, rate limits), retry the command once.
+
+### Known Issues
+
+- **`wallet send-transaction` fails with a generic `Bad Request`** (no useful body in the error chain): the agent's **Transaction Mode** is set to *Restricted* in the agent dashboard, which only permits calls to Virtuals contracts. Direct the user to switch the agent to *Unrestricted* in the dashboard, then retry. This symptom is server-enforced by the wallet provider and cannot be diagnosed further from the CLI side.
 
 ## File Structure
 
