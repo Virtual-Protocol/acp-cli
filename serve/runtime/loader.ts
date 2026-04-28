@@ -20,9 +20,16 @@ export async function loadHandlers(dir: string): Promise<LoadedHandlers> {
   }
 
   const budgetPath = resolve(dir, "budget.ts");
-  const budgetHandler = existsSync(budgetPath)
-    ? ((await import(budgetPath)).default as BudgetHandler)
-    : undefined;
+  let budgetHandler: BudgetHandler | undefined;
+  if (existsSync(budgetPath)) {
+    const budgetModule = await import(budgetPath);
+    budgetHandler = budgetModule.default as BudgetHandler;
+    if (typeof budgetHandler !== "function") {
+      throw new Error(
+        `budget.ts must export a default budget handler function.`,
+      );
+    }
+  }
 
   return { handler, budgetHandler };
 }

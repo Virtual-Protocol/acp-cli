@@ -19,7 +19,9 @@ export interface ServerOptions {
   sandbox?: boolean;
 }
 
-export async function startOfferingServer(options: ServerOptions): Promise<void> {
+export async function startOfferingServer(
+  options: ServerOptions,
+): Promise<void> {
   const { dir, providerWallet, offering } = options;
   const protocols = options.protocols ?? ["x402", "mpp", "acp"];
   const port = options.port ?? 3000;
@@ -51,11 +53,13 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
   const usesRelay = protocols.includes("x402") || protocols.includes("mpp");
   if (usesRelay && settle8183) {
     throw new Error(
-      "--settle-8183 is reserved but not supported until ERC-8183 supports this flow."
+      "--settle-8183 is reserved but not supported until ERC-8183 supports this flow.",
     );
   }
   if (usesRelay && (!apiUrl || !options.agentToken)) {
-    throw new Error("ACP API URL and agent auth token are required for x402/MPP.");
+    throw new Error(
+      "ACP API URL and agent auth token are required for x402/MPP.",
+    );
   }
 
   const relay =
@@ -86,7 +90,7 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
           protocols,
           relay: usesRelay ? "enabled" : "disabled",
           pid: process.pid,
-        })
+        }),
       );
       return;
     }
@@ -104,12 +108,12 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
     console.log("\nEndpoints:");
     if (apiUrl && protocols.includes("x402")) {
       console.log(
-        `  x402: ${serviceJobEndpoint(apiUrl, providerWallet, offeringSlug, "x402")}`
+        `  x402: ${serviceJobEndpoint(apiUrl, providerWallet, offeringSlug, "x402")}`,
       );
     }
     if (apiUrl && protocols.includes("mpp")) {
       console.log(
-        `  MPP:  ${serviceJobEndpoint(apiUrl, providerWallet, offeringSlug, "mpp")}`
+        `  MPP:  ${serviceJobEndpoint(apiUrl, providerWallet, offeringSlug, "mpp")}`,
       );
     }
     if (protocols.includes("acp")) console.log("  ACP:  native listener");
@@ -130,7 +134,7 @@ export async function startOfferingServer(options: ServerOptions): Promise<void>
 
 async function startACPListener(
   offering: DeployedOffering,
-  handlers: LoadedHandlers
+  handlers: LoadedHandlers,
 ): Promise<void> {
   const { createAgentFromConfig } = await import("../../src/lib/agentFactory");
   const { AssetToken } = await import("@virtuals-protocol/acp-node-v2");
@@ -140,58 +144,66 @@ async function startACPListener(
 
   agent.on("entry", async (session: any, entry: any) => {
     const jobId = session.jobId;
-    const status = session.status;
+    try {
+      const status = session.status;
 
-    if (entry.contentType === "requirement" && entry.content) {
-      try {
-        jobRequirements.set(jobId, JSON.parse(entry.content));
-      } catch {
-        jobRequirements.set(jobId, entry.content);
-      }
-    }
-
-    if (status === "open" && jobRequirements.has(jobId)) {
-      const requirements = jobRequirements.get(jobId)!;
-      const input = buildHandlerInput(
-        offering,
-        requirements,
-        entry.from || "unknown",
-        "acp",
-        jobId
-      );
-      if (handlers.budgetHandler) {
-        const budget = await handlers.budgetHandler(input);
-        if (budget.fundRequest) {
-          await session.setBudgetWithFundRequest(
-            AssetToken.usdc(budget.amount, chainId),
-            AssetToken.usdc(budget.fundRequest.transferAmount, chainId),
-            budget.fundRequest.destination
-          );
-        } else {
-          await session.setBudget(AssetToken.usdc(budget.amount, chainId));
+      if (entry.contentType === "requirement" && entry.content) {
+        try {
+          jobRequirements.set(jobId, JSON.parse(entry.content));
+        } catch {
+          jobRequirements.set(jobId, entry.content);
         }
-      } else {
-        await session.setBudget(
-          AssetToken.usdc(offering.offering.priceValue, chainId)
-        );
       }
-    }
 
-    if (status === "funded" && jobRequirements.has(jobId)) {
-      const result = await handlers.handler(
-        buildHandlerInput(
+      if (status === "open" && jobRequirements.has(jobId)) {
+        const requirements = jobRequirements.get(jobId)!;
+        const input = buildHandlerInput(
           offering,
-          jobRequirements.get(jobId)!,
+          requirements,
           entry.from || "unknown",
           "acp",
-          jobId
-        )
-      );
-      await session.submit(result.deliverable);
-    }
+          jobId,
+        );
+        if (handlers.budgetHandler) {
+          const budget = await handlers.budgetHandler(input);
+          if (budget.fundRequest) {
+            await session.setBudgetWithFundRequest(
+              AssetToken.usdc(budget.amount, chainId),
+              AssetToken.usdc(budget.fundRequest.transferAmount, chainId),
+              budget.fundRequest.destination,
+            );
+          } else {
+            await session.setBudget(AssetToken.usdc(budget.amount, chainId));
+          }
+        } else {
+          await session.setBudget(
+            AssetToken.usdc(offering.offering.priceValue, chainId),
+          );
+        }
+      }
 
-    if (["completed", "rejected", "expired"].includes(status)) {
-      jobRequirements.delete(jobId);
+      if (status === "funded" && jobRequirements.has(jobId)) {
+        const result = await handlers.handler(
+          buildHandlerInput(
+            offering,
+            jobRequirements.get(jobId)!,
+            entry.from || "unknown",
+            "acp",
+            jobId,
+          ),
+        );
+        await session.submit(result.deliverable);
+      }
+
+      if (["completed", "rejected", "expired"].includes(status)) {
+        jobRequirements.delete(jobId);
+      }
+    } catch (err) {
+      console.error(
+        `[ACP] Failed to process job ${jobId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   });
 
@@ -203,7 +215,7 @@ function buildHandlerInput(
   requirements: Record<string, unknown> | string,
   clientAddress: string,
   protocol: HandlerInput["protocol"],
-  jobId?: string
+  jobId?: string,
 ): HandlerInput {
   return {
     requirements,

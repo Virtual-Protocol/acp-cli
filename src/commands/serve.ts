@@ -1,5 +1,6 @@
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
+import { homedir } from "os";
 import {
   cpSync,
   existsSync,
@@ -15,13 +16,10 @@ import type { Command } from "commander";
 import type { Agent, AgentOffering } from "../lib/api/agent";
 import { AuthApi } from "../lib/api/auth";
 import { getApiUrl, getClient } from "../lib/api/client";
-import {
-  getActiveWallet,
-  getAgentId,
-  getAgentToken,
-} from "../lib/config";
+import { getActiveWallet, getAgentId, getAgentToken } from "../lib/config";
 import { isJson, outputError, outputResult } from "../lib/output";
 import type { ServeProtocol } from "../../serve/types";
+import { serviceJobEndpoint } from "../../serve/server/relay";
 
 type LocalOfferingConfig = {
   slug: string;
@@ -59,7 +57,7 @@ function requireActiveAgent(json: boolean): {
   if (!agentId) {
     outputError(
       json,
-      "Agent ID not found. Run `acp agent list` or `acp agent use` first."
+      "Agent ID not found. Run `acp agent list` or `acp agent use` first.",
     );
     return null;
   }
@@ -69,11 +67,13 @@ function requireActiveAgent(json: boolean): {
 
 function loadLocalOfferings(
   rootDir: string,
-  agentId: string
+  agentId: string,
 ): LocalOfferingConfig[] {
   const serveConfigPath = getServeConfigPath(rootDir);
   if (!existsSync(serveConfigPath)) {
-    throw new Error(`serve.json not found in ${rootDir}. Run \`acp serve init\` first.`);
+    throw new Error(
+      `serve.json not found in ${rootDir}. Run \`acp serve init\` first.`,
+    );
   }
 
   const serveConfig = readJsonFile(serveConfigPath);
@@ -100,14 +100,17 @@ function loadLocalOfferings(
 
 function selectLocalOfferings(
   offerings: LocalOfferingConfig[],
-  selector?: string
+  selector?: string,
 ): LocalOfferingConfig[] {
   if (!selector) return offerings;
   const normalized = selector.trim().toLowerCase();
   return offerings.filter((entry) => {
-    const id = typeof entry.offeringJson.id === "string" ? entry.offeringJson.id : "";
+    const id =
+      typeof entry.offeringJson.id === "string" ? entry.offeringJson.id : "";
     const name =
-      typeof entry.offeringJson.name === "string" ? entry.offeringJson.name : "";
+      typeof entry.offeringJson.name === "string"
+        ? entry.offeringJson.name
+        : "";
     return (
       entry.slug.toLowerCase() === normalized ||
       id.toLowerCase() === normalized ||
@@ -118,11 +121,14 @@ function selectLocalOfferings(
 
 function findRemoteOffering(
   local: LocalOfferingConfig,
-  agent: Agent
+  agent: Agent,
 ): AgentOffering | undefined {
   const localId =
-    typeof local.offeringJson.id === "string" ? local.offeringJson.id : undefined;
-  if (localId) return agent.offerings.find((offering) => offering.id === localId);
+    typeof local.offeringJson.id === "string"
+      ? local.offeringJson.id
+      : undefined;
+  if (localId)
+    return agent.offerings.find((offering) => offering.id === localId);
 
   const localName =
     typeof local.offeringJson.name === "string"
@@ -130,16 +136,20 @@ function findRemoteOffering(
       : undefined;
   if (!localName) return undefined;
 
-  const matches = agent.offerings.filter((offering) => offering.name === localName);
+  const matches = agent.offerings.filter(
+    (offering) => offering.name === localName,
+  );
   return matches.length === 1 ? matches[0] : undefined;
 }
 
 function materializeOffering(
   local: LocalOfferingConfig,
-  remote: AgentOffering | undefined
+  remote: AgentOffering | undefined,
 ) {
   const localName =
-    typeof local.offeringJson.name === "string" ? local.offeringJson.name : local.slug;
+    typeof local.offeringJson.name === "string"
+      ? local.offeringJson.name
+      : local.slug;
   const localDescription =
     typeof local.offeringJson.description === "string"
       ? local.offeringJson.description
@@ -152,7 +162,9 @@ function materializeOffering(
   return {
     id:
       remote?.id ??
-      (typeof local.offeringJson.id === "string" ? local.offeringJson.id : local.slug),
+      (typeof local.offeringJson.id === "string"
+        ? local.offeringJson.id
+        : local.slug),
     slug: local.slug,
     name: remote?.name ?? localName,
     description: remote?.description ?? localDescription,
@@ -169,23 +181,13 @@ function materializeOffering(
         : Number(local.offeringJson.slaMinutes ?? 5)),
     requirements:
       remote?.requirements ??
-      ((local.offeringJson.requirements as Record<string, unknown> | string) ?? {}),
+      (local.offeringJson.requirements as Record<string, unknown> | string) ??
+      {},
     deliverable:
       remote?.deliverable ??
-      ((local.offeringJson.deliverable as Record<string, unknown> | string) ?? {}),
+      (local.offeringJson.deliverable as Record<string, unknown> | string) ??
+      {},
   };
-}
-
-function serviceJobEndpoint(
-  apiUrl: string,
-  providerAddress: string,
-  offeringSlug: string,
-  protocol: "x402" | "mpp"
-): string {
-  return new URL(
-    `/${protocol}/${providerAddress}/jobs/${encodeURIComponent(offeringSlug)}`,
-    apiUrl
-  ).toString();
 }
 
 async function getOrCreateAgentToken(wallet: string): Promise<string> {
@@ -208,7 +210,7 @@ function copyRuntimeBundle(
   agentName: string,
   local: LocalOfferingConfig,
   apiUrl: string,
-  serviceName: string
+  serviceName: string,
 ): Record<string, string> {
   rmSync(bundleDir, { recursive: true, force: true });
   mkdirSync(bundleDir, { recursive: true });
@@ -233,7 +235,7 @@ function copyRuntimeBundle(
     "agents",
     agentSlug,
     "offerings",
-    local.slug
+    local.slug,
   );
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(local.dir, destination, { recursive: true });
@@ -258,8 +260,8 @@ function copyRuntimeBundle(
         port: 3000,
       },
       null,
-      2
-    ) + "\n"
+      2,
+    ) + "\n",
   );
 
   writeFileSync(
@@ -272,7 +274,7 @@ function copyRuntimeBundle(
       "ACP_AGENT_TOKEN=",
       "IS_TESTNET=",
       "",
-    ].join("\n")
+    ].join("\n"),
   );
 
   writeFileSync(
@@ -285,7 +287,7 @@ function copyRuntimeBundle(
       "COPY . .",
       'CMD ["sh", "-c", "npx tsx bin/acp.ts serve start --dir . --offering ${ACP_SERVE_OFFERING} --port ${PORT:-3000}"]',
       "",
-    ].join("\n")
+    ].join("\n"),
   );
 
   return {
@@ -321,7 +323,7 @@ export function registerServeCommands(program: Command): void {
           "agents",
           agentSlug,
           "offerings",
-          offeringSlug
+          offeringSlug,
         );
 
         if (existsSync(resolve(offeringDir, "handler.ts"))) {
@@ -331,24 +333,24 @@ export function registerServeCommands(program: Command): void {
         mkdirSync(offeringDir, { recursive: true });
         const scaffoldDir = resolve(
           dirname(fileURLToPath(import.meta.url)),
-          "../../serve/scaffold"
+          "../../serve/scaffold",
         );
         const offeringTemplate = readFileSync(
           resolve(scaffoldDir, "offering.json.template"),
-          "utf8"
+          "utf8",
         );
 
         writeFileSync(
           resolve(offeringDir, "offering.json"),
-          offeringTemplate.replace("{{NAME}}", opts.name)
+          offeringTemplate.replace("{{NAME}}", opts.name),
         );
         writeFileSync(
           resolve(offeringDir, "handler.ts"),
-          readFileSync(resolve(scaffoldDir, "handler.ts.template"), "utf8")
+          readFileSync(resolve(scaffoldDir, "handler.ts.template"), "utf8"),
         );
         writeFileSync(
           resolve(offeringDir, "budget.ts"),
-          readFileSync(resolve(scaffoldDir, "budget.ts.template"), "utf8")
+          readFileSync(resolve(scaffoldDir, "budget.ts.template"), "utf8"),
         );
 
         const serveConfigPath = getServeConfigPath(rootDir);
@@ -368,7 +370,10 @@ export function registerServeCommands(program: Command): void {
         };
         agents[active.agentId] = agentConfig;
         serveConfig.agents = agents;
-        writeFileSync(serveConfigPath, JSON.stringify(serveConfig, null, 2) + "\n");
+        writeFileSync(
+          serveConfigPath,
+          JSON.stringify(serveConfig, null, 2) + "\n",
+        );
 
         outputResult(json, {
           success: true,
@@ -396,9 +401,10 @@ export function registerServeCommands(program: Command): void {
         const rootDir = resolve(opts.dir);
         const selected = selectLocalOfferings(
           loadLocalOfferings(rootDir, active.agentId),
-          opts.offering
+          opts.offering,
         );
-        if (selected.length === 0) throw new Error("No matching offerings found.");
+        if (selected.length === 0)
+          throw new Error("No matching offerings found.");
         if (selected.length > 1) {
           throw new Error("Multiple offerings matched. Use --offering.");
         }
@@ -406,8 +412,12 @@ export function registerServeCommands(program: Command): void {
         const { agentApi } = await getClient();
         const agent = await agentApi.getById(active.agentId);
         const local = selected[0];
-        const offering = materializeOffering(local, findRemoteOffering(local, agent));
-        const { startOfferingServer } = await import("../../serve/server/index");
+        const offering = materializeOffering(
+          local,
+          findRemoteOffering(local, agent),
+        );
+        const { startOfferingServer } =
+          await import("../../serve/server/index");
 
         await startOfferingServer({
           dir: local.dir,
@@ -437,14 +447,17 @@ export function registerServeCommands(program: Command): void {
 
         const apiUrl = getApiUrl();
         const payload: Record<string, Record<string, string>> = {};
-        for (const offering of loadLocalOfferings(resolve(opts.dir), active.agentId)) {
+        for (const offering of loadLocalOfferings(
+          resolve(opts.dir),
+          active.agentId,
+        )) {
           payload[offering.slug] = {};
           if (offering.protocols.includes("x402")) {
             payload[offering.slug].x402 = serviceJobEndpoint(
               apiUrl,
               active.wallet,
               offering.slug,
-              "x402"
+              "x402",
             );
           }
           if (offering.protocols.includes("mpp")) {
@@ -452,7 +465,7 @@ export function registerServeCommands(program: Command): void {
               apiUrl,
               active.wallet,
               offering.slug,
-              "mpp"
+              "mpp",
             );
           }
           if (offering.protocols.includes("acp")) {
@@ -483,9 +496,10 @@ export function registerServeCommands(program: Command): void {
         const serveConfig = readJsonFile(getServeConfigPath(rootDir));
         const selected = selectLocalOfferings(
           loadLocalOfferings(rootDir, active.agentId),
-          opts.offering
+          opts.offering,
         );
-        if (selected.length === 0) throw new Error("No matching offerings found.");
+        if (selected.length === 0)
+          throw new Error("No matching offerings found.");
         if (selected.length > 1) {
           throw new Error("Multiple offerings matched. Use --offering.");
         }
@@ -493,7 +507,8 @@ export function registerServeCommands(program: Command): void {
         const agentConfig = (serveConfig.agents as any)?.[active.agentId];
         const agentName = agentConfig?.name ?? "agent";
         const local = selected[0];
-        const serviceName = opts.service ?? `${slugify(agentName)}-${local.slug}`;
+        const serviceName =
+          opts.service ?? `${slugify(agentName)}-${local.slug}`;
         const provider = String(opts.provider ?? "railway");
         const bundleDir = resolve(
           rootDir,
@@ -501,7 +516,7 @@ export function registerServeCommands(program: Command): void {
           "serve",
           "deploy",
           provider,
-          serviceName
+          serviceName,
         );
         const endpoints = copyRuntimeBundle(
           rootDir,
@@ -510,7 +525,7 @@ export function registerServeCommands(program: Command): void {
           agentName,
           local,
           getApiUrl(),
-          serviceName
+          serviceName,
         );
 
         outputResult(json, {
@@ -544,7 +559,7 @@ export function registerServeCommands(program: Command): void {
         let stopped = 0;
         for (const local of selectLocalOfferings(
           loadLocalOfferings(resolve(opts.dir), active.agentId),
-          opts.offering
+          opts.offering,
         )) {
           const offeringId =
             typeof local.offeringJson.id === "string"
@@ -572,7 +587,7 @@ export function registerServeCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const logDir = resolve(process.env.HOME ?? ".", ".acp", "serve", "logs");
+        const logDir = resolve(homedir(), ".acp", "serve", "logs");
         if (!existsSync(logDir)) {
           outputResult(json, { logs: [] });
           return;
@@ -583,21 +598,24 @@ export function registerServeCommands(program: Command): void {
           .filter((name) => !opts.offering || name === `${opts.offering}.log`)
           .map((name) => resolve(logDir, name));
         const logs = files.flatMap((file) =>
-          readFileSync(file, "utf8")
-            .trim()
-            .split("\n")
-            .filter(Boolean)
+          readFileSync(file, "utf8").trim().split("\n").filter(Boolean),
         );
         outputResult(json, { logs: logs.slice(-50) });
 
         if (opts.follow && files.length > 0 && !json) {
-          const offsets = new Map(files.map((file) => [file, statSync(file).size]));
+          const offsets = new Map(
+            files.map((file) => [file, statSync(file).size]),
+          );
           for (const file of files) {
             watchFile(file, { interval: 1000 }, () => {
               const currentSize = statSync(file).size;
               const previousSize = offsets.get(file) ?? 0;
               if (currentSize <= previousSize) return;
-              process.stdout.write(readFileSync(file, "utf8").slice(previousSize));
+              const chunk = readFileSync(file).subarray(
+                previousSize,
+                currentSize,
+              );
+              process.stdout.write(chunk.toString("utf8"));
               offsets.set(file, currentSize);
             });
           }
