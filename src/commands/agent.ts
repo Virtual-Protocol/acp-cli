@@ -48,6 +48,7 @@ import {
 import * as viemChains from "viem/chains";
 import { formatEther, parseEther } from "viem";
 import { formatChainId } from "../lib/chains";
+import { deriveLocalPartFromName } from "./email";
 
 function parseLegacyId(raw: string, json: boolean): number | null {
   const id = parseInt(raw, 10);
@@ -405,11 +406,29 @@ export function registerAgentCommands(program: Command): void {
         setAgentId(created.walletAddress, created.id);
       }
 
+      let emailAddress: string | undefined;
+      let emailError: string | undefined;
+      try {
+        const localPart = deriveLocalPartFromName(created.name);
+        if (localPart) {
+          const result = await agentApi.provisionEmailIdentity(
+            created.id,
+            created.name,
+            localPart
+          );
+          emailAddress = result.emailAddress;
+        }
+      } catch (err) {
+        emailError = err instanceof Error ? err.message : String(err);
+      }
+
       if (json) {
         outputResult(json, {
           name: created.name,
           description: created.description,
           walletAddress: created.walletAddress,
+          emailAddress,
+          ...(emailError ? { emailError } : {}),
         });
         return;
       }
@@ -418,11 +437,23 @@ export function registerAgentCommands(program: Command): void {
         `\n${c.green(`${created.name} has been created successfully!`)}\n`
       );
 
-      printTable([
+      const tableRows: [string, string][] = [
         ["Name", created.name],
         ["Description", created.description],
         ["Wallet Address", created.walletAddress ?? "N/A"],
-      ]);
+      ];
+      if (emailAddress) tableRows.push(["Email", emailAddress]);
+      printTable(tableRows);
+
+      if (emailAddress) {
+        console.log(
+          `\n${c.green("An email identity has been created for this agent:")} ${c.cyan(emailAddress)}`
+        );
+      } else if (emailError) {
+        console.log(
+          `\n${c.yellow("Could not provision email identity:")} ${emailError}`
+        );
+      }
 
       let setupSigner = opts.signer === true;
 

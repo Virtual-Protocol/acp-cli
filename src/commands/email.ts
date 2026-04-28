@@ -45,6 +45,12 @@ function filenameFromDisposition(
   return path.basename(name);
 }
 
+// Derive an email local part from an agent's display name: lowercase,
+// trimmed, with internal whitespace collapsed into underscores.
+export function deriveLocalPartFromName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
 function printMessage(msg: EmailMessage): void {
   printTable([
     ["ID", msg.id],
@@ -102,37 +108,37 @@ export function registerEmailCommands(program: Command): void {
   email
     .command("provision")
     .description("Provision a new email identity for the active agent")
-    .option("--display-name <name>", "Display name for the email identity")
-    .option("--local-part <localPart>", "Local part of the email address (before @)")
+    .option("--display-name <name>", "Display name (defaults to agent name)")
+    .option(
+      "--local-part <localPart>",
+      "Local part of the email address (before @); defaults to agent name lowercased with spaces as underscores"
+    )
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
       const agentId = getActiveAgentId(json);
       if (!agentId) return;
 
-      let rl: readline.Interface | undefined;
-
       try {
-        if (!opts.displayName || !opts.localPart) {
-          rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-          });
-        }
+        const agent = await agentApi.getById(agentId);
+        const agentName = agent.name?.trim() ?? "";
 
-        const displayName =
-          opts.displayName ??
-          (await prompt(rl!, "Display name: ")).trim();
+        const displayName = opts.displayName?.trim() || agentName;
         if (!displayName) {
-          outputError(json, "Display name cannot be empty.");
+          outputError(
+            json,
+            "Display name cannot be empty (agent has no name)."
+          );
           return;
         }
 
         const localPart =
-          opts.localPart ??
-          (await prompt(rl!, "Local part (before @): ")).trim();
+          opts.localPart?.trim() || deriveLocalPartFromName(agentName);
         if (!localPart) {
-          outputError(json, "Local part cannot be empty.");
+          outputError(
+            json,
+            "Local part cannot be empty (agent has no name)."
+          );
           return;
         }
 
@@ -151,8 +157,6 @@ export function registerEmailCommands(program: Command): void {
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
-      } finally {
-        rl?.close();
       }
     });
 
