@@ -8,6 +8,7 @@ const CONFIG_PATH = resolve(process.cwd(), "config.json");
 
 interface AgentConfig {
   publicKey: string;
+  token?: string;
   walletId?: string;
   id?: string;
   builderCode?: string;
@@ -35,6 +36,27 @@ function loadConfig(): Config {
 
 function saveConfig(config: Config): void {
   writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
+}
+
+function getEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return value && value.trim() ? value.trim() : undefined;
+}
+
+export function getAgentToken(walletAddress: string): string | undefined {
+  return (
+    getEnv("ACP_AGENT_TOKEN") ??
+    loadConfig().agents?.[walletAddress]?.token ??
+    loadConfig().agents?.[walletAddress.toLowerCase()]?.token
+  );
+}
+
+export function setAgentToken(walletAddress: string, token: string): void {
+  const config = loadConfig();
+  config.agents ??= {};
+  config.agents[walletAddress] ??= { publicKey: "" };
+  config.agents[walletAddress].token = token;
+  saveConfig(config);
 }
 
 export async function getToken(
