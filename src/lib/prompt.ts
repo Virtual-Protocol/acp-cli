@@ -94,6 +94,83 @@ export function selectOption<T>(
   });
 }
 
+export function selectMultiple<T>(
+  title: string,
+  items: T[],
+  getLabel: (item: T) => string,
+  isInitiallyChecked?: (item: T) => boolean
+): Promise<T[]> {
+  return new Promise((resolve) => {
+    let cursorIndex = 0;
+    const checked = new Set<number>();
+    if (isInitiallyChecked) {
+      for (let i = 0; i < items.length; i++) {
+        if (isInitiallyChecked(items[i])) checked.add(i);
+      }
+    }
+
+    const renderMenu = (firstRender: boolean) => {
+      if (!firstRender) {
+        process.stdout.write(`\x1B[${items.length}A`);
+      }
+      for (let i = 0; i < items.length; i++) {
+        process.stdout.write(`\x1B[2K`);
+        const mark = checked.has(i) ? "[x]" : "[ ]";
+        const line = `${mark} ${getLabel(items[i])}`;
+        if (i === cursorIndex) {
+          process.stdout.write(`\x1B[32m> ${line}\x1B[0m\n`);
+        } else {
+          process.stdout.write(`  ${line}\n`);
+        }
+      }
+    };
+
+    console.log(title);
+    process.stdout.write(`\x1B[?25l`); // hide cursor
+    renderMenu(true);
+
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding("utf8");
+
+    const finish = () => {
+      process.stdin.removeListener("data", onData);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdout.write(`\x1B[?25h`); // show cursor
+      const selected = Array.from(checked)
+        .sort((a, b) => a - b)
+        .map((i) => items[i]);
+      resolve(selected);
+    };
+
+    const onData = (key: string) => {
+      if (key === "\x1B[A") {
+        if (cursorIndex > 0) {
+          cursorIndex--;
+          renderMenu(false);
+        }
+      } else if (key === "\x1B[B") {
+        if (cursorIndex < items.length - 1) {
+          cursorIndex++;
+          renderMenu(false);
+        }
+      } else if (key === " ") {
+        if (checked.has(cursorIndex)) checked.delete(cursorIndex);
+        else checked.add(cursorIndex);
+        renderMenu(false);
+      } else if (key === "\r" || key === "\n") {
+        finish();
+      } else if (key === "\x03") {
+        process.stdout.write(`\x1B[?25h`);
+        process.exit(0);
+      }
+    };
+
+    process.stdin.on("data", onData);
+  });
+}
+
 export function selectFromList<
   T extends { name: string; walletAddress: string }
 >(title: string, items: T[]): Promise<T> {

@@ -9,6 +9,7 @@ import { c } from "../lib/color";
 
 type Offering = AcpAgentDetail["offerings"][number];
 type Resource = AcpAgentDetail["resources"][number];
+type Subscription = AcpAgentDetail["subscriptions"][number];
 
 function formatPrice(priceType: string, priceValue: number | string): string {
   const value =
@@ -35,6 +36,13 @@ function printOffering(o: Offering): void {
   console.log(`      Price:         ${formatPrice(o.priceType, o.priceValue)}`);
   console.log(`      SLA:           ${o.slaMinutes} min`);
   console.log(`      Required Funds: ${o.requiredFunds ? "Yes" : "No"}`);
+  if (o.subscriptions && o.subscriptions.length > 0) {
+    console.log(
+      `      Subscription Package IDs: ${o.subscriptions
+        .map((s) => s.packageId)
+        .join(", ")}`
+    );
+  }
 }
 
 function printResource(r: Resource): void {
@@ -72,6 +80,14 @@ function printLegacyAgent(
     console.log(`  Offerings:      No offerings`);
   }
   console.log("");
+}
+
+function printSubscription(s: Subscription): void {
+  console.log(
+    `    - Package ID ${s.packageId} [${s.name}] ${s.price} USDC ${
+      s.duration / 86400
+    } days`
+  );
 }
 
 export function registerBrowseCommand(program: Command): void {
@@ -186,6 +202,18 @@ export function registerBrowseCommand(program: Command): void {
                 `  ${c.bold("Chains:")}         ${a.chains
                   .map((ch) => ch.chainId)
                   .join(", ")}`
+              );
+            }
+            if (a.subscriptions && a.subscriptions.length > 0) {
+              console.log(`  ${c.bold("Subscriptions:")}`);
+              for (const s of a.subscriptions) {
+                printSubscription(s);
+              }
+            } else {
+              console.log(
+                `  ${c.bold("Subscriptions:")}      ${c.dim(
+                  "No subscriptions"
+                )}`
               );
             }
             if (a.offerings.length > 0) {

@@ -4,11 +4,17 @@ import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import { c } from "../lib/color";
 import type {
   AgentOffering,
+  AgentSubscription,
   CreateOfferingBody,
   UpdateOfferingBody,
 } from "../lib/api/agent";
 import { getClient } from "../lib/api/client";
-import { prompt, selectOption, printTable } from "../lib/prompt";
+import {
+  prompt,
+  selectOption,
+  selectMultiple,
+  printTable,
+} from "../lib/prompt";
 import { validateJsonSchema } from "../lib/validation";
 import { getActiveAgentId } from "../lib/activeAgent";
 
@@ -55,6 +61,18 @@ async function promptSchemaField(
   return value;
 }
 
+function formatSubscriptions(subs: AgentSubscription[] | undefined): string {
+  if (!subs || subs.length === 0) return "None";
+  return subs
+    .map(
+      (s) =>
+        `[Package ID ${s.packageId}] ${s.name} (${s.price} USDC / ${
+          s.duration / 86400
+        }d)`
+    )
+    .join(", ");
+}
+
 function printOffering(offering: AgentOffering): void {
   const reqDisplay =
     typeof offering.requirements === "object"
@@ -75,6 +93,7 @@ function printOffering(offering: AgentOffering): void {
     ["SLA", `${offering.slaMinutes} min`],
     ["Required Funds", offering.requiredFunds ? "Yes" : "No"],
     ["Hidden", offering.isHidden ? "Yes" : "No"],
+    ["Subscriptions", formatSubscriptions(offering.subscriptions)],
   ]);
 }
 
@@ -114,10 +133,11 @@ export function registerOfferingCommands(program: Command): void {
             console.log();
           }
         } else {
-          console.log("ID\tNAME\tPRICE\tSLA");
+          console.log("ID\tNAME\tPRICE\tSLA\tSUBSCRIPTIONS");
           for (const o of offerings) {
+            const subs = o.subscriptions?.map((s) => s.name).join(",") ?? "";
             console.log(
-              `${o.id}\t${o.name}\t${o.priceValue} (${o.priceType})\t${o.slaMinutes}m`
+              `${o.id}\t${o.name}\t${o.priceValue} (${o.priceType})\t${o.slaMinutes}m\t${subs}`
             );
           }
         }
@@ -146,6 +166,10 @@ export function registerOfferingCommands(program: Command): void {
     .option("--no-required-funds", "Do not require funds")
     .option("--hidden", "Hidden offering")
     .option("--no-hidden", "Visible offering")
+    .option(
+      "--subscription-ids <ids>",
+      "Comma-separated subscription UUIDs to attach"
+    )
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
@@ -327,6 +351,39 @@ export function registerOfferingCommands(program: Command): void {
           isHidden = isHiddenStr === "y";
         }
 
+        // Subscriptions
+        let subscriptionIds: string[] = [];
+        if (opts.subscriptionIds !== undefined) {
+          subscriptionIds = opts.subscriptionIds
+            .split(",")
+            .map((s: string) => s.trim())
+            .filter((s: string) => s.length > 0);
+        } else if (rl) {
+          let availableSubs: AgentSubscription[] = [];
+          try {
+            const agent = await agentApi.getById(agentId);
+            availableSubs = agent.subscriptions ?? [];
+          } catch {
+            availableSubs = [];
+          }
+
+          if (availableSubs.length === 0) {
+            console.log(
+              "No subscriptions available to attach (skipping). Create one with `acp subscription create`."
+            );
+          } else {
+            rl.close();
+            rl = undefined;
+            const picked = await selectMultiple(
+              "Attach subscriptions (↑/↓ to move, space to toggle, Enter to confirm — leave empty to skip):",
+              availableSubs,
+              (s) =>
+                `${s.name} — ${s.price} USDC / ${s.duration / 86400} days`
+            );
+            subscriptionIds = picked.map((s) => s.id);
+          }
+        }
+
         const body: CreateOfferingBody = {
           name,
           description,
@@ -338,6 +395,9 @@ export function registerOfferingCommands(program: Command): void {
           requiredFunds,
           isHidden,
         };
+        if (subscriptionIds.length > 0) {
+          body.subscriptionIds = subscriptionIds;
+        }
 
         const created = await agentApi.createOffering(agentId, body);
 
@@ -379,6 +439,10 @@ export function registerOfferingCommands(program: Command): void {
     .option("--no-required-funds", "Set required funds to false")
     .option("--hidden", "Set hidden to true")
     .option("--no-hidden", "Set hidden to false")
+    .option(
+      "--subscription-ids <ids>",
+      "Comma-separated subscription UUIDs to attach (empty string clears)"
+    )
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
@@ -387,9 +451,11 @@ export function registerOfferingCommands(program: Command): void {
       if (!agentId) return;
 
       let offerings: AgentOffering[];
+      let availableSubs: AgentSubscription[] = [];
       try {
         const agent = await agentApi.getById(agentId);
         offerings = agent.offerings ?? [];
+        availableSubs = agent.subscriptions ?? [];
       } catch (err) {
         outputError(
           json,
@@ -628,6 +694,47 @@ export function registerOfferingCommands(program: Command): void {
             .toLowerCase();
           if (hiddenStr === "y") updates.isHidden = true;
           else if (hiddenStr === "n") updates.isHidden = false;
+        }
+
+        // Subscriptions
+        if (opts.subscriptionIds !== undefined) {
+          updates.subscriptionIds = opts.subscriptionIds
+            .split(",")
+            .map((s: string) => s.trim())
+            .filter((s: string) => s.length > 0);
+        } else if (!nonInteractive) {
+          const currentSubs = selected.subscriptions ?? [];
+          const currentSummary =
+            currentSubs.length > 0
+              ? currentSubs.map((s) => s.name).join(", ")
+              : "None";
+          const updateSubs = (
+            await prompt(
+              rl!,
+              `Update subscriptions? Current: ${currentSummary} (y/N): `
+            )
+          )
+            .trim()
+            .toLowerCase();
+          if (updateSubs === "y") {
+            if (availableSubs.length === 0) {
+              console.log(
+                "No subscriptions exist on this agent (skipping). Create one with `acp subscription create`."
+              );
+            } else {
+              const currentIds = new Set(currentSubs.map((s) => s.id));
+              rl!.close();
+              rl = undefined;
+              const picked = await selectMultiple(
+                "Select subscriptions to attach (↑/↓ to move, space to toggle, Enter to confirm — empty clears):",
+                availableSubs,
+                (s) =>
+                  `${s.name} — ${s.price} USDC / ${s.duration / 86400} days`,
+                (s) => currentIds.has(s.id)
+              );
+              updates.subscriptionIds = picked.map((s) => s.id);
+            }
+          }
         }
 
         if (Object.keys(updates).length === 0) {
