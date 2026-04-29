@@ -604,7 +604,7 @@ for architecture, anti-spam policy, and rate limits.
 | Command | Description | Required Flags | Optional Flags |
 |---|---|---|---|
 | `email whoami` | Show the provisioned email identity | — | — |
-| `email provision` | Provision a new email identity | — | `--display-name`, `--local-part` |
+| `email provision` | Provision a new email identity (local part auto-generated from agent name) | — | — |
 | `email inbox` | View inbox messages | — | `--folder`, `--cursor`, `--limit` |
 | `email compose` | Compose and send an email | — | `--to`, `--subject`, `--body`, `--html-body` |
 | `email search` | Search emails by query | `--query` | — |

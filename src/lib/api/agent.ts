@@ -680,13 +680,11 @@ export class AgentApi {
   }
 
   async provisionEmailIdentity(
-    agentId: string,
-    displayName: string,
-    localPart: string
+    agentId: string
   ): Promise<{ emailAddress: string }> {
     const res = await this.client.post<{ data: { emailAddress: string } }>(
       `/agents/${agentId}/email/identity`,
-      { displayName, localPart }
+      {}
     );
     return res.data;
   }
