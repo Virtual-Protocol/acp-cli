@@ -17,7 +17,13 @@ import type { Command } from "commander";
 import type { Agent, AgentOffering } from "../lib/api/agent";
 import { AuthApi } from "../lib/api/auth";
 import { getApiUrl, getClient } from "../lib/api/client";
-import { getActiveWallet, getAgentId, getAgentToken } from "../lib/config";
+import {
+  getActiveWallet,
+  getAgentId,
+  getAgentToken,
+  getPublicKey,
+  getWalletId,
+} from "../lib/config";
 import { isJson, outputError, outputResult } from "../lib/output";
 import type { ServeProtocol } from "../../serve/types";
 import { serviceJobEndpoint } from "../../serve/server/relay";
@@ -51,6 +57,15 @@ function readJsonFile(path: string): Record<string, unknown> {
 
 function getServeConfigPath(rootDir: string): string {
   return resolve(rootDir, "serve.json");
+}
+
+function getLocalAgentName(rootDir: string, agentId: string): string {
+  const serveConfig = readJsonFile(getServeConfigPath(rootDir));
+  const agents = (serveConfig.agents ?? {}) as Record<
+    string,
+    { name?: string }
+  >;
+  return agents[agentId]?.name ?? "agent";
 }
 
 function requireActiveAgent(json: boolean): {
@@ -271,6 +286,19 @@ function deployRailway(opts: RailwayDeployOptions): {
   const envVars = Object.entries(opts.variables)
     .filter(([, value]) => value !== undefined && value !== "")
     .map(([key, value]) => `${key}=${value}`);
+
+  if (opts.project) {
+    const linkArgs = [
+      "link",
+      "--project",
+      opts.project,
+      "--service",
+      opts.serviceName,
+    ];
+    if (opts.environment) linkArgs.push("--environment", opts.environment);
+    const result = runRailway(linkArgs, opts.bundleDir);
+    commands.push(result.command);
+  }
 
   if (envVars.length > 0) {
     const result = runRailway(
@@ -514,12 +542,18 @@ export function registerServeCommands(program: Command): void {
           throw new Error("Multiple offerings matched. Use --offering.");
         }
 
-        const { agentApi } = await getClient();
-        const agent = await agentApi.getById(active.agentId);
+        const agentName = getLocalAgentName(rootDir, active.agentId);
+        let agent: Agent | undefined;
+        try {
+          const { agentApi } = await getClient();
+          agent = await agentApi.getById(active.agentId);
+        } catch {
+          agent = undefined;
+        }
         const local = selected[0];
         const offering = materializeOffering(
           local,
-          findRemoteOffering(local, agent),
+          agent ? findRemoteOffering(local, agent) : undefined,
         );
         const { startOfferingServer } =
           await import("../../serve/server/index");
@@ -527,7 +561,7 @@ export function registerServeCommands(program: Command): void {
         await startOfferingServer({
           dir: local.dir,
           port: opts.port ? Number(opts.port) : getDefaultPort(undefined),
-          agentSlug: slugify(agent.name),
+          agentSlug: slugify(agent?.name ?? agentName),
           providerWallet: active.wallet,
           offering,
           protocols: local.protocols,
@@ -662,7 +696,9 @@ export function registerServeCommands(program: Command): void {
               ACP_ACTIVE_WALLET: active.wallet,
               ACP_AGENT_ID: active.agentId,
               ACP_API_URL: getApiUrl(),
+              ACP_PUBLIC_KEY: getPublicKey(active.wallet),
               ACP_SERVE_OFFERING: local.slug,
+              ACP_WALLET_ID: getWalletId(active.wallet),
               ACP_CHAIN_ID: process.env.ACP_CHAIN_ID,
               IS_TESTNET: process.env.IS_TESTNET,
             },

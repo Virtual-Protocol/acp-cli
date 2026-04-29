@@ -60,23 +60,23 @@ export function setAgentToken(walletAddress: string, token: string): void {
 }
 
 export async function getToken(
-  walletAddress?: string
+  walletAddress?: string,
 ): Promise<string | undefined> {
   return (
     (await getPassword(
       AUTH_KEYCHAIN_SERVICE,
-      `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`
+      `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
     )) ?? undefined
   );
 }
 
 export async function getRefreshToken(
-  walletAddress?: string
+  walletAddress?: string,
 ): Promise<string | undefined> {
   return (
     (await getPassword(
       AUTH_KEYCHAIN_SERVICE,
-      `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`
+      `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
     )) ?? undefined
   );
 }
@@ -84,22 +84,24 @@ export async function getRefreshToken(
 export async function setTokens(
   accessToken: string,
   refreshToken: string,
-  walletAddress?: string
+  walletAddress?: string,
 ): Promise<void> {
   await setPassword(
     AUTH_KEYCHAIN_SERVICE,
     `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
-    accessToken
+    accessToken,
   );
   await setPassword(
     AUTH_KEYCHAIN_SERVICE,
     `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
-    refreshToken
+    refreshToken,
   );
 }
 
 export function getWalletId(walletAddress: string): string | undefined {
-  return loadConfig().agents?.[walletAddress]?.walletId;
+  return (
+    getEnv("ACP_WALLET_ID") ?? loadConfig().agents?.[walletAddress]?.walletId
+  );
 }
 
 export function setWalletId(walletAddress: string, walletId: string): void {
@@ -111,7 +113,9 @@ export function setWalletId(walletAddress: string, walletId: string): void {
 }
 
 export function getPublicKey(agentAddress: string): string | undefined {
-  return loadConfig().agents?.[agentAddress]?.publicKey;
+  return (
+    getEnv("ACP_PUBLIC_KEY") ?? loadConfig().agents?.[agentAddress]?.publicKey
+  );
 }
 
 export function setPublicKey(agentAddress: string, publicKey: string): void {
@@ -123,7 +127,7 @@ export function setPublicKey(agentAddress: string, publicKey: string): void {
 }
 
 export function getAgentId(walletAddress: string): string | undefined {
-  return loadConfig().agents?.[walletAddress]?.id;
+  return getEnv("ACP_AGENT_ID") ?? loadConfig().agents?.[walletAddress]?.id;
 }
 
 export function setAgentId(walletAddress: string, id: string): void {
@@ -135,7 +139,7 @@ export function setAgentId(walletAddress: string, id: string): void {
 }
 
 export function getActiveWallet(): string | undefined {
-  return loadConfig().activeWallet;
+  return getEnv("ACP_ACTIVE_WALLET") ?? loadConfig().activeWallet;
 }
 
 export function getCurrentOwnerWallet(): string | undefined {
@@ -157,7 +161,7 @@ export function setActiveWallet(walletAddress: string): void {
 export function registerJob(
   jobId: string,
   legacy: boolean,
-  chainId: number
+  chainId: number,
 ): void {
   const config = loadConfig();
   config.jobRegistry ??= {};
@@ -166,7 +170,7 @@ export function registerJob(
 }
 
 export function getJobRegistryEntry(
-  jobId: string
+  jobId: string,
 ): JobRegistryEntry | undefined {
   return loadConfig().jobRegistry?.[jobId];
 }
@@ -183,7 +187,7 @@ export function getLegacyJobChainId(jobId: string): number | undefined {
 export function isTokenExpired(token: string): boolean {
   try {
     const payload = JSON.parse(
-      Buffer.from(token.split(".")[1], "base64url").toString()
+      Buffer.from(token.split(".")[1], "base64url").toString(),
     );
     const bufferMs = 5 * 60 * 1000;
     return (
@@ -197,7 +201,7 @@ export function isTokenExpired(token: string): boolean {
 
 export function setBuilderCode(
   walletAddress: string,
-  builderCode: string
+  builderCode: string,
 ): void {
   const config = loadConfig();
   config.agents ??= {};
