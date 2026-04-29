@@ -90,6 +90,14 @@ export class ApiClient {
   }
 }
 
+export function getApiUrl(): string {
+  const isTestnet = process.env.IS_TESTNET === "true";
+  return (
+    process.env.ACP_API_URL ??
+    (isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL)
+  );
+}
+
 async function resolveToken(apiUrl: string): Promise<string> {
   const ownerWallet = getCurrentOwnerWallet();
   const token = await getToken(ownerWallet);
@@ -132,8 +140,7 @@ export async function getClient(unauthenticated?: boolean): Promise<{
   agentApi: AgentApi;
   authApi: AuthApi;
 }> {
-  const isTestnet = process.env.IS_TESTNET === "true";
-  const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const apiUrl = getApiUrl();
   const token = unauthenticated ? undefined : await resolveToken(apiUrl);
   const httpClient = new ApiClient(apiUrl, token);
   return {

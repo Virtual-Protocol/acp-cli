@@ -15,6 +15,7 @@ import { registerResourceCommands } from "../src/commands/resource";
 import { registerChainCommands } from "../src/commands/chain";
 import { registerEmailCommands } from "../src/commands/email";
 import { registerCardCommands } from "../src/commands/card";
+import { registerServeCommands } from "../src/commands/serve";
 
 program
   .name("acp")
@@ -40,5 +41,6 @@ registerResourceCommands(program);
 registerChainCommands(program);
 registerEmailCommands(program);
 registerCardCommands(program);
+registerServeCommands(program);
 
 program.parse();
