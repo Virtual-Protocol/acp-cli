@@ -1,6 +1,7 @@
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
+import { spawnSync } from "child_process";
 import {
   cpSync,
   existsSync,
@@ -26,6 +27,15 @@ type LocalOfferingConfig = {
   dir: string;
   protocols: ServeProtocol[];
   offeringJson: Record<string, unknown>;
+};
+
+type RailwayDeployOptions = {
+  bundleDir: string;
+  serviceName: string;
+  project?: string;
+  environment?: string;
+  variables: Record<string, string | undefined>;
+  agentToken: string;
 };
 
 function slugify(name: string): string {
@@ -201,6 +211,101 @@ async function getOrCreateAgentToken(wallet: string): Promise<string> {
 function getDefaultPort(input: unknown): number {
   const port = Number(input ?? 3000);
   return Number.isFinite(port) && port > 0 ? port : 3000;
+}
+
+function railwayServiceArgs(
+  args: string[],
+  opts: Pick<RailwayDeployOptions, "serviceName" | "environment">,
+): string[] {
+  const result = [...args, "--service", opts.serviceName];
+  if (opts.environment) result.push("--environment", opts.environment);
+  return result;
+}
+
+function railwayDeployArgs(
+  args: string[],
+  opts: Pick<RailwayDeployOptions, "serviceName" | "project" | "environment">,
+): string[] {
+  const result = railwayServiceArgs(args, opts);
+  if (opts.project) result.push("--project", opts.project);
+  return result;
+}
+
+function runRailway(
+  args: string[],
+  cwd: string,
+  input?: string,
+): { command: string; stdout: string; stderr: string } {
+  const command = `railway ${args.join(" ")}`;
+  const result = spawnSync("railway", args, {
+    cwd,
+    encoding: "utf8",
+    input,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  if (result.error) {
+    throw new Error(
+      `Failed to run Railway CLI. Install and login with \`railway login\` first. ${result.error.message}`,
+    );
+  }
+
+  if (result.status !== 0) {
+    const output = [result.stderr, result.stdout].filter(Boolean).join("\n");
+    throw new Error(`${command} failed.\n${output}`);
+  }
+
+  return {
+    command,
+    stdout: result.stdout ?? "",
+    stderr: result.stderr ?? "",
+  };
+}
+
+function deployRailway(opts: RailwayDeployOptions): {
+  commands: string[];
+  deploymentOutput: string;
+} {
+  const commands: string[] = [];
+  const base = { ...opts, serviceName: opts.serviceName };
+  const envVars = Object.entries(opts.variables)
+    .filter(([, value]) => value !== undefined && value !== "")
+    .map(([key, value]) => `${key}=${value}`);
+
+  if (envVars.length > 0) {
+    const result = runRailway(
+      railwayServiceArgs(
+        ["variable", "set", "--skip-deploys", ...envVars],
+        base,
+      ),
+      opts.bundleDir,
+    );
+    commands.push(result.command);
+  }
+
+  const tokenResult = runRailway(
+    railwayServiceArgs(
+      ["variable", "set", "--skip-deploys", "--stdin", "ACP_AGENT_TOKEN"],
+      base,
+    ),
+    opts.bundleDir,
+    opts.agentToken,
+  );
+  commands.push(tokenResult.command);
+
+  const deployResult = runRailway(
+    railwayDeployArgs(["up", ".", "--detach", "--path-as-root"], base),
+    opts.bundleDir,
+  );
+  commands.push(deployResult.command);
+
+  return {
+    commands,
+    deploymentOutput: [deployResult.stdout, deployResult.stderr]
+      .filter(Boolean)
+      .join("\n")
+      .trim(),
+  };
 }
 
 function copyRuntimeBundle(
@@ -485,6 +590,12 @@ export function registerServeCommands(program: Command): void {
     .option("--offering <selector>", "Offering slug, ID, or name")
     .option("--provider <name>", "Deployment provider label", "railway")
     .option("--service <name>", "Service name override")
+    .option(
+      "--execute",
+      "Run the provider deployment after building the bundle",
+    )
+    .option("--railway-project <id>", "Railway project ID for --execute")
+    .option("--railway-environment <name>", "Railway environment for --execute")
     .option("--bundle-only", "Only create the deploy bundle", true)
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -528,15 +639,47 @@ export function registerServeCommands(program: Command): void {
           serviceName,
         );
 
+        if (opts.execute && provider !== "railway") {
+          throw new Error(
+            `Provider ${provider} does not support --execute yet.`,
+          );
+        }
+
+        let execution:
+          | {
+              commands: string[];
+              deploymentOutput: string;
+            }
+          | undefined;
+        if (opts.execute) {
+          execution = deployRailway({
+            bundleDir,
+            serviceName,
+            project: opts.railwayProject,
+            environment: opts.railwayEnvironment,
+            agentToken: await getOrCreateAgentToken(active.wallet),
+            variables: {
+              ACP_ACTIVE_WALLET: active.wallet,
+              ACP_AGENT_ID: active.agentId,
+              ACP_API_URL: getApiUrl(),
+              ACP_SERVE_OFFERING: local.slug,
+              ACP_CHAIN_ID: process.env.ACP_CHAIN_ID,
+              IS_TESTNET: process.env.IS_TESTNET,
+            },
+          });
+        }
+
         outputResult(json, {
           provider,
           serviceName,
           bundleDir,
-          executed: false,
+          executed: Boolean(execution),
           endpoints,
+          execution,
           nextSteps: [
-            `Set ACP_AGENT_TOKEN in your hosting provider secrets.`,
-            `Deploy ${bundleDir} with Docker or your provider CLI.`,
+            execution
+              ? `Railway deployment started for service ${serviceName}.`
+              : `Run with --execute to deploy to Railway, or deploy ${bundleDir} with Docker/provider CLI.`,
             `The public x402/MPP endpoints are the BE endpoints above; the deployment only needs outbound access to BE.`,
           ],
         });
