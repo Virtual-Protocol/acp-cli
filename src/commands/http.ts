@@ -390,6 +390,10 @@ async function writeResponse(
   const headers = headersToObject(response.headers);
   const paymentResponse = decodeX402PaymentResponse(response.headers);
 
+  if (!response.ok) {
+    process.exitCode = 1;
+  }
+
   if (opts.json) {
     outputResult(true, {
       status: response.status,
@@ -424,10 +428,6 @@ async function writeResponse(
       ok: response.ok,
       output: opts.outputPath,
     });
-  }
-
-  if (!response.ok) {
-    process.exitCode = 1;
   }
 }
 
