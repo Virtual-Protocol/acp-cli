@@ -203,6 +203,14 @@ function withAuthorizationHeader(
   return merged;
 }
 
+function withAutoPaymentHeaders(headers: HeadersInit | undefined): Headers {
+  const merged = new Headers(headers);
+  if (!merged.has("Accept-Payment")) {
+    merged.set("Accept-Payment", "tempo/charge");
+  }
+  return merged;
+}
+
 async function executePaidHttp(
   url: string,
   init: RequestInit,
@@ -211,12 +219,13 @@ async function executePaidHttp(
   if (protocol === "x402") return executeX402Http(url, init);
   if (protocol === "mpp") return executeMppHttp(url, init);
 
-  const probe = await fetch(url, init);
+  const autoInit = { ...init, headers: withAutoPaymentHeaders(init.headers) };
+  const probe = await fetch(url, autoInit);
   if (probe.status !== 402) return probe;
 
   const detected = await detectPaymentProtocol(probe);
-  if (detected === "x402") return executeX402Http(url, init, probe);
-  if (detected === "mpp") return executeMppHttp(url, init, probe);
+  if (detected === "x402") return executeX402Http(url, autoInit, probe);
+  if (detected === "mpp") return executeMppHttp(url, autoInit, probe);
 
   throw new CliError(
     "The endpoint returned 402 but no supported payment protocol was detected.",
