@@ -6,8 +6,8 @@ import { tempo as tempoChain } from "viem/chains";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
 import type { ClientEvmSigner } from "@x402/evm";
 import {
-  wrapFetchWithPayment,
   x402Client,
+  x402HTTPClient,
   decodePaymentResponseHeader,
 } from "@x402/fetch";
 import type { IEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
@@ -171,20 +171,52 @@ function hasHeader(headers: Headers, name: string): boolean {
   return headers.has(name);
 }
 
+function fetchWithHeaders(
+  url: string,
+  init: RequestInit,
+  headers: Record<string, string>,
+): Promise<Response> {
+  const merged = new Headers(init.headers);
+  for (const [key, value] of Object.entries(headers)) {
+    merged.set(key, value);
+  }
+  return fetch(url, { ...init, headers: merged });
+}
+
+function withHeader(
+  headers: HeadersInit | undefined,
+  name: string,
+  value: string,
+): Headers {
+  const merged = new Headers(headers);
+  if (!merged.has(name)) merged.set(name, value);
+  return merged;
+}
+
+function withAuthorizationHeader(
+  headers: HeadersInit | undefined,
+  credential: string,
+): Headers {
+  const merged = new Headers(headers);
+  merged.delete("authorization");
+  merged.set("Authorization", credential);
+  return merged;
+}
+
 async function executePaidHttp(
   url: string,
   init: RequestInit,
   protocol: PaidHttpProtocol,
 ): Promise<Response> {
-  if (protocol === "x402") return (await createX402Fetch())(url, init);
-  if (protocol === "mpp") return (await createMppFetch())(url, init);
+  if (protocol === "x402") return executeX402Http(url, init);
+  if (protocol === "mpp") return executeMppHttp(url, init);
 
   const probe = await fetch(url, init);
   if (probe.status !== 402) return probe;
 
   const detected = await detectPaymentProtocol(probe);
-  if (detected === "x402") return (await createX402Fetch())(url, init);
-  if (detected === "mpp") return (await createMppFetch())(url, init);
+  if (detected === "x402") return executeX402Http(url, init, probe);
+  if (detected === "mpp") return executeMppHttp(url, init, probe);
 
   throw new CliError(
     "The endpoint returned 402 but no supported payment protocol was detected.",
@@ -224,12 +256,66 @@ async function detectPaymentProtocol(
   return null;
 }
 
-async function createX402Fetch(): Promise<typeof fetch> {
+async function executeX402Http(
+  url: string,
+  init: RequestInit,
+  firstResponse?: Response,
+): Promise<Response> {
+  const { client, httpClient } = await createX402Client();
+  const response = firstResponse ?? (await fetch(url, init));
+  if (response.status !== 402) return response;
+
+  const paymentRequired = await parseX402PaymentRequired(httpClient, response);
+  const hookHeaders = await httpClient.handlePaymentRequired(paymentRequired);
+  if (hookHeaders) {
+    const hookResponse = await fetchWithHeaders(url, init, hookHeaders);
+    if (hookResponse.status !== 402) return hookResponse;
+  }
+
+  const paymentPayload = await client.createPaymentPayload(paymentRequired);
+  const paymentHeaders =
+    httpClient.encodePaymentSignatureHeader(paymentPayload);
+  return fetchWithHeaders(url, init, {
+    ...paymentHeaders,
+    "Access-Control-Expose-Headers": "PAYMENT-RESPONSE,X-PAYMENT-RESPONSE",
+  });
+}
+
+async function parseX402PaymentRequired(
+  httpClient: x402HTTPClient,
+  response: Response,
+) {
+  try {
+    let body: unknown;
+    try {
+      const responseText = await response.clone().text();
+      if (responseText) body = JSON.parse(responseText);
+    } catch {
+      // Header-only x402 responses are valid.
+    }
+
+    return httpClient.getPaymentRequiredResponse(
+      (name: string) => response.headers.get(name),
+      body,
+    );
+  } catch (error) {
+    throw new Error(
+      `Failed to parse x402 payment requirements: ${
+        error instanceof Error ? error.message : "Unknown error"
+      }`,
+    );
+  }
+}
+
+async function createX402Client(): Promise<{
+  client: x402Client;
+  httpClient: x402HTTPClient;
+}> {
   const provider = await createProviderAdapter();
   const signer = createX402Signer(provider);
   const client = new x402Client();
   registerExactEvmScheme(client, { signer });
-  return wrapFetchWithPayment(fetch, client);
+  return { client, httpClient: new x402HTTPClient(client) };
 }
 
 function createX402Signer(provider: IEvmProviderAdapter): ClientEvmSigner {
@@ -250,22 +336,54 @@ function createX402Signer(provider: IEvmProviderAdapter): ClientEvmSigner {
   };
 }
 
-async function createMppFetch(): Promise<typeof fetch> {
+async function executeMppHttp(
+  url: string,
+  init: RequestInit,
+  firstResponse?: Response,
+): Promise<Response> {
+  const mpp = await createMppHandler();
+  const response =
+    firstResponse ??
+    (await fetch(url, {
+      ...init,
+      headers: withHeader(init.headers, "Accept-Payment", "tempo/charge"),
+    }));
+  if (response.status !== 402) return response;
+
+  const credential = await mpp.createCredential(response);
+  return fetch(url, {
+    ...init,
+    headers: withAuthorizationHeader(init.headers, credential),
+  });
+}
+
+async function createMppHandler() {
   const provider = await createProviderAdapter();
   const address = getWalletAddress() as Address;
+  const clientsByChainId = new Map<
+    number,
+    ReturnType<typeof createMppClient>
+  >();
   const mpp = Mppx.create({
     fetch,
     polyfill: false,
     methods: [
       mppTempo({
         account: createMppAccount(provider, address) as never,
-        getClient: ({ chainId }) =>
-          createMppClient(provider, address, chainId as number | undefined),
+        getClient: ({ chainId }) => {
+          const resolvedChainId = Number(chainId ?? tempoChain.id);
+          const existing = clientsByChainId.get(resolvedChainId);
+          if (existing) return existing;
+
+          const client = createMppClient(provider, address, resolvedChainId);
+          clientsByChainId.set(resolvedChainId, client);
+          return client;
+        },
         mode: "push",
       }),
     ],
   });
-  return mpp.fetch as typeof fetch;
+  return mpp;
 }
 
 function createMppAccount(provider: IEvmProviderAdapter, address: Address) {
