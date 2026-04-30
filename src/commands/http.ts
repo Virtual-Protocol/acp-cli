@@ -24,6 +24,7 @@ type HttpOptions = {
   dataFile?: string;
   jsonBody?: string;
   protocol?: PaidHttpProtocol;
+  pay?: boolean;
   includeHeaders?: boolean;
   output?: string;
 };
@@ -35,7 +36,7 @@ type RequestParts = {
 export function registerHttpCommands(program: Command): void {
   program
     .command("http <url>")
-    .description("Call paid HTTP endpoints with the active agent wallet")
+    .description("Call HTTP endpoints; use --pay to pay x402/MPP challenges")
     .option("-X, --method <method>", "HTTP method", "GET")
     .option("-H, --header <header...>", "HTTP header, e.g. 'Name: value'")
     .option("-d, --data <body>", "Raw request body")
@@ -49,6 +50,7 @@ export function registerHttpCommands(program: Command): void {
       "Payment protocol: auto, x402, or mpp",
       "auto",
     )
+    .option("--pay", "Pay supported 402 responses with the active agent wallet")
     .option("--include-headers", "Include response headers in CLI output")
     .option("--output <path>", "Write response body to a file")
     .addHelpText(
@@ -57,9 +59,11 @@ export function registerHttpCommands(program: Command): void {
         "",
         "Examples:",
         "  acp http https://api.example.com/paid-resource",
-        '  acp http -X POST --json-body \'{"prompt":"hello"}\' https://api.example.com/jobs',
+        "  acp http --pay https://api.example.com/paid-resource",
+        '  acp http --pay -X POST --json-body \'{"prompt":"hello"}\' https://api.example.com/jobs',
         "",
-        "This is separate from ACP job lifecycle commands. It is a generic paid HTTP client for x402/MPP endpoints.",
+        "Without --pay, this makes one query request and surfaces any 402 response.",
+        "With --pay, the CLI signs/pays supported x402/MPP challenges using the active agent wallet and retries.",
       ].join("\n"),
     )
     .action(async (url: string, opts: HttpOptions, cmd) => {
@@ -67,7 +71,10 @@ export function registerHttpCommands(program: Command): void {
       try {
         const protocol = parseProtocol(opts.protocol);
         const request = buildRequest(opts);
-        const response = await executePaidHttp(url, request.init, protocol);
+        const response =
+          opts.pay === true
+            ? await executePaidHttp(url, request.init, protocol)
+            : await executeHttpQuery(url, request.init, protocol);
         await writeResponse(response, {
           json,
           includeHeaders: opts.includeHeaders === true,
@@ -209,6 +216,22 @@ function withAutoPaymentHeaders(headers: HeadersInit | undefined): Headers {
     merged.set("Accept-Payment", "tempo/charge");
   }
   return merged;
+}
+
+function buildQueryInit(
+  init: RequestInit,
+  protocol: PaidHttpProtocol,
+): RequestInit {
+  if (protocol === "x402") return init;
+  return { ...init, headers: withAutoPaymentHeaders(init.headers) };
+}
+
+async function executeHttpQuery(
+  url: string,
+  init: RequestInit,
+  protocol: PaidHttpProtocol,
+): Promise<Response> {
+  return fetch(url, buildQueryInit(init, protocol));
 }
 
 async function executePaidHttp(
