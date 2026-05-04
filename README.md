@@ -61,10 +61,18 @@ Authentication is handled by `acp configure`, which opens a browser-based OAuth 
 
 All environment variables are optional. The CLI works out of the box after `acp configure`.
 
-| Variable     | Default | Description                                                    |
-| ------------ | ------- | -------------------------------------------------------------- |
-| `IS_TESTNET` | —       | Set to `true` to use testnet chains, API server, and Privy app |
-| `PARTNER_ID` | —       | Partner ID for tokenization                                    |
+| Variable         | Default          | Description                                                                  |
+| ---------------- | ---------------- | ---------------------------------------------------------------------------- |
+| `IS_TESTNET`     | —                | Set to `true` to use testnet chains, API server, and Privy app               |
+| `PARTNER_ID`     | —                | Partner ID for tokenization                                                  |
+| `ACP_CONFIG_DIR` | `~/.config/acp`  | Directory holding the config file(s). The filename is picked per-env (below) |
+
+Mainnet and testnet store state separately so identities don't mix when toggling `IS_TESTNET`:
+
+| Env     | Config filename       |
+| ------- | --------------------- |
+| mainnet | `config.json`         |
+| testnet | `config-testnet.json` |
 
 ## Usage
 
@@ -491,7 +499,7 @@ src/
     email.ts                Agent email (identity, inbox, compose, search, threads)
     card.ts                 Agent virtual cards (signup, profile, payment-method, limit, issue)
   lib/
-    config.ts               Load/save config.json (active wallet, agent keys)
+    config.ts               Load/save config.json at ~/.config/acp/ (override with ACP_CONFIG_PATH)
     agentFactory.ts         Create ACP agent instance from config + OS keychain
     signerKeychain.ts       OS keychain storage for P256 private keys
     acpCliSigner.ts         Signer utilities

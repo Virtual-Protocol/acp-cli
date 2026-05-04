@@ -1,10 +1,25 @@
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { resolve } from "path";
 import { getPassword, setPassword } from "cross-keychain";
 
-const AUTH_KEYCHAIN_SERVICE = "acp-auth";
+const IS_TESTNET = process.env.IS_TESTNET === "true";
 
-const CONFIG_PATH = resolve(process.cwd(), "config.json");
+const AUTH_KEYCHAIN_SERVICE = IS_TESTNET ? "acp-auth-testnet" : "acp-auth";
+
+const CONFIG_DIR = process.env.ACP_CONFIG_DIR
+  ? resolve(process.env.ACP_CONFIG_DIR)
+  : resolve(homedir(), ".config", "acp");
+const CONFIG_FILENAME = IS_TESTNET ? "config-testnet.json" : "config.json";
+const CONFIG_PATH = resolve(CONFIG_DIR, CONFIG_FILENAME);
+const LEGACY_CONFIG_PATH = resolve(process.cwd(), "config.json");
+
+function migrateLegacyConfig(): void {
+  if (IS_TESTNET) return;
+  if (existsSync(CONFIG_PATH) || !existsSync(LEGACY_CONFIG_PATH)) return;
+  mkdirSync(CONFIG_DIR, { recursive: true });
+  renameSync(LEGACY_CONFIG_PATH, CONFIG_PATH);
+}
 
 interface AgentConfig {
   publicKey: string;
@@ -26,6 +41,7 @@ interface Config {
 }
 
 function loadConfig(): Config {
+  migrateLegacyConfig();
   try {
     return JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config;
   } catch {
@@ -34,6 +50,7 @@ function loadConfig(): Config {
 }
 
 function saveConfig(config: Config): void {
+  mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
 }
 
