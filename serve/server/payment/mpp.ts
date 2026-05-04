@@ -1,3 +1,4 @@
+import { randomBytes } from "crypto";
 import { getAddress, type Hex } from "viem";
 import type { DeployedOffering } from "../../types";
 import {
@@ -28,6 +29,8 @@ type TempoPayload =
   | TempoHashPayload
   | TempoTransactionPayload
   | TempoProofPayload;
+
+const localMppSecretKey = randomBytes(32).toString("hex");
 
 export interface MppSettlementResult {
   clientAddress: string;
@@ -164,9 +167,9 @@ function buildRequest(headers: Record<string, string> = {}): Request {
 function getSecretKey(): string {
   return (
     process.env.MPP_SECRET_KEY ||
+    process.env.ACP_MPP_SECRET_KEY ||
     process.env.JWT_SECRET ||
-    process.env.ACP_SIGNER_PRIVATE_KEY ||
-    "acp-local-mpp-secret"
+    localMppSecretKey
   );
 }
 

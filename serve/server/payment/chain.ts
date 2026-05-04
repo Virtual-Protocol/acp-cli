@@ -34,7 +34,7 @@ const SUPPORTED_CHAINS = [
 
 const USDC_ADDRESSES: Record<number, Address> = {
   [baseSepolia.id]: "0xB270EDc833056001f11a7828DFdAC9D4ac2b8344",
-  [base.id]: "0x833589fCD6E08f4c7C32D4f71b54bdA02913",
+  [base.id]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   [bsc.id]: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
   [bscTestnet.id]: "0x64544969ed7EBf5f083679233325356EbE738930",
   [xLayer.id]: "0x74b7f16337b8972027f6196a17a631ac6de26d22",

@@ -1,4 +1,5 @@
 import { dirname, resolve } from "path";
+import { randomBytes } from "crypto";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
 import { spawnSync } from "child_process";
@@ -701,6 +702,8 @@ export function registerServeCommands(program: Command): void {
               ACP_WALLET_ID: getWalletId(active.wallet),
               ACP_CHAIN_ID: process.env.ACP_CHAIN_ID,
               IS_TESTNET: process.env.IS_TESTNET,
+              MPP_SECRET_KEY:
+                process.env.MPP_SECRET_KEY || randomBytes(32).toString("hex"),
             },
           });
         }
