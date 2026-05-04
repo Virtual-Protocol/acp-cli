@@ -218,10 +218,25 @@ function materializeOffering(
 
 async function getOrCreateAgentToken(wallet: string): Promise<string> {
   const existing = getAgentToken(wallet);
-  if (existing) return existing;
+  if (existing && !isExpiredJwt(existing)) return existing;
 
   const chainId = Number(process.env.ACP_CHAIN_ID || "84532");
   return AuthApi.fetchAndStoreAgentToken(wallet, chainId, getApiUrl());
+}
+
+function isExpiredJwt(token: string, skewSeconds = 60): boolean {
+  const [, payload] = token.split(".");
+  if (!payload) return true;
+
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(payload, "base64url").toString("utf8"),
+    ) as { exp?: unknown };
+    if (typeof decoded.exp !== "number") return true;
+    return decoded.exp <= Math.floor(Date.now() / 1000) + skewSeconds;
+  } catch {
+    return true;
+  }
 }
 
 function getDefaultPort(input: unknown): number {
@@ -631,7 +646,6 @@ export function registerServeCommands(program: Command): void {
     )
     .option("--railway-project <id>", "Railway project ID for --execute")
     .option("--railway-environment <name>", "Railway environment for --execute")
-    .option("--bundle-only", "Only create the deploy bundle", true)
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {

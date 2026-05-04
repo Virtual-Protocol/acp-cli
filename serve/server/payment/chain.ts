@@ -2,7 +2,6 @@ import {
   createPublicClient,
   createWalletClient,
   erc20Abi,
-  formatUnits,
   http,
   verifyTypedData,
   type Address,
@@ -129,10 +128,6 @@ export function toAtomicAmount(amount: number, decimals: number): string {
     BigInt(whole || "0") * 10n ** BigInt(decimals) +
     BigInt(paddedFraction || "0")
   ).toString();
-}
-
-export function fromAtomicAmount(raw: bigint, decimals: number): number {
-  return Number(formatUnits(raw, decimals));
 }
 
 export { verifyTypedData };
