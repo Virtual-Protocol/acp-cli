@@ -145,6 +145,8 @@ async function startACPListener(
   agent.on("entry", async (session: any, entry: any) => {
     const jobId = session.jobId;
     try {
+      if (!(await isSessionForOffering(offering, session))) return;
+
       const status = session.status;
 
       if (entry.contentType === "requirement" && entry.content) {
@@ -208,6 +210,22 @@ async function startACPListener(
   });
 
   await agent.start();
+}
+
+async function isSessionForOffering(
+  offering: DeployedOffering,
+  session: any,
+): Promise<boolean> {
+  const job = session.job ?? (await session.fetchJob());
+  const providerAddress = String(job.providerAddress ?? "").toLowerCase();
+  if (providerAddress !== offering.providerWallet.toLowerCase()) return false;
+
+  const description = String(job.description ?? "");
+  return (
+    description === offering.offering.name ||
+    description === offering.offering.id ||
+    description === offering.offering.slug
+  );
 }
 
 function buildHandlerInput(

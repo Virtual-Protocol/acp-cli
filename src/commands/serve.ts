@@ -735,22 +735,42 @@ export function registerServeCommands(program: Command): void {
         const active = requireActiveAgent(json);
         if (!active) return;
         const { getPidFilePath } = await import("../../serve/server/index");
+        const rootDir = resolve(opts.dir);
+        let agent: Agent | undefined;
+        try {
+          const { agentApi } = await getClient();
+          agent = await agentApi.getById(active.agentId);
+        } catch {
+          agent = undefined;
+        }
         let stopped = 0;
         for (const local of selectLocalOfferings(
-          loadLocalOfferings(resolve(opts.dir), active.agentId),
+          loadLocalOfferings(rootDir, active.agentId),
           opts.offering,
         )) {
-          const offeringId =
+          const offering = materializeOffering(
+            local,
+            agent ? findRemoteOffering(local, agent) : undefined,
+          );
+          const legacyOfferingId =
             typeof local.offeringJson.id === "string"
               ? local.offeringJson.id
               : local.slug;
-          const pidFile = getPidFilePath(offeringId);
-          if (!existsSync(pidFile)) continue;
-          const pid = Number.parseInt(readFileSync(pidFile, "utf8"), 10);
-          try {
-            process.kill(pid, "SIGTERM");
-            stopped += 1;
-          } catch {}
+          const pidFiles = [
+            getPidFilePath(offering.id),
+            ...(offering.id === legacyOfferingId
+              ? []
+              : [getPidFilePath(legacyOfferingId)]),
+          ];
+          for (const pidFile of pidFiles) {
+            if (!existsSync(pidFile)) continue;
+            const pid = Number.parseInt(readFileSync(pidFile, "utf8"), 10);
+            try {
+              process.kill(pid, "SIGTERM");
+              stopped += 1;
+            } catch {}
+            break;
+          }
         }
         outputResult(json, { success: true, stopped });
       } catch (err) {
