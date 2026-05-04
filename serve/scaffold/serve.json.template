@@ -1,0 +1,10 @@
+{
+  "offerings": {
+    "{{OFFERING_ID}}": {
+      "dir": "offerings/{{OFFERING_NAME}}",
+      "protocols": ["x402", "mpp", "acp"]
+    }
+  },
+  "evaluator": "default",
+  "port": 3000
+}

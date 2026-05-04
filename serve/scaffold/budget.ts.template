@@ -1,0 +1,40 @@
+import type { BudgetHandler } from "acp-cli/serve/types";
+
+/**
+ * Budget — OPTIONAL (ACP native only)
+ *
+ * Called when a new job arrives. Returns the service fee and optionally
+ * a fund request for working capital.
+ *
+ * - Service fee (amount): what the client pays you for the work.
+ * - Fund request: capital the client provides for you to use during
+ *   job execution (e.g., USDC for a trade, gas for on-chain ops).
+ *   This is separate from the service fee.
+ *
+ * If this file is not present, the offering's fixed price is used
+ * with no fund request.
+ *
+ * Only called for ACP native flow — x402/MPP use the offering's
+ * fixed price automatically.
+ *
+ * Delete this file if your offering has a fixed price and no fund request.
+ */
+const budget: BudgetHandler = async (input) => {
+  // Default: use the offering's fixed price, no fund request
+  return { amount: input.offering.priceValue };
+
+  // Dynamic pricing example:
+  // const complexity = estimateComplexity(input.requirements);
+  // return { amount: Math.max(0.01, complexity * 0.10) };
+
+  // Fund request example (e.g., trade job needs working capital):
+  // return {
+  //   amount: 0.50,                        // service fee
+  //   fundRequest: {
+  //     transferAmount: 100,                // working capital needed
+  //     destination: "0xYourTradeWallet"    // where to send it
+  //   }
+  // };
+};
+
+export default budget;

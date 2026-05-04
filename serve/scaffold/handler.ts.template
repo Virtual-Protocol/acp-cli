@@ -1,0 +1,26 @@
+import type { Handler } from "acp-cli/serve/types";
+
+/**
+ * Handler — REQUIRED
+ *
+ * This function runs when a client pays for your offering.
+ * It receives the client's requirements (validated against your offering's schema)
+ * and must return a deliverable.
+ *
+ * This is called for all protocols (x402, MPP, ACP native).
+ * You don't need to handle payments, escrow, or protocol details — ACP Serve does that.
+ */
+const handler: Handler = async (input) => {
+  const { requirements } = input;
+
+  // TODO: implement your service logic here
+  // Example:
+  //   const result = await myService.process(requirements);
+  //   return { deliverable: result.url };
+
+  return {
+    deliverable: "TODO: replace with actual deliverable",
+  };
+};
+
+export default handler;

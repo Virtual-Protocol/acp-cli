@@ -1,0 +1,12 @@
+{
+  "name": "{{NAME}}",
+  "description": "TODO: describe what this offering does",
+  "priceType": "fixed",
+  "priceValue": 0,
+  "slaMinutes": 60,
+  "requirements": "TODO: describe what the client must provide, or use a JSON schema",
+  "deliverable": "TODO: describe what the provider will deliver",
+  "requiredFunds": false,
+  "isHidden": false,
+  "isPrivate": false
+}

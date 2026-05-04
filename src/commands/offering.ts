@@ -1,16 +1,37 @@
 import * as readline from "readline";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import { c } from "../lib/color";
-import type {
+import { CliError } from "../lib/errors";import type {
   AgentOffering,
   CreateOfferingBody,
   UpdateOfferingBody,
 } from "../lib/api/agent";
 import { getClient } from "../lib/api/client";
 import { prompt, selectOption, printTable } from "../lib/prompt";
+import { getActiveWallet, getAgentId } from "../lib/config";
 import { validateJsonSchema } from "../lib/validation";
-import { getActiveAgentId } from "../lib/activeAgent";
+
+function getActiveAgentId(json: boolean): string | null {
+  const activeWallet = getActiveWallet();
+  if (!activeWallet) {
+    outputError(json, new CliError(
+      "No active agent set.",
+      "NO_ACTIVE_AGENT",
+      "Run `acp agent use` to set an active agent."
+    ));
+    return null;
+  }
+  const agentId = getAgentId(activeWallet);
+  if (!agentId) {
+    outputError(json, new CliError(
+      "Agent ID not found for active wallet.",
+      "NO_ACTIVE_AGENT",
+      "Run `acp agent list` or `acp agent use` to populate it."
+    ));
+    return null;
+  }
+  return agentId;
+}
 
 function parseSchemaOrString(
   value: string,
@@ -18,11 +39,7 @@ function parseSchemaOrString(
 ): Record<string, unknown> | string {
   try {
     const parsed = JSON.parse(value);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      !Array.isArray(parsed)
-    ) {
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
       return validateJsonSchema(value);
     }
   } catch {
@@ -46,11 +63,15 @@ async function promptSchemaField(
   ).trim();
 
   if (type === "2") {
-    const input = (await prompt(rl, `${fieldName} (JSON schema): `)).trim();
+    const input = (
+      await prompt(rl, `${fieldName} (JSON schema): `)
+    ).trim();
     return validateJsonSchema(input);
   }
 
-  const value = (await prompt(rl, `${fieldName} (description): `)).trim();
+  const value = (
+    await prompt(rl, `${fieldName} (description): `)
+  ).trim();
   if (!value) throw new Error(`${fieldName} cannot be empty.`);
   return value;
 }
@@ -75,6 +96,7 @@ function printOffering(offering: AgentOffering): void {
     ["SLA", `${offering.slaMinutes} min`],
     ["Required Funds", offering.requiredFunds ? "Yes" : "No"],
     ["Hidden", offering.isHidden ? "Yes" : "No"],
+    ["Private", offering.isPrivate ? "Yes" : "No"],
   ]);
 }
 
@@ -116,9 +138,7 @@ export function registerOfferingCommands(program: Command): void {
         } else {
           console.log("ID\tNAME\tPRICE\tSLA");
           for (const o of offerings) {
-            console.log(
-              `${o.id}\t${o.name}\t${o.priceValue} (${o.priceType})\t${o.slaMinutes}m`
-            );
+            console.log(`${o.id}\t${o.name}\t${o.priceValue} (${o.priceType})\t${o.slaMinutes}m`);
           }
         }
       } catch (err) {
@@ -135,6 +155,7 @@ export function registerOfferingCommands(program: Command): void {
   offering
     .command("create")
     .description("Create a new offering for the active agent")
+    .option("--from-file <path>", "Create from an offering.json file")
     .option("--name <name>", "Offering name")
     .option("--description <text>", "Description")
     .option("--price-type <type>", "Price type: fixed or percentage")
@@ -146,12 +167,66 @@ export function registerOfferingCommands(program: Command): void {
     .option("--no-required-funds", "Do not require funds")
     .option("--hidden", "Hidden offering")
     .option("--no-hidden", "Visible offering")
+    .option("--private", "Private offering")
+    .option("--no-private", "Public offering")
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
       const agentId = getActiveAgentId(json);
       if (!agentId) return;
+
+      // --from-file: read offering definition from JSON file
+      if (opts.fromFile) {
+        try {
+          const { readFileSync, writeFileSync } = await import("fs");
+          const { resolve } = await import("path");
+          const filePath = resolve(opts.fromFile);
+          const fileContent = JSON.parse(readFileSync(filePath, "utf-8"));
+
+          const body: CreateOfferingBody = {
+            name: fileContent.name,
+            description: fileContent.description,
+            priceType: fileContent.priceType,
+            priceValue: Number(fileContent.priceValue),
+            slaMinutes: Number(fileContent.slaMinutes),
+            requirements: typeof fileContent.requirements === "string"
+              ? fileContent.requirements
+              : fileContent.requirements,
+            deliverable: typeof fileContent.deliverable === "string"
+              ? fileContent.deliverable
+              : fileContent.deliverable,
+            requiredFunds: fileContent.requiredFunds ?? false,
+            isHidden: fileContent.isHidden ?? false,
+            isPrivate: fileContent.isPrivate ?? false,
+          };
+
+          const created = await agentApi.createOffering(agentId, body);
+
+          // Update the offering.json with the assigned ID
+          fileContent.id = created.id;
+          writeFileSync(filePath, JSON.stringify(fileContent, null, 2) + "\n");
+
+          if (json) {
+            outputResult(json, created as unknown as Record<string, unknown>);
+          } else {
+            console.log(`\nOffering created from ${opts.fromFile}!`);
+            console.log(`  ID: ${created.id}`);
+            console.log(`  Name: ${created.name}`);
+            console.log(`  Price: ${created.priceValue} (${created.priceType})`);
+            console.log(`\n  offering.json updated with ID: ${created.id}`);
+          }
+          return;
+        } catch (err) {
+          outputError(
+            json,
+            `Failed to create offering from file: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+          return;
+        }
+      }
 
       const needsPrompt =
         !opts.name ||
@@ -162,7 +237,8 @@ export function registerOfferingCommands(program: Command): void {
         !opts.requirements ||
         !opts.deliverable ||
         opts.requiredFunds === undefined ||
-        opts.hidden === undefined;
+        opts.hidden === undefined ||
+        opts.private === undefined;
 
       let rl: readline.Interface | undefined;
 
@@ -178,34 +254,20 @@ export function registerOfferingCommands(program: Command): void {
         let name: string;
         if (opts.name) {
           name = opts.name.trim();
-          if (!name) {
-            outputError(json, "Name cannot be empty.");
-            return;
-          }
+          if (!name) { outputError(json, "Name cannot be empty."); return; }
         } else {
           name = (await prompt(rl!, "Offering name (3-20 chars): ")).trim();
-          if (!name) {
-            outputError(json, "Name cannot be empty.");
-            return;
-          }
+          if (!name) { outputError(json, "Name cannot be empty."); return; }
         }
 
         // Description
         let description: string;
         if (opts.description) {
           description = opts.description.trim();
-          if (!description) {
-            outputError(json, "Description cannot be empty.");
-            return;
-          }
+          if (!description) { outputError(json, "Description cannot be empty."); return; }
         } else {
-          description = (
-            await prompt(rl!, "Description (10-500 chars): ")
-          ).trim();
-          if (!description) {
-            outputError(json, "Description cannot be empty.");
-            return;
-          }
+          description = (await prompt(rl!, "Description (10-500 chars): ")).trim();
+          if (!description) { outputError(json, "Description cannot be empty."); return; }
         }
 
         // Price type
@@ -218,17 +280,11 @@ export function registerOfferingCommands(program: Command): void {
           }
           priceType = pt;
         } else {
-          rl?.close();
-          rl = undefined;
           priceType = await selectOption(
             "Price type:",
             ["fixed", "percentage"] as const,
             (t) => t
           );
-          rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-          });
         }
 
         // Price value
@@ -269,10 +325,7 @@ export function registerOfferingCommands(program: Command): void {
         let requirements: Record<string, unknown> | string;
         if (opts.requirements) {
           try {
-            requirements = parseSchemaOrString(
-              opts.requirements,
-              "Requirements"
-            );
+            requirements = parseSchemaOrString(opts.requirements, "Requirements");
           } catch (err) {
             outputError(json, err instanceof Error ? err : String(err));
             return;
@@ -311,9 +364,7 @@ export function registerOfferingCommands(program: Command): void {
         } else {
           const requiredFundsStr = (
             await prompt(rl!, "Required funds? (y/N): ")
-          )
-            .trim()
-            .toLowerCase();
+          ).trim().toLowerCase();
           requiredFunds = requiredFundsStr === "y";
         }
 
@@ -321,10 +372,20 @@ export function registerOfferingCommands(program: Command): void {
         if (opts.hidden !== undefined) {
           isHidden = opts.hidden;
         } else {
-          const isHiddenStr = (await prompt(rl!, "Hidden? (y/N): "))
-            .trim()
-            .toLowerCase();
+          const isHiddenStr = (
+            await prompt(rl!, "Hidden? (y/N): ")
+          ).trim().toLowerCase();
           isHidden = isHiddenStr === "y";
+        }
+
+        let isPrivate: boolean;
+        if (opts.private !== undefined) {
+          isPrivate = opts.private;
+        } else {
+          const isPrivateStr = (
+            await prompt(rl!, "Private? (y/N): ")
+          ).trim().toLowerCase();
+          isPrivate = isPrivateStr === "y";
         }
 
         const body: CreateOfferingBody = {
@@ -337,6 +398,7 @@ export function registerOfferingCommands(program: Command): void {
           deliverable,
           requiredFunds,
           isHidden,
+          isPrivate,
         };
 
         const created = await agentApi.createOffering(agentId, body);
@@ -346,7 +408,7 @@ export function registerOfferingCommands(program: Command): void {
           return;
         }
 
-        console.log(`\n${c.green("Offering created successfully!")}\n`);
+        console.log("\nOffering created successfully!\n");
         printOffering(created);
       } catch (err) {
         outputError(
@@ -370,15 +432,14 @@ export function registerOfferingCommands(program: Command): void {
     .option("--price-type <type>", "New price type: fixed or percentage")
     .option("--price-value <value>", "New price value")
     .option("--sla-minutes <minutes>", "New SLA in minutes")
-    .option(
-      "--requirements <value>",
-      "New requirements (string or JSON schema)"
-    )
+    .option("--requirements <value>", "New requirements (string or JSON schema)")
     .option("--deliverable <value>", "New deliverable (string or JSON schema)")
     .option("--required-funds", "Set required funds to true")
     .option("--no-required-funds", "Set required funds to false")
     .option("--hidden", "Set hidden to true")
     .option("--no-hidden", "Set hidden to false")
+    .option("--private", "Set private to true")
+    .option("--no-private", "Set private to false")
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
@@ -487,13 +548,8 @@ export function registerOfferingCommands(program: Command): void {
           updates.priceType = pt;
         } else if (!nonInteractive) {
           const priceTypeStr = (
-            await prompt(
-              rl!,
-              `Price type [${selected.priceType}] (fixed/percentage): `
-            )
-          )
-            .trim()
-            .toLowerCase();
+            await prompt(rl!, `Price type [${selected.priceType}] (fixed/percentage): `)
+          ).trim().toLowerCase();
           if (priceTypeStr) {
             if (priceTypeStr !== "fixed" && priceTypeStr !== "percentage") {
               outputError(json, "Price type must be 'fixed' or 'percentage'.");
@@ -528,10 +584,7 @@ export function registerOfferingCommands(program: Command): void {
         // Requirements
         if (opts.requirements) {
           try {
-            updates.requirements = parseSchemaOrString(
-              opts.requirements,
-              "Requirements"
-            );
+            updates.requirements = parseSchemaOrString(opts.requirements, "Requirements");
           } catch (err) {
             outputError(json, err instanceof Error ? err : String(err));
             return;
@@ -546,15 +599,10 @@ export function registerOfferingCommands(program: Command): void {
               rl!,
               `Update requirements? Current: ${currentReqDisplay} (y/N): `
             )
-          )
-            .trim()
-            .toLowerCase();
+          ).trim().toLowerCase();
           if (updateReq === "y") {
             try {
-              updates.requirements = await promptSchemaField(
-                rl!,
-                "Requirements"
-              );
+              updates.requirements = await promptSchemaField(rl!, "Requirements");
             } catch (err) {
               outputError(json, err instanceof Error ? err : String(err));
               return;
@@ -565,10 +613,7 @@ export function registerOfferingCommands(program: Command): void {
         // Deliverable
         if (opts.deliverable) {
           try {
-            updates.deliverable = parseSchemaOrString(
-              opts.deliverable,
-              "Deliverable"
-            );
+            updates.deliverable = parseSchemaOrString(opts.deliverable, "Deliverable");
           } catch (err) {
             outputError(json, err instanceof Error ? err : String(err));
             return;
@@ -583,9 +628,7 @@ export function registerOfferingCommands(program: Command): void {
               rl!,
               `Update deliverable? Current: ${currentDelDisplay} (y/N): `
             )
-          )
-            .trim()
-            .toLowerCase();
+          ).trim().toLowerCase();
           if (updateDel === "y") {
             try {
               updates.deliverable = await promptSchemaField(rl!, "Deliverable");
@@ -603,13 +646,9 @@ export function registerOfferingCommands(program: Command): void {
           const reqFundsStr = (
             await prompt(
               rl!,
-              `Required funds [${
-                selected.requiredFunds ? "Yes" : "No"
-              }] (y/n): `
+              `Required funds [${selected.requiredFunds ? "Yes" : "No"}] (y/n): `
             )
-          )
-            .trim()
-            .toLowerCase();
+          ).trim().toLowerCase();
           if (reqFundsStr === "y") updates.requiredFunds = true;
           else if (reqFundsStr === "n") updates.requiredFunds = false;
         }
@@ -623,11 +662,23 @@ export function registerOfferingCommands(program: Command): void {
               rl!,
               `Hidden [${selected.isHidden ? "Yes" : "No"}] (y/n): `
             )
-          )
-            .trim()
-            .toLowerCase();
+          ).trim().toLowerCase();
           if (hiddenStr === "y") updates.isHidden = true;
           else if (hiddenStr === "n") updates.isHidden = false;
+        }
+
+        // Private
+        if (opts.private !== undefined) {
+          updates.isPrivate = opts.private;
+        } else if (!nonInteractive) {
+          const privateStr = (
+            await prompt(
+              rl!,
+              `Private [${selected.isPrivate ? "Yes" : "No"}] (y/n): `
+            )
+          ).trim().toLowerCase();
+          if (privateStr === "y") updates.isPrivate = true;
+          else if (privateStr === "n") updates.isPrivate = false;
         }
 
         if (Object.keys(updates).length === 0) {
@@ -646,7 +697,7 @@ export function registerOfferingCommands(program: Command): void {
           return;
         }
 
-        console.log(`\n${c.green("Offering updated successfully!")}\n`);
+        console.log("\nOffering updated successfully!\n");
         printOffering(updated);
       } catch (err) {
         outputError(
@@ -717,9 +768,7 @@ export function registerOfferingCommands(program: Command): void {
         try {
           const confirm = (
             await prompt(rl, `Delete offering '${selected.name}'? (y/N): `)
-          )
-            .trim()
-            .toLowerCase();
+          ).trim().toLowerCase();
 
           if (confirm !== "y") {
             console.log("Cancelled.");
@@ -739,9 +788,7 @@ export function registerOfferingCommands(program: Command): void {
             deletedOffering: selected.name,
           });
         } else {
-          console.log(
-            `\n${c.green(`Offering '${selected.name}' deleted successfully.`)}`
-          );
+          console.log(`\nOffering '${selected.name}' deleted successfully.`);
         }
       } catch (err) {
         outputError(

@@ -3,11 +3,11 @@ import { resolve } from "path";
 import { getPassword, setPassword } from "cross-keychain";
 
 const AUTH_KEYCHAIN_SERVICE = "acp-auth";
-
 const CONFIG_PATH = resolve(process.cwd(), "config.json");
 
 interface AgentConfig {
   publicKey: string;
+  token?: string;
   walletId?: string;
   id?: string;
 }
@@ -35,15 +35,22 @@ function saveConfig(config: Config): void {
   writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
 }
 
+function getEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return value && value.trim() ? value.trim() : undefined;
+}
+
 export async function getToken(): Promise<string | undefined> {
   return (
-    (await getPassword(AUTH_KEYCHAIN_SERVICE, "access-token")) ?? undefined
+    getEnv("ACP_ACCESS_TOKEN") ??
+    ((await getPassword(AUTH_KEYCHAIN_SERVICE, "access-token")) ?? undefined)
   );
 }
 
 export async function getRefreshToken(): Promise<string | undefined> {
   return (
-    (await getPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token")) ?? undefined
+    getEnv("ACP_REFRESH_TOKEN") ??
+    ((await getPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token")) ?? undefined)
   );
 }
 
@@ -55,8 +62,20 @@ export async function setTokens(
   await setPassword(AUTH_KEYCHAIN_SERVICE, "refresh-token", refreshToken);
 }
 
+export function getAgentToken(walletAddress: string): string | undefined {
+  return getEnv("ACP_AGENT_TOKEN") ?? loadConfig().agents?.[walletAddress]?.token;
+}
+
+export function setAgentToken(walletAddress: string, token: string): void {
+  const config = loadConfig();
+  config.agents ??= {};
+  config.agents[walletAddress] ??= { publicKey: "" };
+  config.agents[walletAddress].token = token;
+  saveConfig(config);
+}
+
 export function getWalletId(walletAddress: string): string | undefined {
-  return loadConfig().agents?.[walletAddress]?.walletId;
+  return getEnv("ACP_WALLET_ID") ?? loadConfig().agents?.[walletAddress]?.walletId;
 }
 
 export function setWalletId(walletAddress: string, walletId: string): void {
@@ -68,7 +87,7 @@ export function setWalletId(walletAddress: string, walletId: string): void {
 }
 
 export function getPublicKey(agentAddress: string): string | undefined {
-  return loadConfig().agents?.[agentAddress]?.publicKey;
+  return getEnv("ACP_PUBLIC_KEY") ?? loadConfig().agents?.[agentAddress]?.publicKey;
 }
 
 export function setPublicKey(agentAddress: string, publicKey: string): void {
@@ -80,7 +99,7 @@ export function setPublicKey(agentAddress: string, publicKey: string): void {
 }
 
 export function getAgentId(walletAddress: string): string | undefined {
-  return loadConfig().agents?.[walletAddress]?.id;
+  return getEnv("ACP_AGENT_ID") ?? loadConfig().agents?.[walletAddress]?.id;
 }
 
 export function setAgentId(walletAddress: string, id: string): void {
@@ -92,7 +111,7 @@ export function setAgentId(walletAddress: string, id: string): void {
 }
 
 export function getActiveWallet(): string | undefined {
-  return loadConfig().activeWallet;
+  return getEnv("ACP_ACTIVE_WALLET") ?? loadConfig().activeWallet;
 }
 
 export function setActiveWallet(walletAddress: string): void {

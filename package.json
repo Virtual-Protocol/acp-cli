@@ -7,19 +7,25 @@
   },
   "scripts": {
     "acp": "tsx bin/acp.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "seller:pokemon": "tsx src/examples/pokemonSeller.ts"
   },
   "author": "",
   "license": "ISC",
   "description": "CLI tool wrapping the ACP Node SDK for agent tool use",
   "dependencies": {
+    "@hono/node-server": "^1.19.12",
     "@privy-io/node": "^0.11.0",
     "@virtuals-protocol/acp-node": "^0.3.0-beta.40",
     "@virtuals-protocol/acp-node-v2": "^0.0.4",
+    "@x402/core": "^2.9.0",
+    "@x402/evm": "^2.9.0",
     "ajv": "^8.18.0",
     "commander": "^13.0.0",
     "cross-keychain": "^1.1.0",
     "dotenv": "^17.0.0",
+    "hono": "^4.12.10",
+    "mppx": "^0.5.5",
     "picocolors": "^1.1.1",
     "socket.io-client": "^4.8.3",
     "viem": "^2.47.0"

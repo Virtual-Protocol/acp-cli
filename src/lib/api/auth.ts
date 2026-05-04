@@ -1,3 +1,6 @@
+import { EvmAcpClient } from "@virtuals-protocol/acp-node-v2";
+import { createAgentFromConfig } from "../agentFactory";
+import { setAgentToken } from "../config";
 import { ApiClient } from "./client";
 
 interface CliUrlResponse {
@@ -8,6 +11,16 @@ interface CliTokenResponse {
   data: { token: string; refreshToken: string };
 }
 
+interface AuthTokenResponse {
+  data: { token: string };
+}
+
+interface RequestAuthToken {
+  walletAddress: string;
+  signature: string;
+  message: string;
+  chainId: number;
+}
 export class AuthApi {
   constructor(private readonly client: ApiClient) {}
 
@@ -42,5 +55,43 @@ export class AuthApi {
     } catch {
       return null;
     }
+  }
+
+  async getAuthToken(data: RequestAuthToken): Promise<string> {
+    try {
+      const res = await this.client.post<AuthTokenResponse>("/auth/agent", {
+        walletAddress: data.walletAddress,
+        signature: data.signature,
+        message: data.message,
+        chainId: data.chainId,
+      });
+      const token = res.data.token;
+      setAgentToken(data.walletAddress, token);
+      return token;
+    } catch (error) {
+      throw new Error(
+        `Failed to get auth token: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  static async fetchAndStoreToken(
+    walletAddress: string,
+    chainId: number,
+    baseUrl: string
+  ): Promise<string> {
+    const message = `acp-auth:${Date.now()}`;
+
+    const agent = await createAgentFromConfig();
+    const acpClient = agent.getClient();
+    if (!(acpClient instanceof EvmAcpClient)) {
+      throw new Error("signMessage requires an EVM provider");
+    }
+    const signature = await acpClient.getProvider().signMessage(chainId, message);
+
+    const authApi = new AuthApi(new ApiClient(baseUrl));
+    return authApi.getAuthToken({ walletAddress, signature, message, chainId });
   }
 }
