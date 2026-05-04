@@ -4,6 +4,7 @@ import { createAgentFromConfig } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
+import { resolveSubscriptionAddon } from "../lib/subscription";
 
 export function registerProviderCommands(program: Command): void {
   const provider = program
@@ -16,6 +17,7 @@ export function registerProviderCommands(program: Command): void {
     .requiredOption("--job-id <id>", "On-chain job ID")
     .requiredOption("--amount <usdc>", "USDC amount to propose")
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .option("--package-id <id>", "Package ID")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -30,20 +32,37 @@ export function registerProviderCommands(program: Command): void {
               "Run `acp job list` to see your active jobs."
             );
           }
-          await session.setBudget(
-            AssetToken.usdc(Number(opts.amount), Number(opts.chainId))
+
+          const { subscription, totalBudget } = await resolveSubscriptionAddon(
+            agent,
+            session,
+            opts.amount,
+            opts.packageId
           );
+
+          if (subscription) {
+            await session.setBudgetWithSubscription(
+              AssetToken.usdc(totalBudget, Number(opts.chainId)),
+              BigInt(subscription.duration),
+              BigInt(subscription.packageId)
+            );
+          } else {
+            await session.setBudget(
+              AssetToken.usdc(totalBudget, Number(opts.chainId))
+            );
+          }
+
           if (json) {
             outputResult(json, {
               success: true,
               action: "set-budget",
               jobId: opts.jobId,
-              amount: opts.amount,
+              amount: totalBudget,
             });
           } else {
             console.log(
               `\n${c.green(
-                `Budget of ${opts.amount} USDC proposed for Job #${opts.jobId}`
+                `Budget of ${totalBudget} USDC proposed for Job #${opts.jobId}`
               )}`
             );
           }
@@ -79,6 +98,7 @@ export function registerProviderCommands(program: Command): void {
       "ERC-20 token contract address for the fund transfer (defaults to USDC)"
     )
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .option("--package-id <id>", "Package ID")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -101,17 +121,36 @@ export function registerProviderCommands(program: Command): void {
                 chainId
               )
             : AssetToken.usdc(Number(opts.transferAmount), chainId);
-          await session.setBudgetWithFundRequest(
-            AssetToken.usdc(Number(opts.amount), chainId),
-            transferToken,
-            opts.destination
+
+          const { subscription, totalBudget } = await resolveSubscriptionAddon(
+            agent,
+            session,
+            opts.amount,
+            opts.packageId
           );
+
+          if (subscription) {
+            await session.setBudgetWithSubscriptionAndFundRequest(
+              AssetToken.usdc(totalBudget, chainId),
+              BigInt(subscription.duration),
+              BigInt(subscription.packageId),
+              transferToken,
+              opts.destination
+            );
+          } else {
+            await session.setBudgetWithFundRequest(
+              AssetToken.usdc(totalBudget, chainId),
+              transferToken,
+              opts.destination
+            );
+          }
+
           if (json) {
             outputResult(json, {
               success: true,
               action: "set-budget-with-fund-request",
               jobId: opts.jobId,
-              amount: opts.amount,
+              amount: totalBudget,
               transferAmount: opts.transferAmount,
               transferTokenSymbol: transferToken.symbol,
               transferTokenAddress: transferToken.address,
@@ -120,7 +159,7 @@ export function registerProviderCommands(program: Command): void {
           } else {
             console.log(
               `\n${c.green(
-                `Budget of ${opts.amount} USDC proposed for Job #${opts.jobId}`
+                `Budget of ${totalBudget} USDC proposed for Job #${opts.jobId}`
               )}`
             );
             console.log(
