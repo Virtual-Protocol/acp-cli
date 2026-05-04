@@ -22,6 +22,7 @@ import {
   getActiveWallet,
   getAgentId,
   getAgentToken,
+  isTokenExpired,
   getPublicKey,
   getWalletId,
 } from "../lib/config";
@@ -218,25 +219,10 @@ function materializeOffering(
 
 async function getOrCreateAgentToken(wallet: string): Promise<string> {
   const existing = getAgentToken(wallet);
-  if (existing && !isExpiredJwt(existing)) return existing;
+  if (existing && !isTokenExpired(existing)) return existing;
 
   const chainId = Number(process.env.ACP_CHAIN_ID || "84532");
   return AuthApi.fetchAndStoreAgentToken(wallet, chainId, getApiUrl());
-}
-
-function isExpiredJwt(token: string, skewSeconds = 60): boolean {
-  const [, payload] = token.split(".");
-  if (!payload) return true;
-
-  try {
-    const decoded = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as { exp?: unknown };
-    if (typeof decoded.exp !== "number") return true;
-    return decoded.exp <= Math.floor(Date.now() / 1000) + skewSeconds;
-  } catch {
-    return true;
-  }
 }
 
 function getDefaultPort(input: unknown): number {
@@ -548,6 +534,7 @@ export function registerServeCommands(program: Command): void {
         if (!active) return;
 
         const rootDir = resolve(opts.dir);
+        const serveConfig = readJsonFile(getServeConfigPath(rootDir));
         const selected = selectLocalOfferings(
           loadLocalOfferings(rootDir, active.agentId),
           opts.offering,
@@ -576,7 +563,9 @@ export function registerServeCommands(program: Command): void {
 
         await startOfferingServer({
           dir: local.dir,
-          port: opts.port ? Number(opts.port) : getDefaultPort(undefined),
+          port: opts.port
+            ? Number(opts.port)
+            : getDefaultPort(serveConfig.port),
           agentSlug: slugify(agent?.name ?? agentName),
           providerWallet: active.wallet,
           offering,

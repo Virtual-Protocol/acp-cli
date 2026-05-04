@@ -122,12 +122,34 @@ export function toAtomicAmount(amount: number, decimals: number): string {
   if (!Number.isFinite(amount) || amount < 0) {
     throw new Error(`Invalid payment amount: ${amount}`);
   }
-  const [whole, fraction = ""] = String(amount).split(".");
+  const [whole, fraction = ""] = toDecimalString(amount).split(".");
   const paddedFraction = fraction.padEnd(decimals, "0").slice(0, decimals);
   return (
     BigInt(whole || "0") * 10n ** BigInt(decimals) +
     BigInt(paddedFraction || "0")
   ).toString();
+}
+
+function toDecimalString(amount: number): string {
+  const value = String(amount);
+  if (!value.toLowerCase().includes("e")) return value;
+
+  const [coefficient, exponentValue] = value.toLowerCase().split("e");
+  const exponent = Number(exponentValue);
+  if (!Number.isInteger(exponent)) {
+    throw new Error(`Invalid payment amount: ${amount}`);
+  }
+
+  const [whole, fraction = ""] = coefficient.split(".");
+  const digits = `${whole}${fraction}`;
+  const decimalIndex = whole.length + exponent;
+  if (decimalIndex <= 0) {
+    return `0.${"0".repeat(Math.abs(decimalIndex))}${digits}`;
+  }
+  if (decimalIndex >= digits.length) {
+    return `${digits}${"0".repeat(decimalIndex - digits.length)}`;
+  }
+  return `${digits.slice(0, decimalIndex)}.${digits.slice(decimalIndex)}`;
 }
 
 export { verifyTypedData };
