@@ -338,6 +338,21 @@ function deployRailway(opts: RailwayDeployOptions): {
   };
 }
 
+function getCliPackageRoot(): string {
+  let current = dirname(fileURLToPath(import.meta.url));
+  while (current !== dirname(current)) {
+    if (
+      existsSync(resolve(current, "package.json")) &&
+      existsSync(resolve(current, "serve"))
+    ) {
+      return current;
+    }
+    current = dirname(current);
+  }
+
+  throw new Error("Unable to locate acp-cli package root.");
+}
+
 function copyRuntimeBundle(
   rootDir: string,
   bundleDir: string,
@@ -349,6 +364,7 @@ function copyRuntimeBundle(
 ): Record<string, string> {
   rmSync(bundleDir, { recursive: true, force: true });
   mkdirSync(bundleDir, { recursive: true });
+  const cliRoot = getCliPackageRoot();
 
   for (const relativePath of [
     "bin",
@@ -358,7 +374,7 @@ function copyRuntimeBundle(
     "package-lock.json",
     "tsconfig.json",
   ]) {
-    const source = resolve(process.cwd(), relativePath);
+    const source = resolve(cliRoot, relativePath);
     if (existsSync(source)) {
       cpSync(source, resolve(bundleDir, relativePath), { recursive: true });
     }
@@ -774,8 +790,8 @@ export function registerServeCommands(program: Command): void {
             try {
               process.kill(pid, "SIGTERM");
               stopped += 1;
+              break;
             } catch {}
-            break;
           }
         }
         outputResult(json, { success: true, stopped });
