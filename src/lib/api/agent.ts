@@ -1,3 +1,5 @@
+import { CliError } from "../errors";
+import { outputError } from "../output";
 import { ApiClient } from "./client";
 
 export interface AddSignerResponse {
@@ -22,6 +24,7 @@ export interface AgentOffering {
   priceValue: string;
   requiredFunds: boolean;
   isHidden: boolean;
+  subscriptions?: AgentSubscription[];
   createdAt: string;
   updatedAt: string;
 }
@@ -36,6 +39,7 @@ export interface CreateOfferingBody {
   priceValue: number;
   requiredFunds?: boolean;
   isHidden?: boolean;
+  subscriptionIds?: string[];
 }
 
 export type UpdateOfferingBody = Partial<CreateOfferingBody>;
@@ -46,6 +50,31 @@ interface OfferingResponse {
 }
 
 interface DeleteOfferingResponse {
+  message: string;
+}
+
+export interface AgentSubscription {
+  id: string;
+  packageId: number;
+  name: string;
+  price: number;
+  duration: number;
+}
+
+export interface CreateSubscriptionBody {
+  name: string;
+  price: number;
+  duration: number;
+}
+
+export type UpdateSubscriptionBody = Partial<CreateSubscriptionBody>;
+
+interface SubscriptionResponse {
+  message: string;
+  data: AgentSubscription;
+}
+
+interface DeleteSubscriptionResponse {
   message: string;
 }
 
@@ -94,6 +123,7 @@ export interface Agent {
   updatedAt: string;
   offerings: AgentOffering[];
   resources: AgentResource[];
+  subscriptions: AgentSubscription[];
   isHidden: boolean;
   walletProviders: {
     provider: string;
@@ -261,7 +291,12 @@ export interface ThreadMessage {
   textBody: string;
   htmlBody: string;
   receivedAt: string;
-  attachments: { id: string; filename: string; mimeType: string; sizeBytes: string }[];
+  attachments: {
+    id: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: string;
+  }[];
 }
 
 export interface ThreadResponse {
@@ -496,6 +531,13 @@ export interface UpdateAgentBody {
   isHidden: boolean;
 }
 
+export interface ActiveSubscription {
+  packageId: number;
+  name: string;
+  duration: number;
+  price: number;
+}
+
 export class AgentApi {
   private client: ApiClient;
 
@@ -621,6 +663,38 @@ export class AgentApi {
     );
   }
 
+  async createSubscription(
+    agentId: string,
+    body: CreateSubscriptionBody
+  ): Promise<AgentSubscription> {
+    const res = await this.client.post<SubscriptionResponse>(
+      `/agents/${agentId}/subscriptions`,
+      body
+    );
+    return res.data;
+  }
+
+  async updateSubscription(
+    agentId: string,
+    subscriptionId: string | number,
+    body: UpdateSubscriptionBody
+  ): Promise<AgentSubscription> {
+    const res = await this.client.put<SubscriptionResponse>(
+      `/agents/${agentId}/subscriptions/${subscriptionId}`,
+      body
+    );
+    return res.data;
+  }
+
+  async deleteSubscription(
+    agentId: string,
+    subscriptionId: string | number
+  ): Promise<DeleteSubscriptionResponse> {
+    return this.client.delete<DeleteSubscriptionResponse>(
+      `/agents/${agentId}/subscriptions/${subscriptionId}`
+    );
+  }
+
   async createResource(
     agentId: string,
     body: CreateResourceBody
@@ -670,9 +744,7 @@ export class AgentApi {
 
   // ── Agent Email methods ──────────────────────────────────────────
 
-  async getEmailIdentity(
-    agentId: string
-  ): Promise<AgentEmailIdentity | null> {
+  async getEmailIdentity(agentId: string): Promise<AgentEmailIdentity | null> {
     const res = await this.client.get<{ data: AgentEmailIdentity | null }>(
       `/agents/${agentId}/email/identity`
     );
@@ -706,7 +778,12 @@ export class AgentApi {
 
   async composeEmail(
     agentId: string,
-    payload: { to: string; subject: string; textBody: string; htmlBody?: string }
+    payload: {
+      to: string;
+      subject: string;
+      textBody: string;
+      htmlBody?: string;
+    }
   ): Promise<ComposeEmailResponse> {
     const res = await this.client.post<{ data: ComposeEmailResponse }>(
       `/agents/${agentId}/email/compose`,
@@ -715,7 +792,10 @@ export class AgentApi {
     return res.data;
   }
 
-  async searchEmails(agentId: string, query: string): Promise<SearchEmailsResponse> {
+  async searchEmails(
+    agentId: string,
+    query: string
+  ): Promise<SearchEmailsResponse> {
     const res = await this.client.get<{ data: SearchEmailsResponse }>(
       `/agents/${agentId}/email/search`,
       { q: query }
@@ -723,7 +803,10 @@ export class AgentApi {
     return res.data;
   }
 
-  async getEmailThread(agentId: string, threadId: string): Promise<ThreadResponse> {
+  async getEmailThread(
+    agentId: string,
+    threadId: string
+  ): Promise<ThreadResponse> {
     const res = await this.client.get<{ data: ThreadResponse }>(
       `/agents/${agentId}/email/threads/${threadId}`
     );
@@ -742,7 +825,10 @@ export class AgentApi {
     return res.data;
   }
 
-  async extractOtp(agentId: string, messageId: string): Promise<ExtractOtpResponse> {
+  async extractOtp(
+    agentId: string,
+    messageId: string
+  ): Promise<ExtractOtpResponse> {
     const res = await this.client.post<{ data: ExtractOtpResponse }>(
       `/agents/${agentId}/email/messages/${messageId}/extract-otp`,
       {}
@@ -750,7 +836,10 @@ export class AgentApi {
     return res.data;
   }
 
-  async extractLinks(agentId: string, messageId: string): Promise<ExtractLinksResponse> {
+  async extractLinks(
+    agentId: string,
+    messageId: string
+  ): Promise<ExtractLinksResponse> {
     const res = await this.client.post<{ data: ExtractLinksResponse }>(
       `/agents/${agentId}/email/messages/${messageId}/extract-links`,
       {}
@@ -781,14 +870,20 @@ export class AgentApi {
 
   // ── Agent Card methods ──────────────────────────────────────────
 
-  async cardSignup(agentId: string, email: string): Promise<CardSignupResponse> {
+  async cardSignup(
+    agentId: string,
+    email: string
+  ): Promise<CardSignupResponse> {
     return this.client.post<CardSignupResponse>(
       `/agents/${agentId}/card/signup`,
       { email }
     );
   }
 
-  async cardSignupPoll(agentId: string, state: string): Promise<CardSignupPollResponse> {
+  async cardSignupPoll(
+    agentId: string,
+    state: string
+  ): Promise<CardSignupPollResponse> {
     return this.client.get<CardSignupPollResponse>(
       `/agents/${agentId}/card/signup/poll`,
       { state }
@@ -839,9 +934,7 @@ export class AgentApi {
   // -- Spend limit --
 
   async cardGetLimit(agentId: string): Promise<CardLimitResponse> {
-    return this.client.get<CardLimitResponse>(
-      `/agents/${agentId}/card/limit`
-    );
+    return this.client.get<CardLimitResponse>(`/agents/${agentId}/card/limit`);
   }
 
   async cardSetLimit(
@@ -1032,6 +1125,35 @@ export class AgentApi {
       payload
     );
     return res.data;
+  }
+
+  async getActiveSubscription(
+    clientAgentId: string,
+    providerWalletAddress: string,
+    chainId: number,
+    offeringName: string
+  ): Promise<ActiveSubscription | null> {
+    try {
+      const res = await this.client.get<{ data: ActiveSubscription | null }>(
+        `/agents/${clientAgentId}/client-subscriptions/check`,
+        {
+          chainId: chainId.toString(),
+          providerWalletAddress,
+          offeringName,
+        }
+      );
+      return res.data;
+    } catch (error) {
+      outputError(
+        false,
+        new CliError(
+          "Failed to get active subscription",
+          "API_ERROR",
+          "Please try again later."
+        )
+      );
+      return null;
+    }
   }
 }
 
