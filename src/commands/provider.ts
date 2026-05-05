@@ -24,7 +24,8 @@ export function registerProviderCommands(program: Command): void {
         const agent = await createAgentFromConfig();
         await agent.start();
         try {
-          const session = agent.getSession(Number(opts.chainId), opts.jobId);
+          const chainId = Number(opts.chainId);
+          const session = agent.getSession(chainId, opts.jobId);
           if (!session) {
             throw new CliError(
               `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
@@ -37,19 +38,18 @@ export function registerProviderCommands(program: Command): void {
             agent,
             session,
             opts.amount,
+            chainId,
             opts.packageId
           );
 
           if (subscription) {
             await session.setBudgetWithSubscription(
-              AssetToken.usdc(totalBudget, Number(opts.chainId)),
+              AssetToken.usdc(totalBudget, chainId),
               BigInt(subscription.duration),
               BigInt(subscription.packageId)
             );
           } else {
-            await session.setBudget(
-              AssetToken.usdc(totalBudget, Number(opts.chainId))
-            );
+            await session.setBudget(AssetToken.usdc(totalBudget, chainId));
           }
 
           if (json) {
@@ -126,6 +126,7 @@ export function registerProviderCommands(program: Command): void {
             agent,
             session,
             opts.amount,
+            chainId,
             opts.packageId
           );
 
