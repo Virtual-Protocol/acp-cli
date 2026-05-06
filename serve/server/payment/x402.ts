@@ -22,19 +22,23 @@ import {
   isPermit2Payload,
 } from "@x402/evm";
 import type { FacilitatorEvmSigner } from "@x402/evm";
+import { DEFAULT_STABLECOINS } from "@x402/evm";
 import { registerExactEvmScheme as registerExactEvmFacilitatorScheme } from "@x402/evm/exact/facilitator";
 import { registerExactEvmScheme as registerExactEvmServerScheme } from "@x402/evm/exact/server";
-import { encodeFunctionData, getAddress, type Address, type Hex } from "viem";
+import {
+  encodeFunctionData,
+  getAddress,
+  parseUnits,
+  type Address,
+  type Hex,
+} from "viem";
+import { type IEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
 import type { DeployedOffering } from "../../types";
 import {
-  getDefaultChainId,
-  getPublicClient,
-  getTokenDecimals,
-  getUsdcAddress,
-  getWalletClient,
-  toAtomicAmount,
-  verifyTypedData,
-} from "./chain";
+  createProviderAdapter,
+  getWalletAddress,
+} from "../../../src/lib/agentFactory";
+import { getDefaultChainId, getPublicClient, verifyTypedData } from "./chain";
 
 export interface X402SettlementResult {
   clientAddress: string;
@@ -53,14 +57,14 @@ class LocalX402FacilitatorClient implements FacilitatorClient {
 
   verify(
     paymentPayload: PaymentPayload,
-    paymentRequirements: PaymentRequirements,
+    paymentRequirements: PaymentRequirements
   ): Promise<VerifyResponse> {
     return this.facilitator.verify(paymentPayload, paymentRequirements);
   }
 
   settle(
     paymentPayload: PaymentPayload,
-    paymentRequirements: PaymentRequirements,
+    paymentRequirements: PaymentRequirements
   ): Promise<SettleResponse> {
     return this.facilitator.settle(paymentPayload, paymentRequirements);
   }
@@ -74,7 +78,7 @@ const runtimes = new Map<number, Promise<X402Runtime>>();
 
 export async function buildX402PaymentChallenge(
   offering: DeployedOffering,
-  resourceUrl: string,
+  resourceUrl: string
 ): Promise<{ header: string; body: PaymentRequired }> {
   const requirements = await buildRequirements(offering);
   const runtime = await getRuntimeForNetwork(requirements.network);
@@ -86,6 +90,7 @@ export async function buildX402PaymentChallenge(
       mimeType: "application/json",
     },
     "Payment required",
+    { bazaar: buildBazaarDiscovery(offering) }
   );
 
   return {
@@ -96,14 +101,14 @@ export async function buildX402PaymentChallenge(
 
 export async function verifyAndSettleX402Payment(
   paymentHeader: string,
-  offering: DeployedOffering,
+  offering: DeployedOffering
 ): Promise<X402SettlementResult> {
   const payload = decodePaymentPayload(paymentHeader);
   const expected = await buildRequirements(offering);
   const runtime = await getRuntimeForNetwork(expected.network);
   const matched = runtime.resourceServer.findMatchingRequirements(
     [expected],
-    payload,
+    payload
   );
   if (!matched) {
     throw new Error("x402 payment requirements mismatch");
@@ -121,25 +126,25 @@ export async function verifyAndSettleX402Payment(
 
   const verifyResult = await runtime.resourceServer.verifyPayment(
     payload,
-    matched,
+    matched
   );
   if (!verifyResult.isValid) {
     throw new Error(
       verifyResult.invalidMessage ||
         verifyResult.invalidReason ||
-        "Invalid x402 payment signature",
+        "Invalid x402 payment signature"
     );
   }
 
   const settleResult = await runtime.resourceServer.settlePayment(
     payload,
-    matched,
+    matched
   );
   if (!settleResult.success) {
     throw new Error(
       settleResult.errorMessage ||
         settleResult.errorReason ||
-        "x402 payment settlement failed",
+        "x402 payment settlement failed"
     );
   }
 
@@ -160,13 +165,18 @@ export function buildX402PaymentResponse(result: X402SettlementResult): string {
 }
 
 async function buildRequirements(
-  offering: DeployedOffering,
+  offering: DeployedOffering
 ): Promise<PaymentRequirements> {
   const chainId = getDefaultChainId();
   const network = `eip155:${chainId}` as Network;
-  const asset = getUsdcAddress(chainId);
-  const decimals = await getTokenDecimals(chainId, asset);
+  const asset = DEFAULT_STABLECOINS[network];
+  if (!asset) {
+    throw new Error(`Unsupported chain ${chainId}`);
+  }
+  const assetAddress = asset.address;
+  const decimals = asset.decimals;
   const runtime = await getRuntime(chainId);
+
   const [requirements] =
     await runtime.resourceServer.buildPaymentRequirementsFromOptions(
       [
@@ -175,24 +185,62 @@ async function buildRequirements(
           network,
           payTo: getAddress(offering.providerWallet),
           price: {
-            asset: getAddress(asset),
-            amount: toAtomicAmount(offering.offering.priceValue, decimals),
+            asset: getAddress(assetAddress),
+            amount: parseUnits(
+              String(offering.offering.priceValue),
+              decimals
+            ).toString(),
             extra: {
               name: process.env.X402_ASSET_NAME || "USDC",
               version: process.env.X402_ASSET_VERSION || "2",
-              assetTransferMethod: "eip3009",
             },
           },
           maxTimeoutSeconds: Math.max(offering.offering.slaMinutes, 1) * 60,
         },
       ],
-      undefined,
+      undefined
     );
 
   if (!requirements) {
     throw new Error("Unable to build x402 requirements");
   }
   return requirements;
+}
+
+function buildBazaarDiscovery(
+  offering: DeployedOffering
+): Record<string, unknown> {
+  const toBodySchema = (
+    value: Record<string, unknown> | string
+  ): Record<string, unknown> => {
+    if (typeof value === "string") {
+      return {
+        type: "object",
+        description: value,
+        additionalProperties: true,
+      };
+    }
+    return value.type ? value : { type: "object", ...value };
+  };
+
+  const toOutput = (
+    value: Record<string, unknown> | string
+  ): Record<string, unknown> =>
+    typeof value === "string"
+      ? { type: "json", example: value }
+      : { type: "json", schema: value };
+
+  return {
+    info: {
+      input: {
+        type: "http",
+        method: "POST",
+        bodyType: "json",
+        body: toBodySchema(offering.offering.requirements),
+      },
+      output: toOutput(offering.offering.deliverable),
+    },
+  };
 }
 
 function decodePaymentPayload(paymentHeader: string): PaymentPayload {
@@ -225,12 +273,12 @@ async function createRuntime(chainId: number): Promise<X402Runtime> {
   const network = `eip155:${chainId}` as Network;
   const facilitator = new x402Facilitator();
   registerExactEvmFacilitatorScheme(facilitator, {
-    signer: buildFacilitatorSigner(chainId),
+    signer: await buildFacilitatorSigner(chainId),
     networks: network,
   });
 
   const resourceServer = new x402ResourceServer(
-    new LocalX402FacilitatorClient(facilitator),
+    new LocalX402FacilitatorClient(facilitator)
   );
   registerExactEvmServerScheme(resourceServer, { networks: [network] });
   await resourceServer.initialize();
@@ -238,10 +286,28 @@ async function createRuntime(chainId: number): Promise<X402Runtime> {
   return { network, resourceServer };
 }
 
-function buildFacilitatorSigner(chainId: number): FacilitatorEvmSigner {
+let providerAdapterPromise: Promise<IEvmProviderAdapter> | null = null;
+
+function getProviderAdapter(): Promise<IEvmProviderAdapter> {
+  if (!providerAdapterPromise) {
+    providerAdapterPromise = createProviderAdapter();
+  }
+  return providerAdapterPromise;
+}
+
+async function buildFacilitatorSigner(
+  chainId: number
+): Promise<FacilitatorEvmSigner> {
   const publicClient = getPublicClient(chainId);
-  const wallet = getWalletClient(chainId);
-  const address = getAddress(wallet.account!.address);
+  const provider = await getProviderAdapter();
+  const address = getAddress(getWalletAddress() as Address);
+
+  const send = (args: { to: Address; data?: Hex; value?: bigint }) =>
+    provider.sendTransaction(chainId, {
+      to: args.to,
+      ...(args.data !== undefined ? { data: args.data } : {}),
+      ...(args.value !== undefined ? { value: args.value } : {}),
+    }) as Promise<Hex>;
 
   return {
     getAddresses: () => [address],
@@ -253,13 +319,9 @@ function buildFacilitatorSigner(chainId: number): FacilitatorEvmSigner {
         functionName: args.functionName,
         args: args.args,
       });
-      return wallet.sendTransaction({
-        to: args.address,
-        data,
-        gas: args.gas,
-      });
+      return send({ to: args.address, data });
     },
-    sendTransaction: (args) => wallet.sendTransaction(args),
+    sendTransaction: (args) => send({ to: args.to, data: args.data }),
     waitForTransactionReceipt: (args) =>
       publicClient.waitForTransactionReceipt(args),
     getCode: (args) => publicClient.getCode(args),
@@ -279,7 +341,7 @@ function extractPayer(payload: PaymentPayload): Address {
 
 async function isEip3009AuthorizationUsed(
   payload: PaymentPayload,
-  requirements: PaymentRequirements,
+  requirements: PaymentRequirements
 ): Promise<boolean> {
   const schemePayload = payload.payload as any;
   if (!isEIP3009Payload(schemePayload)) {
@@ -297,13 +359,13 @@ async function isEip3009AuthorizationUsed(
         getAddress(schemePayload.authorization.from),
         schemePayload.authorization.nonce,
       ],
-    }),
+    })
   );
 }
 
 async function assertRecoverableEip3009Payment(
   payload: PaymentPayload,
-  requirements: PaymentRequirements,
+  requirements: PaymentRequirements
 ): Promise<void> {
   const schemePayload = payload.payload as any;
   if (!isEIP3009Payload(schemePayload)) {
@@ -355,17 +417,23 @@ async function assertRecoverableEip3009Payment(
 function buildPaymentKey(
   payload: PaymentPayload,
   requirements: PaymentRequirements,
-  settleResult?: SettleResponse,
+  settleResult?: SettleResponse
 ): string {
   const schemePayload = payload.payload as any;
   if (isEIP3009Payload(schemePayload)) {
-    return `x402:${requirements.network}:${getAddress(requirements.asset)}:${schemePayload.authorization.nonce}`;
+    return `x402:${requirements.network}:${getAddress(requirements.asset)}:${
+      schemePayload.authorization.nonce
+    }`;
   }
   if (isPermit2Payload(schemePayload)) {
-    return `x402:${requirements.network}:${getAddress(requirements.asset)}:${schemePayload.permit2Authorization.nonce}`;
+    return `x402:${requirements.network}:${getAddress(requirements.asset)}:${
+      schemePayload.permit2Authorization.nonce
+    }`;
   }
   if (!settleResult?.transaction) {
     throw new Error("Unsupported x402 payment payload");
   }
-  return `x402:${requirements.network}:${getAddress(requirements.asset)}:${settleResult.transaction}`;
+  return `x402:${requirements.network}:${getAddress(requirements.asset)}:${
+    settleResult.transaction
+  }`;
 }

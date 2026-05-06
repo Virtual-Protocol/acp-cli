@@ -1,14 +1,13 @@
 import { randomBytes } from "crypto";
-import { getAddress, type Hex } from "viem";
+import { getAddress, parseUnits, type Hex } from "viem";
 import type { DeployedOffering } from "../../types";
 import {
   getDefaultChainId,
   getPublicClient,
   getSettlementAccount,
-  getTokenDecimals,
-  getUsdcAddress,
-  toAtomicAmount,
 } from "./chain";
+import { DEFAULT_STABLECOINS } from "@x402/evm";
+import { Network } from "@x402/core/types";
 
 type TempoHashPayload = {
   type: "hash";
@@ -41,7 +40,7 @@ export interface MppSettlementResult {
 
 export async function buildMppPaymentChallenge(
   offering: DeployedOffering,
-  nonce: string,
+  nonce: string
 ): Promise<string> {
   const handler = await createChargeHandler(offering, nonce);
   const result = await handler(buildRequest());
@@ -56,7 +55,7 @@ export async function buildMppPaymentChallenge(
 
 export async function verifyAndSettleMppPayment(
   authHeader: string,
-  offering: DeployedOffering,
+  offering: DeployedOffering
 ): Promise<MppSettlementResult> {
   const { Credential, Receipt } = await import("mppx");
   const credential = deserializeCredential(Credential, authHeader);
@@ -99,15 +98,19 @@ export function buildMppReceipt(result: MppSettlementResult): string {
       reference: result.receiptReference || result.txHash || result.paymentKey,
       timestamp: new Date().toISOString(),
       status: "success",
-    }),
+    })
   ).toString("base64url");
 }
 
 async function createChargeHandler(offering: DeployedOffering, nonce: string) {
   const chainId = getDefaultChainId();
-  const asset = getUsdcAddress(chainId);
-  const decimals = await getTokenDecimals(chainId, asset);
-  const amount = toAtomicAmount(offering.offering.priceValue, decimals);
+  const network = `eip155:${chainId}` as Network;
+  const asset = DEFAULT_STABLECOINS[network].address;
+  const decimals = DEFAULT_STABLECOINS[network].decimals;
+  const amount = parseUnits(
+    String(offering.offering.priceValue),
+    decimals
+  ).toString();
   const { Mppx, tempo } = await import("mppx/server");
   const payment = Mppx.create({
     secretKey: getSecretKey(),
@@ -130,7 +133,7 @@ async function createChargeHandler(offering: DeployedOffering, nonce: string) {
     chainId,
     description: offering.offering.description,
     expires: new Date(
-      Date.now() + Math.max(offering.offering.slaMinutes, 1) * 60_000,
+      Date.now() + Math.max(offering.offering.slaMinutes, 1) * 60_000
     ).toISOString(),
     feePayer: true,
     meta: {
@@ -148,7 +151,7 @@ function deserializeCredential(
       source?: string;
     };
   },
-  authHeader: string,
+  authHeader: string
 ) {
   try {
     return Credential.deserialize<TempoPayload>(authHeader);
@@ -191,7 +194,7 @@ function getChallengeChainId(request: any): number {
 
 async function findReceiptPayer(
   chainId: number,
-  receipt: { reference: string },
+  receipt: { reference: string }
 ): Promise<string> {
   if (!isTxHash(receipt.reference)) {
     throw new Error("MPP credential source is required");
@@ -207,7 +210,7 @@ function isTxHash(value: string): value is Hex {
 }
 
 function parseDidPkh(
-  source?: string,
+  source?: string
 ): { chainId: number; address: string } | null {
   if (!source) return null;
   const match = /^did:pkh:eip155:(\d+):(0x[a-fA-F0-9]{40})$/.exec(source);

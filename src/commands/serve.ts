@@ -27,6 +27,7 @@ import {
   getWalletId,
 } from "../lib/config";
 import { isJson, outputError, outputResult } from "../lib/output";
+import { selectOption } from "../lib/prompt";
 import type { ServeProtocol } from "../../serve/types";
 import { serviceJobEndpoint } from "../../serve/server/relay";
 
@@ -455,8 +456,11 @@ export function registerServeCommands(program: Command): void {
 
   serve
     .command("init")
-    .description("Scaffold a local offering runtime")
-    .requiredOption("--name <name>", "Offering name")
+    .description("Scaffold a handler.ts for an existing agent offering")
+    .option(
+      "--name <name>",
+      "Offering name (selected interactively if omitted)",
+    )
     .option("--output <dir>", "Project root directory", ".")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -467,14 +471,47 @@ export function registerServeCommands(program: Command): void {
         const rootDir = resolve(opts.output);
         const { agentApi } = await getClient();
         const agent = await agentApi.getById(active.agentId);
-        const agentSlug = slugify(agent.name);
-        const offeringSlug = slugify(opts.name);
+
+        if (!agent.offerings || agent.offerings.length === 0) {
+          outputError(
+            json,
+            "Agent has no offerings. Create one with `acp offering create` first.",
+          );
+          return;
+        }
+
+        let offering: AgentOffering;
+        if (opts.name) {
+          const requested = String(opts.name).trim().toLowerCase();
+          const matches = agent.offerings.filter(
+            (o) => o.name.toLowerCase() === requested,
+          );
+          if (matches.length === 0) {
+            outputError(json, `No offering found with name: ${opts.name}`);
+            return;
+          }
+          if (matches.length > 1) {
+            outputError(
+              json,
+              `Multiple offerings match name "${opts.name}". Refine selection.`,
+            );
+            return;
+          }
+          offering = matches[0];
+        } else {
+          offering = await selectOption(
+            "Choose an offering to init:",
+            agent.offerings,
+            (o) => `${o.name} (${o.id})`,
+          );
+        }
+
         const offeringDir = resolve(
           rootDir,
           "agents",
-          agentSlug,
+          agent.walletAddress,
           "offerings",
-          offeringSlug,
+          offering.id,
         );
 
         if (existsSync(resolve(offeringDir, "handler.ts"))) {
@@ -486,22 +523,9 @@ export function registerServeCommands(program: Command): void {
           dirname(fileURLToPath(import.meta.url)),
           "../../serve/scaffold",
         );
-        const offeringTemplate = readFileSync(
-          resolve(scaffoldDir, "offering.json.template"),
-          "utf8",
-        );
-
-        writeFileSync(
-          resolve(offeringDir, "offering.json"),
-          offeringTemplate.replace("{{NAME}}", opts.name),
-        );
         writeFileSync(
           resolve(offeringDir, "handler.ts"),
           readFileSync(resolve(scaffoldDir, "handler.ts.template"), "utf8"),
-        );
-        writeFileSync(
-          resolve(offeringDir, "budget.ts"),
-          readFileSync(resolve(scaffoldDir, "budget.ts.template"), "utf8"),
         );
 
         const serveConfigPath = getServeConfigPath(rootDir);
@@ -514,10 +538,10 @@ export function registerServeCommands(program: Command): void {
           offerings: {},
         }) as Record<string, any>;
         agentConfig.offerings ??= {};
-        agentConfig.offerings[offeringSlug] = {
-          dir: `agents/${agentSlug}/offerings/${offeringSlug}`,
+        agentConfig.offerings[offering.id] = {
+          dir: `agents/${agent.walletAddress}/offerings/${offering.id}`,
           protocols: ["x402", "mpp", "acp"],
-          registered: false,
+          registered: true,
         };
         agents[active.agentId] = agentConfig;
         serveConfig.agents = agents;
@@ -528,7 +552,7 @@ export function registerServeCommands(program: Command): void {
 
         outputResult(json, {
           success: true,
-          offering: opts.name,
+          offering: { id: offering.id, name: offering.name },
           directory: offeringDir,
         });
       } catch (err) {
@@ -538,9 +562,9 @@ export function registerServeCommands(program: Command): void {
 
   serve
     .command("start")
-    .description("Start the provider runtime for a single offering")
+    .description("Start the provider runtime for all registered offerings")
     .option("--dir <path>", "Project root directory", ".")
-    .option("--offering <selector>", "Offering slug, ID, or name")
+    .option("--offering <selector>", "Filter to a single offering")
     .option("--port <number>", "Local health-check port")
     .option("--settle-8183", "Reserved for future ERC-8183 settlement")
     .action(async (opts, cmd) => {
@@ -555,10 +579,10 @@ export function registerServeCommands(program: Command): void {
           loadLocalOfferings(rootDir, active.agentId),
           opts.offering,
         );
-        if (selected.length === 0)
-          throw new Error("No matching offerings found.");
-        if (selected.length > 1) {
-          throw new Error("Multiple offerings matched. Use --offering.");
+        if (selected.length === 0) {
+          throw new Error(
+            "No offerings found in serve.json. Run `acp serve init` first.",
+          );
         }
 
         const agentName = getLocalAgentName(rootDir, active.agentId);
@@ -569,23 +593,52 @@ export function registerServeCommands(program: Command): void {
         } catch {
           agent = undefined;
         }
-        const local = selected[0];
-        const offering = materializeOffering(
-          local,
-          agent ? findRemoteOffering(local, agent) : undefined,
-        );
-        const { startOfferingServer } =
+
+        const runtimeOfferings = selected.map((local) => {
+          const remote = agent
+            ? (agent.offerings.find((o) => o.id === local.slug) ??
+              findRemoteOffering(local, agent))
+            : undefined;
+          return {
+            dir: local.dir,
+            offering: materializeOffering(local, remote),
+            protocols: local.protocols,
+          };
+        });
+
+        const { agentApi } = await getClient();
+        const resolveOffering = async (offeringId: string) => {
+          const live = await agentApi.getById(active.agentId);
+          const found = live.offerings.find((o) => o.id === offeringId);
+          if (!found) {
+            throw new Error(
+              `Offering ${offeringId} not found on agent ${active.agentId}.`,
+            );
+          }
+          return {
+            id: found.id,
+            slug: found.id,
+            name: found.name,
+            description: found.description,
+            priceType: found.priceType,
+            priceValue: Number(found.priceValue),
+            slaMinutes: found.slaMinutes,
+            requirements: found.requirements,
+            deliverable: found.deliverable,
+          };
+        };
+
+        const { startOfferingsServer } =
           await import("../../serve/server/index");
 
-        await startOfferingServer({
-          dir: local.dir,
+        await startOfferingsServer({
           port: opts.port
             ? Number(opts.port)
             : getDefaultPort(serveConfig.port),
           agentSlug: slugify(agent?.name ?? agentName),
           providerWallet: active.wallet,
-          offering,
-          protocols: local.protocols,
+          offerings: runtimeOfferings,
+          resolveOffering,
           settle8183: opts.settle8183 === true,
           apiUrl: getApiUrl(),
           agentToken: await getOrCreateAgentToken(active.wallet),
@@ -748,52 +801,26 @@ export function registerServeCommands(program: Command): void {
 
   serve
     .command("stop")
-    .description("Stop a locally running offering runtime")
-    .option("--dir <path>", "Project root directory", ".")
-    .option("--offering <selector>", "Offering slug, ID, or name")
-    .action(async (opts, cmd) => {
+    .description("Stop the locally running provider runtime")
+    .action(async (_opts, cmd) => {
       const json = isJson(cmd);
       try {
         const active = requireActiveAgent(json);
         if (!active) return;
-        const { getPidFilePath } = await import("../../serve/server/index");
-        const rootDir = resolve(opts.dir);
-        let agent: Agent | undefined;
-        try {
-          const { agentApi } = await getClient();
-          agent = await agentApi.getById(active.agentId);
-        } catch {
-          agent = undefined;
+        const { getRuntimePidFilePath } = await import(
+          "../../serve/server/index"
+        );
+        const pidFile = getRuntimePidFilePath(active.wallet);
+        if (!existsSync(pidFile)) {
+          outputResult(json, { success: true, stopped: 0 });
+          return;
         }
+        const pid = Number.parseInt(readFileSync(pidFile, "utf8"), 10);
         let stopped = 0;
-        for (const local of selectLocalOfferings(
-          loadLocalOfferings(rootDir, active.agentId),
-          opts.offering,
-        )) {
-          const offering = materializeOffering(
-            local,
-            agent ? findRemoteOffering(local, agent) : undefined,
-          );
-          const legacyOfferingId =
-            typeof local.offeringJson.id === "string"
-              ? local.offeringJson.id
-              : local.slug;
-          const pidFiles = [
-            getPidFilePath(offering.id),
-            ...(offering.id === legacyOfferingId
-              ? []
-              : [getPidFilePath(legacyOfferingId)]),
-          ];
-          for (const pidFile of pidFiles) {
-            if (!existsSync(pidFile)) continue;
-            const pid = Number.parseInt(readFileSync(pidFile, "utf8"), 10);
-            try {
-              process.kill(pid, "SIGTERM");
-              stopped += 1;
-              break;
-            } catch {}
-          }
-        }
+        try {
+          process.kill(pid, "SIGTERM");
+          stopped = 1;
+        } catch {}
         outputResult(json, { success: true, stopped });
       } catch (err) {
         outputError(json, err instanceof Error ? err.message : String(err));

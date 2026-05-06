@@ -15,6 +15,7 @@ import {
 export interface ServiceJobRelayOptions {
   apiUrl: string;
   agentToken: string;
+  resolveOffering: (offeringId: string) => Promise<HandlerInput["offering"]>;
 }
 
 interface ServiceJobOffering {
@@ -103,6 +104,22 @@ export function startServiceJobRelay(
     console.log(`[Relay] Disconnected from ACP service jobs: ${reason}`);
   });
 
+  const resolveLiveOffering = async (
+    request: PaymentChallengeRequest | ServiceJobRequest,
+  ): Promise<DeployedOffering> => {
+    if (
+      request.providerAddress.toLowerCase() !==
+      offering.providerWallet.toLowerCase()
+    ) {
+      throw new Error("Relay request provider does not match this runtime");
+    }
+    if (request.offering.id !== offering.offeringId) {
+      throw new Error("Relay request offering does not match this runtime");
+    }
+    const fresh = await options.resolveOffering(request.offering.id);
+    return { ...offering, offering: fresh, offeringId: fresh.id };
+  };
+
   socket.on(
     "service-job:payment-challenge",
     async (
@@ -110,15 +127,15 @@ export function startServiceJobRelay(
       ack: (response: PaymentChallengeAck) => void,
     ) => {
       try {
-        assertRelayRequestMatchesOffering(offering, request);
+        const live = await resolveLiveOffering(request);
         if (request.protocol === "x402") {
           const challenge = await buildX402PaymentChallenge(
-            offering,
+            live,
             request.resourceUrl ||
               serviceJobEndpoint(
                 options.apiUrl,
-                offering.providerWallet,
-                offering.offering.slug || offering.offering.id,
+                live.providerWallet,
+                live.offering.slug || live.offering.id,
                 "x402",
               ),
           );
@@ -131,7 +148,7 @@ export function startServiceJobRelay(
         }
 
         const header = await buildMppPaymentChallenge(
-          offering,
+          live,
           request.nonce || `${Date.now()}`,
         );
         ack({
@@ -158,11 +175,11 @@ export function startServiceJobRelay(
       ack: (response: ServiceJobAck) => void,
     ) => {
       try {
-        assertRelayRequestMatchesOffering(offering, request);
-        const payment = await verifyAndSettlePayment(offering, request);
+        const live = await resolveLiveOffering(request);
+        const payment = await verifyAndSettlePayment(live, request);
         const input: HandlerInput = {
           requirements: request.requirements,
-          offering: offering.offering,
+          offering: live.offering,
           jobId: request.jobId,
           client: { address: payment.clientAddress },
           protocol: request.protocol,
@@ -184,25 +201,6 @@ export function startServiceJobRelay(
   );
 
   return socket;
-}
-
-function assertRelayRequestMatchesOffering(
-  offering: DeployedOffering,
-  request: { providerAddress: string; offering: ServiceJobOffering },
-): void {
-  if (
-    request.providerAddress.toLowerCase() !==
-    offering.providerWallet.toLowerCase()
-  ) {
-    throw new Error("Relay request provider does not match this runtime");
-  }
-  if (
-    request.offering.id !== offering.offering.id &&
-    request.offering.name !== offering.offering.name &&
-    request.offering.name !== offering.offering.slug
-  ) {
-    throw new Error("Relay request offering does not match this runtime");
-  }
 }
 
 async function verifyAndSettlePayment(
