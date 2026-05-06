@@ -1,4 +1,6 @@
 import { ApiClient } from "./client";
+import { createProviderAdapter } from "../agentFactory";
+import { setAgentToken } from "../config";
 
 interface CliUrlResponse {
   data: { url: string; requestId: string };
@@ -6,6 +8,17 @@ interface CliUrlResponse {
 
 interface CliTokenResponse {
   data: { token: string; refreshToken: string; walletAddress: string };
+}
+
+interface AgentTokenResponse {
+  data: { token: string };
+}
+
+interface RequestAgentToken {
+  walletAddress: string;
+  signature: string;
+  message: string;
+  chainId: number;
 }
 
 export class AuthApi {
@@ -48,5 +61,29 @@ export class AuthApi {
     } catch {
       return null;
     }
+  }
+
+  async getAgentToken(data: RequestAgentToken): Promise<string> {
+    const res = await this.client.post<AgentTokenResponse>("/auth/agent", data);
+    const token = res.data.token;
+    setAgentToken(data.walletAddress, token);
+    return token;
+  }
+
+  static async fetchAndStoreAgentToken(
+    walletAddress: string,
+    chainId: number,
+    baseUrl: string
+  ): Promise<string> {
+    const message = `acp-auth:${Date.now()}`;
+    const provider = await createProviderAdapter();
+    const signature = await provider.signMessage(chainId, message);
+    const authApi = new AuthApi(new ApiClient(baseUrl));
+    return authApi.getAgentToken({
+      walletAddress,
+      signature,
+      message,
+      chainId,
+    });
   }
 }

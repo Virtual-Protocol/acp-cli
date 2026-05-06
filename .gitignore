@@ -5,3 +5,5 @@ dist/
 *config*.json
 acp-cli-signer/acp-cli-signer
 .DS_Store
+agents/
+serve.json

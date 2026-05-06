@@ -1,0 +1,19 @@
+import type { Handler } from "acp-cli/serve/types";
+
+const handler: Handler = async (input) => {
+  const { requirements } = input;
+
+  // TODO: implement your service logic here.
+  // Example:
+  // const result = await myService.process(requirements);
+  // return { deliverable: result.url };
+
+  return {
+    deliverable: {
+      message: "TODO: replace with actual deliverable",
+      requirements,
+    },
+  };
+};
+
+export default handler;

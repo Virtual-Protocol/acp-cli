@@ -1,0 +1,9 @@
+{
+  "name": "{{NAME}}",
+  "description": "Describe what this service does",
+  "priceType": "fixed",
+  "priceValue": 1,
+  "slaMinutes": 5,
+  "requirements": {},
+  "deliverable": {}
+}

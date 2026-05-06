@@ -1,0 +1,9 @@
+import type { BudgetHandler } from "acp-cli/serve/types";
+
+const budget: BudgetHandler = async () => {
+  return {
+    amount: 1,
+  };
+};
+
+export default budget;
