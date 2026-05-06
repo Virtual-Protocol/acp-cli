@@ -1,4 +1,4 @@
-#!/usr/bin/env npx tsx
+#!/usr/bin/env node
 import "dotenv/config";
 import { program } from "commander";
 import { registerClientCommands } from "../src/commands/client";
@@ -12,6 +12,7 @@ import { registerAgentCommands } from "../src/commands/agent";
 import { registerBrowseCommand } from "../src/commands/browse";
 import { registerOfferingCommands } from "../src/commands/offering";
 import { registerResourceCommands } from "../src/commands/resource";
+import { registerSubscriptionCommands } from "../src/commands/subscription";
 import { registerChainCommands } from "../src/commands/chain";
 import { registerEmailCommands } from "../src/commands/email";
 import { registerCardCommands } from "../src/commands/card";
@@ -38,6 +39,7 @@ registerAgentCommands(program);
 registerBrowseCommand(program);
 registerOfferingCommands(program);
 registerResourceCommands(program);
+registerSubscriptionCommands(program);
 registerChainCommands(program);
 registerEmailCommands(program);
 registerCardCommands(program);

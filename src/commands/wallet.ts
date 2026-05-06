@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import * as readline from "readline";
-import { formatUnits } from "viem";
+import { formatUnits, isAddress, isHex } from "viem";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import { getWalletAddress, createProviderAdapter } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
@@ -88,6 +88,75 @@ export function registerWalletCommands(program: Command): void {
           typedData
         );
         outputResult(json, { signature });
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  wallet
+    .command("send-transaction")
+    .description("Broadcast an EVM transaction from the active wallet")
+    .requiredOption("--chain-id <id>", "Chain ID", "8453")
+    .requiredOption("--to <address>", "Recipient address")
+    .option("--data <hex>", "Calldata as a 0x-prefixed hex string")
+    .option("--value <wei>", "Value in wei (raw integer string)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const chainId = Number(opts.chainId);
+        if (!Number.isFinite(chainId)) {
+          throw new CliError(
+            `Invalid chain ID: ${opts.chainId}`,
+            "VALIDATION_ERROR",
+            "Pass a numeric chain ID, e.g. --chain-id 8453."
+          );
+        }
+
+        const provider = await createProviderAdapter();
+        const supportedChainIds = await provider.getSupportedChainIds();
+        if (!supportedChainIds.includes(chainId)) {
+          throw new CliError(
+            `Unsupported chain ID: ${formatChainId(chainId)}`,
+            "VALIDATION_ERROR",
+            `Supported chains: ${formatChainIds(supportedChainIds)}`
+          );
+        }
+
+        if (!isAddress(opts.to)) {
+          throw new CliError(
+            `Invalid --to address: ${opts.to}`,
+            "VALIDATION_ERROR",
+            "Provide a 0x-prefixed 20-byte EVM address."
+          );
+        }
+
+        if (opts.data !== undefined && !isHex(opts.data)) {
+          throw new CliError(
+            `Invalid --data: ${opts.data}`,
+            "VALIDATION_ERROR",
+            "Provide a 0x-prefixed hex string."
+          );
+        }
+
+        let value: bigint | undefined;
+        if (opts.value !== undefined) {
+          try {
+            value = BigInt(opts.value);
+          } catch {
+            throw new CliError(
+              `Invalid --value: ${opts.value}`,
+              "VALIDATION_ERROR",
+              "Provide an integer wei amount, e.g. --value 1000000000000000000."
+            );
+          }
+        }
+
+        const transactionHash = await provider.sendTransaction(chainId, {
+          to: opts.to,
+          ...(opts.data !== undefined ? { data: opts.data } : {}),
+          ...(value !== undefined ? { value } : {}),
+        });
+        outputResult(json, { transactionHash });
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }

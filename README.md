@@ -1,6 +1,6 @@
 # acp-cli
 
-CLI tool wrapping the [ACP Node SDK](https://github.com/aspect-build/acp-node-v2) for agent-to-agent commerce. It lets AI agents (or humans) create, negotiate, fund, and settle jobs backed by on-chain USDC escrow.
+CLI tool wrapping the [ACP Node SDK](https://github.com/Virtual-Protocol/acp-node-v2) for agent-to-agent commerce. It lets AI agents (or humans) create, negotiate, fund, and settle jobs backed by on-chain USDC escrow.
 
 Every command supports `--json` for machine-readable output, and `acp events listen` streams events as NDJSON — making the CLI suitable as a tool interface for LLM agents like Claude Code.
 
@@ -10,11 +10,13 @@ Every command supports `--json` for machine-readable output, and `acp events lis
 
 Agents expose two types of capabilities:
 
-- **Offerings** are jobs your agent can be hired to do. Each offering has a name, description, price, SLA, and defines the requirements clients must provide and the deliverable the provider commits to produce. When a client creates a job from an offering, the full escrow lifecycle kicks in (set-budget → fund → submit → complete/reject). Requirements and deliverable can be free-text strings or JSON schemas — when a JSON schema is used, client input is validated against it at job creation time.
+- **Offerings** are jobs your agent can be hired to do. Each offering has a name, description, price, SLA, and defines the requirements clients must provide and the deliverable the provider commits to produce. When a client creates a job from an offering, the full escrow lifecycle kicks in (set-budget → fund → submit → complete/reject). Requirements and deliverable can be free-text strings or JSON schemas — when a JSON schema is used, client input is validated against it at job creation time. Offerings can optionally be linked to one or more **subscriptions** so clients holding an active package can create jobs at the subscription rate.
+
+- **Subscriptions** are reusable access packages your agent sells (name, USDC price, duration in days — allowed: 7, 15, 30, 90). A client purchases a subscription by passing `--package-id` to `client create-job` — this **first** job is billed at the subscription price and starts the active window. While the subscription is active, any **subsequent** jobs the client creates from any offering attached to that package are **not charged** (the per-job offering price is waived). When the duration expires, normal per-job pricing resumes until the client renews.
 
 - **Resources** are external data or service endpoints your agent exposes. Each resource has a name, description, URL, and a params JSON schema that defines the expected query parameters. Resources are not transactional — there's no pricing, no jobs, no escrow. They provide data access that other agents can discover and query.
 
-Both are discoverable by other agents via `acp browse`.
+All three are discoverable by other agents via `acp browse`.
 
 ## How It Works
 
@@ -50,10 +52,20 @@ Both are discoverable by other agents via `acp browse`.
 
 ## Setup
 
+Install globally:
+
 ```bash
-npm install
+npm i -g @virtuals-protocol/acp-cli
 acp configure          # authenticate via browser (token saved to OS keychain)
 ```
+
+Or run without installing:
+
+```bash
+npx @virtuals-protocol/acp-cli configure
+```
+
+> **Developing on this repo?** Clone it, then `npm install && npm run acp -- <command>` to run from source.
 
 Authentication is handled by `acp configure`, which opens a browser-based OAuth flow and stores tokens securely in your OS keychain. Agent wallets and signing keys are managed via `acp agent create` and `acp agent add-signer`. The `add-signer` command generates a P256 key pair, displays the public key for verification, opens a browser URL for approval, and polls until the signer is confirmed — private keys are only persisted after approval.
 
@@ -61,16 +73,26 @@ Authentication is handled by `acp configure`, which opens a browser-based OAuth 
 
 All environment variables are optional. The CLI works out of the box after `acp configure`.
 
-| Variable     | Default | Description                                                    |
-| ------------ | ------- | -------------------------------------------------------------- |
-| `IS_TESTNET` | —       | Set to `true` to use testnet chains, API server, and Privy app |
-| `PARTNER_ID` | —       | Partner ID for tokenization                                    |
+| Variable         | Default          | Description                                                                  |
+| ---------------- | ---------------- | ---------------------------------------------------------------------------- |
+| `IS_TESTNET`     | —                | Set to `true` to use testnet chains, API server, and Privy app               |
+| `PARTNER_ID`     | —                | Partner ID for tokenization                                                  |
+| `ACP_CONFIG_DIR` | `~/.config/acp`  | Directory holding the config file(s). The filename is picked per-env (below) |
+
+Mainnet and testnet store state separately so identities don't mix when toggling `IS_TESTNET`:
+
+| Env     | Config filename       |
+| ------- | --------------------- |
+| mainnet | `config.json`         |
+| testnet | `config-testnet.json` |
 
 ## Usage
 
 ```bash
-npm run acp -- <command> [options] [--json]
+acp <command> [options] [--json]
 ```
+
+> Running from a clone? Use `npm run acp -- <command> [options] [--json]` instead.
 
 ### Agent Management
 
@@ -174,10 +196,21 @@ acp offering create \
   --deliverable "PNG file" \
   --no-required-funds --no-hidden
 
+# Attach subscriptions when creating (comma-separated subscription UUIDs)
+acp offering create --name "Logo Design" --description "..." \
+  --price-type fixed --price-value 5.00 --sla-minutes 60 \
+  --requirements "..." --deliverable "..." \
+  --no-required-funds --no-hidden \
+  --subscription-ids sub-uuid-1,sub-uuid-2
+
 # Update an existing offering (interactive — select from list, press Enter to keep current values)
 acp offering update
 # Or non-interactive with flags (only provided fields are updated)
 acp offering update --offering-id abc-123 --price-value 10.00 --hidden
+
+# Replace an offering's attached subscriptions (empty string clears all)
+acp offering update --offering-id abc-123 --subscription-ids sub-uuid-1,sub-uuid-2
+acp offering update --offering-id abc-123 --subscription-ids ""
 
 # Delete an offering (interactive — select from list, confirm)
 acp offering delete
@@ -189,6 +222,32 @@ acp offering delete --offering-id abc-123 --force
 
 - **String description:** Free-text like `"A company logo in SVG format"`
 - **JSON schema:** A valid JSON schema object like `{"type": "object", "properties": {"style": {"type": "string"}}, "required": ["style"]}`. When a client creates a job from this offering, their requirement data is validated against this schema.
+
+### Subscription Management
+
+Subscriptions are reusable access packages tied to the **active agent**. Each subscription has a name, USDC price, and duration. A client subscribes by passing `--package-id` to `client create-job` — that first job is billed at the subscription price and opens the active window. While the subscription is active, any subsequent jobs the client creates from offerings attached to that package are **not charged**. Allowed durations: **7, 15, 30, or 90 days**.
+
+```bash
+# List subscriptions for the active agent
+acp subscription list
+
+# Create a new subscription (interactive)
+acp subscription create
+# Or non-interactive
+acp subscription create --name "Pro Monthly" --price 50 --duration-days 30
+
+# Update an existing subscription (interactive — select from list, press Enter to keep current)
+acp subscription update
+# Or non-interactive (only provided fields are updated)
+acp subscription update --id sub-uuid --price 75 --duration-days 90
+
+# Delete a subscription (interactive — select from list, confirm)
+acp subscription delete
+# Or non-interactive
+acp subscription delete --id sub-uuid --force
+```
+
+Each subscription is assigned a numeric `packageId` after creation — this is the value clients pass via `--package-id` when creating a job. Find it via `acp subscription list` (provider) or `acp browse` (client).
 
 ### Resource Management
 
@@ -216,7 +275,7 @@ acp browse "data analysis" --chain-ids 84532,8453
 acp browse "image generation" --top-k 5 --online online --sort-by successRate
 ```
 
-Each result shows the agent's name, description, wallet address, supported chains, offerings (with price), and resources.
+Each result shows the agent's name, description, wallet address, supported chains, subscriptions (with package ID, price, duration), offerings (with price and any attached subscription package IDs), and resources.
 
 ### Client Commands
 
@@ -230,6 +289,18 @@ acp client create-job \
   --offering-name "Logo Design" \
   --requirements '{"style": "flat vector"}' \
   --chain-id 8453
+
+# Subscribe via a package ID (this first job is billed at the subscription price)
+# After it lands, subsequent jobs against any offering attached to package 42 are
+# free until the subscription expires. If --package-id is omitted, the CLI
+# auto-detects an already-active subscription with this provider for this
+# offering and uses it (so follow-up jobs become free without re-passing it).
+acp client create-job \
+  --provider 0xProviderAddress \
+  --offering-name "Logo Design" \
+  --requirements '{"style": "flat vector"}' \
+  --chain-id 8453 \
+  --package-id 42
 
 # Or create a custom job manually (freeform, no offering)
 acp client create-custom-job \
@@ -336,7 +407,9 @@ for architecture, anti-spam policy, and rate limits.
 acp email whoami
 
 # Provision a new email identity for the active agent
-acp email provision --display-name "My Agent" --local-part "myagent"
+# (local part is auto-generated from the agent name; a random suffix
+# is appended if the derived name is already taken)
+acp email provision
 
 # View inbox messages
 acp email inbox
@@ -435,6 +508,13 @@ acp wallet sign-message --message "hello world" --chain-id 8453
 # Sign EIP-712 typed data
 acp wallet sign-typed-data --data '{"domain":{},"types":{"EIP712Domain":[]},"primaryType":"EIP712Domain","message":{}}' --chain-id 8453
 
+# Broadcast a transaction (--value is wei, --data is optional calldata)
+acp wallet send-transaction --chain-id 8453 --to 0xRecipient --value 1000000000000000
+acp wallet send-transaction --chain-id 8453 --to 0xContract --data 0xa9059cbb...
+# Note: requires the agent's Transaction Mode to be set to "Unrestricted" in the agent
+# dashboard. In "Restricted" mode (the default), only transactions to Virtuals contracts
+# are allowed and others fail with a generic "Bad Request" 
+
 # Add funds to your wallet (interactive — choose a funding method)
 acp wallet topup --chain-id 8453
 
@@ -469,7 +549,8 @@ src/
   commands/
     configure.ts            Browser-based auth flow; saves token to OS keychain
     agent.ts                Agent management (create, list, use, add-signer)
-    offering.ts             Offering management (list, create, update, delete)
+    offering.ts             Offering management (list, create, update, delete; subscription attachments)
+    subscription.ts         Subscription management (list, create, update, delete)
     resource.ts             Resource management (list, create, update, delete)
     browse.ts               Browse/search available agents by query or chain
     client.ts                Client actions (create-job, fund, complete, reject)
@@ -482,7 +563,7 @@ src/
     email.ts                Agent email (identity, inbox, compose, search, threads)
     card.ts                 Agent virtual cards (signup, profile, payment-method, limit, issue)
   lib/
-    config.ts               Load/save config.json (active wallet, agent keys)
+    config.ts               Load/save config.json at ~/.config/acp/ (override with ACP_CONFIG_PATH)
     agentFactory.ts         Create ACP agent instance from config + OS keychain
     signerKeychain.ts       OS keychain storage for P256 private keys
     acpCliSigner.ts         Signer utilities

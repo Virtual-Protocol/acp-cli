@@ -12,6 +12,7 @@ import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
 import { PriceType } from "@virtuals-protocol/acp-node";
 import { getClient } from "../lib/api/client";
+import { getActiveAgentId } from "../lib/activeAgent";
 
 export function registerClientCommands(program: Command): void {
   const client = program
@@ -34,11 +35,13 @@ export function registerClientCommands(program: Command): void {
       "--evaluator <address>",
       "Evaluator wallet address (defaults to your own)"
     )
+    .option("--package-id <id>", "Package ID")
     .option("--legacy", "Target a legacy (openclaw-cli) provider")
     .option("--hook <address>", "Hook address")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
+        const { agentApi } = await getClient();
         let requirements: Record<string, unknown> | string;
         try {
           requirements = JSON.parse(opts.requirements);
@@ -104,6 +107,8 @@ export function registerClientCommands(program: Command): void {
 
         // Default: v2 flow — resolve offering from v2 backend
         const agent = await createAgentFromConfig();
+        const clientAgentId = getActiveAgentId(json);
+        if (!clientAgentId) return;
         const providerAgent = await agent.getAgentByWalletAddress(
           opts.provider
         );
@@ -131,6 +136,22 @@ export function registerClientCommands(program: Command): void {
           );
         }
         const offering = matches[0];
+        let packageId: number | undefined;
+
+        if (!opts.packageId) {
+          const activeSubscription = await agentApi.getActiveSubscription(
+            clientAgentId,
+            opts.provider,
+            Number(opts.chainId),
+            offering.name
+          );
+
+          if (activeSubscription) {
+            packageId = activeSubscription.packageId;
+          }
+        } else {
+          packageId = Number(opts.packageId);
+        }
 
         const evaluator = opts.evaluator ?? (await agent.getAddress());
         const jobId = await agent.createJobFromOffering(
@@ -138,7 +159,11 @@ export function registerClientCommands(program: Command): void {
           offering,
           opts.provider,
           requirements,
-          { evaluatorAddress: evaluator, hookAddress: opts.hook ?? undefined }
+          {
+            evaluatorAddress: evaluator,
+            hookAddress: opts.hook ?? undefined,
+            packageId,
+          }
         );
 
         registerJob(jobId.toString(), false, chainId);

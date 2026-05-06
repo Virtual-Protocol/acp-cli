@@ -341,9 +341,12 @@ export function registerAgentCommands(program: Command): void {
 
       let name: string = opts.name?.trim() ?? "";
       let description: string = opts.description?.trim() ?? "";
+      // Treat any explicit --image (including empty) as "user opted out of the
+      // image prompt". Only fall back to prompting when the flag was omitted.
+      const imageFlagProvided = opts.image !== undefined;
       let image: string | undefined = opts.image?.trim() || undefined;
 
-      const needsPrompt = !name || !description || image === undefined;
+      const needsPrompt = !name || !description || !imageFlagProvided;
       let rl: readline.Interface | undefined;
 
       try {
@@ -370,17 +373,15 @@ export function registerAgentCommands(program: Command): void {
           }
         }
 
-        if (image === undefined) {
-          if (rl) {
-            const imageInput = (
-              await prompt(
-                rl,
-                "Agent image URL (optional, press Enter to skip): "
-              )
-            ).trim();
-            if (imageInput) {
-              image = imageInput;
-            }
+        if (!imageFlagProvided && rl) {
+          const imageInput = (
+            await prompt(
+              rl,
+              "Agent image URL (optional, press Enter to skip): "
+            )
+          ).trim();
+          if (imageInput) {
+            image = imageInput;
           }
         }
       } finally {
@@ -405,11 +406,22 @@ export function registerAgentCommands(program: Command): void {
         setAgentId(created.walletAddress, created.id);
       }
 
+      let emailAddress: string | undefined;
+      let emailError: string | undefined;
+      try {
+        const result = await agentApi.provisionEmailIdentity(created.id);
+        emailAddress = result.emailAddress;
+      } catch (err) {
+        emailError = err instanceof Error ? err.message : String(err);
+      }
+
       if (json) {
         outputResult(json, {
           name: created.name,
           description: created.description,
           walletAddress: created.walletAddress,
+          emailAddress,
+          ...(emailError ? { emailError } : {}),
         });
         return;
       }
@@ -418,11 +430,23 @@ export function registerAgentCommands(program: Command): void {
         `\n${c.green(`${created.name} has been created successfully!`)}\n`
       );
 
-      printTable([
+      const tableRows: [string, string][] = [
         ["Name", created.name],
         ["Description", created.description],
         ["Wallet Address", created.walletAddress ?? "N/A"],
-      ]);
+      ];
+      if (emailAddress) tableRows.push(["Email", emailAddress]);
+      printTable(tableRows);
+
+      if (emailAddress) {
+        console.log(
+          `\n${c.green("An email identity has been created for this agent:")} ${c.cyan(emailAddress)}`
+        );
+      } else if (emailError) {
+        console.log(
+          `\n${c.yellow("Could not provision email identity:")} ${emailError}`
+        );
+      }
 
       let setupSigner = opts.signer === true;
 

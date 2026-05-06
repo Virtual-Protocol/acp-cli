@@ -1,21 +1,52 @@
 {
-  "name": "acp-cli",
-  "version": "1.0.0",
+  "name": "@virtuals-protocol/acp-cli",
+  "version": "1.0.5",
   "type": "module",
   "bin": {
-    "acp": "./bin/acp.ts"
+    "acp": "./dist/bin/acp.js"
   },
+  "files": [
+    "dist",
+    "bin/acp-cli-signer-*",
+    "README.md",
+    "migration.md",
+    "docs"
+  ],
   "scripts": {
     "acp": "tsx bin/acp.ts",
-    "build": "tsc"
+    "build": "esbuild bin/acp.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/bin/acp.js --packages=external",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build"
   },
-  "author": "",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Virtuals Protocol",
   "license": "ISC",
   "description": "CLI tool wrapping the ACP Node SDK for agent tool use",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Virtual-Protocol/acp-cli.git"
+  },
+  "homepage": "https://github.com/Virtual-Protocol/acp-cli#readme",
+  "bugs": {
+    "url": "https://github.com/Virtual-Protocol/acp-cli/issues"
+  },
+  "keywords": [
+    "acp",
+    "agent-commerce-protocol",
+    "virtuals",
+    "cli",
+    "agent",
+    "web3"
+  ],
   "dependencies": {
     "@privy-io/node": "^0.11.0",
     "@virtuals-protocol/acp-node": "^0.3.0-beta.40",
-    "@virtuals-protocol/acp-node-v2": "^0.0.6",
+    "@virtuals-protocol/acp-node-v2": "^0.1.2",
     "@x402/core": "^2.9.0",
     "@x402/evm": "^2.9.0",
     "ajv": "^8.18.0",
@@ -31,6 +62,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/qrcode-terminal": "^0.12.2",
+    "esbuild": "^0.28.0",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3"
   }
