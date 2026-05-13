@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { program } from "commander";
+import { createRequire } from "node:module";
 import { registerClientCommands } from "../src/commands/client";
 import { registerProviderCommands } from "../src/commands/provider";
 import { registerJobCommands } from "../src/commands/job";
@@ -17,9 +18,23 @@ import { registerChainCommands } from "../src/commands/chain";
 import { registerEmailCommands } from "../src/commands/email";
 import { registerCardCommands } from "../src/commands/card";
 
+const require = createRequire(import.meta.url);
+
+function getPackageVersion(): string {
+  for (const packagePath of ["../package.json", "../../package.json"]) {
+    try {
+      const pkg = require(packagePath) as { version?: unknown };
+      if (typeof pkg.version === "string") return pkg.version;
+    } catch {
+      // Source runs from bin/, bundled dist runs from dist/bin/.
+    }
+  }
+  return "0.0.0";
+}
+
 program
   .name("acp")
-  .version("1.0.0")
+  .version(getPackageVersion())
   .description("ACP CLI — Agent Commerce Protocol tool for client/provider agents")
   .option("--json", "Output results as JSON")
   .addHelpText(

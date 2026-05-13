@@ -14,8 +14,10 @@
   ],
   "scripts": {
     "acp": "tsx bin/acp.ts",
-    "build": "esbuild bin/acp.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/bin/acp.js --packages=external",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && esbuild bin/acp.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/bin/acp.js --packages=external",
     "typecheck": "tsc --noEmit",
+    "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "engines": {

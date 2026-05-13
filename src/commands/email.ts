@@ -15,7 +15,14 @@ import { c } from "../lib/color";
 import { getClient } from "../lib/api/client";
 import { prompt, printTable } from "../lib/prompt";
 import { getActiveAgentId } from "../lib/activeAgent";
-import type { EmailMessage } from "../lib/api/agent";
+import type { AgentEmailIdentity, EmailMessage } from "../lib/api/agent";
+
+type SafeEmailIdentity = Omit<AgentEmailIdentity, "metadata">;
+
+function toSafeEmailIdentity(identity: AgentEmailIdentity): SafeEmailIdentity {
+  const { metadata: _metadata, ...safeIdentity } = identity;
+  return safeIdentity;
+}
 
 // Pull a filename out of an RFC 6266 Content-Disposition header. Falls
 // back to the BE-supplied metadata filename if the header is missing or
@@ -79,7 +86,9 @@ export function registerEmailCommands(program: Command): void {
         if (json) {
           outputResult(
             json,
-            (identity ?? {}) as unknown as Record<string, unknown>
+            (identity
+              ? toSafeEmailIdentity(identity)
+              : {}) as unknown as Record<string, unknown>
           );
         } else if (!identity) {
           console.log(
