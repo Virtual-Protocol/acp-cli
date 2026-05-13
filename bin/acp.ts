@@ -29,7 +29,7 @@ function getPackageVersion(): string {
       // Source runs from bin/, bundled dist runs from dist/bin/.
     }
   }
-  return "0.0.0";
+  return "1.0.0";
 }
 
 program
