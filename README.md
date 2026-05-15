@@ -75,9 +75,11 @@ All environment variables are optional. The CLI works out of the box after `acp 
 
 | Variable         | Default          | Description                                                                  |
 | ---------------- | ---------------- | ---------------------------------------------------------------------------- |
-| `IS_TESTNET`     | —                | Set to `true` to use testnet chains, API server, and Privy app               |
-| `PARTNER_ID`     | —                | Partner ID for tokenization                                                  |
-| `ACP_CONFIG_DIR` | `~/.config/acp`  | Directory holding the config file(s). The filename is picked per-env (below) |
+| `IS_TESTNET`         | —                       | Set to `true` to use testnet chains, API server, and Privy app                                  |
+| `PARTNER_ID`         | —                       | Partner ID for tokenization                                                                     |
+| `ACP_CONFIG_DIR`     | `~/.config/acp`         | Directory holding the config file(s). The filename is picked per-env (below)                    |
+| `AGENTPHONE_API_KEY` | —                       | API key for [AgentPhone](https://agentphone.ai). Required for any `acp phone …` command         |
+| `AGENTPHONE_BASE_URL`| `https://api.agentphone.ai` | Override the AgentPhone API base URL (for self-hosted or staging environments)              |
 
 Mainnet and testnet store state separately so identities don't mix when toggling `IS_TESTNET`:
 
@@ -480,6 +482,46 @@ acp card get --request-id <id>             # detail for one
 
 > **PAN/CVV is shown exactly once** — on `card issue`. There is no way to
 > re-fetch unmasked details later. Store them immediately.
+
+### Agent Phone Numbers
+
+Equip the active ACP agent with a real phone number via [AgentPhone](https://agentphone.ai) — provision SMS- and voice-enabled numbers, send texts, place AI-handled calls, and read transcripts.
+
+Requires `AGENTPHONE_API_KEY` in the environment (get one at [agentphone.ai](https://agentphone.ai); new accounts get $5 free credit). The CLI talks to `api.agentphone.ai` directly — keys do not leave the local machine.
+
+```bash
+# Show the AgentPhone persona linked to the active agent + attached numbers
+acp phone whoami
+
+# Buy a US number in the 415 area code and bind it to the active agent.
+# On first run, this also creates an AgentPhone persona for the agent and saves
+# the mapping under $ACP_CONFIG_DIR/phone.json.
+acp phone provision \
+  --area-code 415 \
+  --voice-mode webhook \
+  --webhook-url https://your-server.example/agentphone
+
+# Hosted-LLM mode (no webhook needed)
+acp phone provision --voice-mode hosted --system-prompt "You are a friendly support agent."
+
+# List numbers + attach an existing one
+acp phone numbers
+acp phone attach num_xyz789
+
+# SMS
+acp phone sms send --to +14155551234 --body "Hello from acp-cli"
+acp phone sms inbox
+acp phone sms thread <conversationId>
+
+# Voice
+acp phone call --to +14155551234 --greeting "Hi, calling on behalf of MyAgent."
+acp phone calls list
+acp phone calls transcript <callId>
+```
+
+> Pricing surfaced before `provision`: **$3.00/month per number** plus per-minute SMS/voice usage. Pass `--yes` to skip the confirm prompt in non-interactive flows.
+>
+> Releasing numbers is intentionally not yet a CLI command — use the AgentPhone dashboard until a `release` subcommand with double-confirm lands.
 
 ### Chain Info
 
