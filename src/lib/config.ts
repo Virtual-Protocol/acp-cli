@@ -1,7 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
-import { getPassword, setPassword } from "cross-keychain";
+import {
+  getPassword,
+  setPassword,
+  useBackend,
+  InitError,
+  KeyringLockedError,
+  NoKeyringError,
+  PasswordSetError,
+} from "cross-keychain";
 
 const IS_TESTNET = process.env.IS_TESTNET === "true";
 
@@ -54,13 +62,34 @@ function saveConfig(config: Config): void {
   writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
 }
 
+function isKeychainUnavailable(err: unknown): boolean {
+  return (
+    err instanceof NoKeyringError ||
+    err instanceof InitError ||
+    err instanceof KeyringLockedError ||
+    err instanceof PasswordSetError
+  );
+}
+
+async function withKeyringFallback<T>(op: () => Promise<T>): Promise<T> {
+  try {
+    return await op();
+  } catch (err) {
+    if (!isKeychainUnavailable(err)) throw err;
+    await useBackend("file");
+    return await op();
+  }
+}
+
 export async function getToken(
   walletAddress?: string
 ): Promise<string | undefined> {
   return (
-    (await getPassword(
-      AUTH_KEYCHAIN_SERVICE,
-      `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`
+    (await withKeyringFallback(() =>
+      getPassword(
+        AUTH_KEYCHAIN_SERVICE,
+        `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`
+      )
     )) ?? undefined
   );
 }
@@ -69,9 +98,11 @@ export async function getRefreshToken(
   walletAddress?: string
 ): Promise<string | undefined> {
   return (
-    (await getPassword(
-      AUTH_KEYCHAIN_SERVICE,
-      `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`
+    (await withKeyringFallback(() =>
+      getPassword(
+        AUTH_KEYCHAIN_SERVICE,
+        `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`
+      )
     )) ?? undefined
   );
 }
@@ -81,15 +112,19 @@ export async function setTokens(
   refreshToken: string,
   walletAddress?: string
 ): Promise<void> {
-  await setPassword(
-    AUTH_KEYCHAIN_SERVICE,
-    `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
-    accessToken
+  await withKeyringFallback(() =>
+    setPassword(
+      AUTH_KEYCHAIN_SERVICE,
+      `access-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
+      accessToken
+    )
   );
-  await setPassword(
-    AUTH_KEYCHAIN_SERVICE,
-    `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
-    refreshToken
+  await withKeyringFallback(() =>
+    setPassword(
+      AUTH_KEYCHAIN_SERVICE,
+      `refresh-token${walletAddress ? `-${walletAddress.toLowerCase()}` : ""}`,
+      refreshToken
+    )
   );
 }
 
