@@ -75,9 +75,11 @@ All environment variables are optional. The CLI works out of the box after `acp 
 
 | Variable         | Default          | Description                                                                  |
 | ---------------- | ---------------- | ---------------------------------------------------------------------------- |
-| `IS_TESTNET`     | —                | Set to `true` to use testnet chains, API server, and Privy app               |
-| `PARTNER_ID`     | —                | Partner ID for tokenization                                                  |
-| `ACP_CONFIG_DIR` | `~/.config/acp`  | Directory holding the config file(s). The filename is picked per-env (below) |
+| `IS_TESTNET`         | —                       | Set to `true` to use testnet chains, API server, and Privy app                                  |
+| `PARTNER_ID`         | —                       | Partner ID for tokenization                                                                     |
+| `ACP_CONFIG_DIR`     | `~/.config/acp`         | Directory holding the config file(s). The filename is picked per-env (below)                    |
+| `AGENTPHONE_API_KEY` | —                       | API key for [AgentPhone](https://agentphone.ai). Required for any `acp phone …` command. **Temporary** — see [Agent Phone Numbers § Implementation status](#implementation-status) for the planned migration to a backend-proxied flow. |
+| `AGENTPHONE_BASE_URL`| `https://api.agentphone.ai` | Override the AgentPhone API base URL (for self-hosted or staging environments)              |
 
 Mainnet and testnet store state separately so identities don't mix when toggling `IS_TESTNET`:
 
@@ -480,6 +482,85 @@ acp card get --request-id <id>             # detail for one
 
 > **PAN/CVV is shown exactly once** — on `card issue`. There is no way to
 > re-fetch unmasked details later. Store them immediately.
+
+### Agent Phone Numbers
+
+Equip the active ACP agent with a real phone number via [AgentPhone](https://agentphone.ai) — provision SMS- and voice-enabled numbers, send texts, place AI-handled calls, and read transcripts.
+
+Requires `AGENTPHONE_API_KEY` in the environment (get one at [agentphone.ai](https://agentphone.ai); new accounts get $5 free credit). The CLI talks to `api.agentphone.ai` directly — keys do not leave the local machine.
+
+```bash
+# Show the AgentPhone persona linked to the active agent + attached numbers
+acp phone whoami
+
+# Buy a US number in the 415 area code and bind it to the active agent.
+# On first run, this also creates an AgentPhone persona for the agent and saves
+# the mapping under $ACP_CONFIG_DIR/phone.json.
+acp phone provision \
+  --area-code 415 \
+  --voice-mode webhook \
+  --webhook-url https://your-server.example/agentphone
+
+# Hosted-LLM mode (no webhook needed)
+acp phone provision --voice-mode hosted --system-prompt "You are a friendly support agent."
+
+# List numbers + attach an existing one
+acp phone numbers
+acp phone attach num_xyz789
+
+# SMS
+acp phone sms send --to +14155551234 --body "Hello from acp-cli"
+acp phone sms inbox
+acp phone sms thread <conversationId>
+
+# Voice
+acp phone call --to +14155551234 --greeting "Hi, calling on behalf of MyAgent."
+acp phone calls list
+acp phone calls transcript <callId>
+```
+
+> Pricing surfaced before `provision`: **$3.00/month per number** plus per-minute SMS/voice usage. Pass `--yes` to skip the confirm prompt in non-interactive flows.
+>
+> Releasing numbers is intentionally not yet a CLI command — use the AgentPhone dashboard until a `release` subcommand with double-confirm lands.
+
+#### Implementation status
+
+This integration is a first cut. The CLI talks to `api.agentphone.ai` directly from the user's machine — convenient for shipping fast, but it means every operator has to hold their own `AGENTPHONE_API_KEY` and there is no central place to enforce per-agent quotas or reconcile AgentPhone personas against ACP agent identities.
+
+**Planned migration → backend-proxied**
+
+The intended end state is for the ACP backend to own the AgentPhone integration: a single AgentPhone account on the server side, `AGENTPHONE_API_KEY` stored server-side, and the CLI calling ACP backend endpoints (mirroring how `acp email` and `acp card` already work). The CLI code is laid out to make that swap cheap:
+
+- `src/lib/api/agentphone.ts` — the only file that should need to change. Either repoint its base URL to an ACP backend route, or replace it with calls through the existing `agentApi` client.
+- `src/commands/phone.ts` — kept deliberately thin (CLI flag parsing + output), so it should not need to change beyond removing the direct-mode env-var error path.
+- `src/lib/phoneConfig.ts` — local mapping store; will be removed once the backend tracks the ACP-agent → AgentPhone-persona link as part of agent state.
+
+Backend changes required for the migration:
+
+1. New endpoints, ACP-authed, that proxy the AgentPhone REST surface (`/v1/agents`, `/v1/numbers`, `/v1/messages`, `/v1/calls`, `/v1/calls/{id}/transcript`, etc.). Per-agent scoping enforced server-side.
+2. Persistence for the ACP-agent → AgentPhone-agent mapping, replacing `~/.config/acp/phone.json`.
+3. Optional: webhook receiver endpoint that verifies AgentPhone's HMAC signature and fans out to per-agent consumers, so individual operators don't each have to stand up a webhook URL.
+4. Quota / billing reconciliation (AgentPhone charges $3/month per number — the backend should expose this in usage views before allowing provisions).
+
+**What's exercised end-to-end against `api.agentphone.ai`**
+
+- `acp phone whoami` — pre-provision (no persona linked) and post-provision (linked persona + attached number) paths
+- `acp phone provision --voice-mode hosted` — US number with area code, lazy-creates the AgentPhone persona, persists the local mapping
+
+**What's wired but not yet exercised end-to-end**
+
+- `acp phone numbers`, `acp phone attach`
+- `acp phone sms send | inbox | thread`
+- `acp phone call`, `acp phone calls list | transcript`
+- `acp phone provision --voice-mode webhook` (needs a real `--webhook-url`)
+
+**Not implemented (deliberate)**
+
+- `acp phone release <numberId>` — destructive, deferred until a double-confirm UX is designed
+- `acp phone webhook set <url>` + signing-secret rotation
+- SSE live-transcript streaming (`GET /v1/calls/{id}/transcript/stream`)
+- MMS upload helper (today `--media-urls` requires public HTTPS URLs the caller supplies)
+- Automated tests — the repo has no test infrastructure today. Adding Vitest + recorded HTTP fixtures against AgentPhone belongs in its own PR.
 
 ### Chain Info
 
