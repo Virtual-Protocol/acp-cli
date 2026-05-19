@@ -443,8 +443,10 @@ acp email attachment --attachment-id <id> --output ./downloads
 Virtual cards use a **spend-request model** backed by agentcard.ai. The agent
 signs up, completes a profile, attaches a payment method via Stripe, sets a
 spend limit, and then issues single-use virtual cards (PAN/CVV returned
-inline). Every mutating response also carries a `nextStep` hint so agents
-can self-advance through setup. See the [EconomyOS whitepaper → Agent
+inline). The account owner can set an approval threshold above which each
+issuance must be approved before the card is returned. Every mutating
+response also carries a `nextStep` hint so agents can self-advance through
+setup. See the [EconomyOS whitepaper → Agent
 Card](https://github.com/Virtual-Protocol/whitepaper-economyOS/blob/main/pages/agent-identity/card/overview.mdx)
 for architecture, the `nextStep` contract, and the full flow diagram.
 
@@ -470,7 +472,12 @@ acp card payment-method
 acp card limit                      # view current limit + remaining
 acp card limit set --amount 5000    # $50 spend cap
 
-# 5. Issue a single-use card (cents, 100–7500, multiples of 100)
+# 5. Approval threshold (optional; cents, multiples of 100; signed with the agent wallet)
+acp card approval-threshold --amount 2500   # cards over $25 need owner approval
+acp card approval-threshold --amount 0      # every issuance needs owner approval
+acp card approval-threshold --disable       # no issuance needs approval
+
+# 6. Issue a single-use card (cents, 100–7500, multiples of 100)
 acp card issue --amount 2500        # $25 card, PAN/CVV shown once
 
 # Read past issuances
@@ -480,6 +487,10 @@ acp card get --request-id <id>             # detail for one
 
 > **PAN/CVV is shown exactly once** — on `card issue`. There is no way to
 > re-fetch unmasked details later. Store them immediately.
+
+> If the amount exceeds the owner's approval threshold, `card issue` prints
+> an approval URL and blocks until the owner approves; the card is then
+> returned over the wallet event stream.
 
 ### Chain Info
 

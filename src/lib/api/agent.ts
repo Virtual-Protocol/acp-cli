@@ -369,6 +369,12 @@ export interface CardWhoamiResponse {
   email: string | null;
   verified: boolean;
   nextStep: NextStep | null;
+  approvalThresholdCents: number | null;
+}
+
+export interface CardApprovalThresholdResponse {
+  approvalThresholdCents: number;
+  nextStep?: NextStep | null;
 }
 
 export interface CardPaymentMethod {
@@ -906,6 +912,23 @@ export class AgentApi {
   async cardWhoami(agentId: string): Promise<CardWhoamiResponse> {
     return this.client.get<CardWhoamiResponse>(
       `/agents/${agentId}/card/whoami`
+    );
+  }
+
+  // -- Approval threshold --
+
+  async cardSetApprovalThreshold(
+    agentId: string,
+    payload: {
+      approvalThresholdCents: number;
+      signature: string;
+      issuedAt: number;
+      chainId: number;
+    }
+  ): Promise<CardApprovalThresholdResponse> {
+    return this.client.put<CardApprovalThresholdResponse>(
+      `/agents/${agentId}/card/approval-threshold`,
+      payload
     );
   }
 

@@ -2,15 +2,38 @@ import * as readline from "readline";
 import type { Command } from "commander";
 import { isJson, outputResult, outputError, formatDate } from "../lib/output";
 import { c } from "../lib/color";
-import { getClient } from "../lib/api/client";
+import { getClient, ApiError } from "../lib/api/client";
 import { prompt, printTable } from "../lib/prompt";
 import { getActiveAgentId } from "../lib/activeAgent";
+import { getWalletAddress } from "../lib/agentFactory";
+import { withApprovalGate } from "../lib/walletGate";
+import { awaitApproval } from "@virtuals-protocol/acp-node-v2";
 import type {
   CardProfileResponse,
+  IssuedCardResponse,
   NextStep,
   SpendRequest,
   ThreeDSCode,
 } from "../lib/api/agent";
+
+const MAX_CARD_CENTS = 7500;
+
+const CARD_THRESHOLD_TYPED_DATA = {
+  primaryType: "SetCardApprovalThreshold" as const,
+  types: {
+    SetCardApprovalThreshold: [
+      { name: "agentId", type: "string" },
+      { name: "wallet", type: "address" },
+      { name: "approvalRequired", type: "bool" },
+      { name: "approvalThresholdCents", type: "uint256" },
+      { name: "issuedAt", type: "uint256" },
+    ],
+  },
+  domain: {
+    name: "ACP",
+    version: "1",
+  },
+};
 
 // ── Formatters ──────────────────────────────────────────────────────
 
@@ -78,6 +101,32 @@ function printSpendRequest(r: SpendRequest): void {
   printTable(rows);
 }
 
+// ── Approval handling ───────────────────────────────────────────────
+
+interface ApprovalRequired {
+  approvalId: string;
+  approvalUrl: string;
+  detail?: string;
+}
+
+function parseApprovalRequired(err: unknown): ApprovalRequired | null {
+  if (!(err instanceof ApiError) || err.status !== 403) return null;
+  const body = err.body;
+  if (typeof body !== "object" || body === null) return null;
+  const { code, detail, details } = body as Record<string, unknown>;
+  if (code !== "APPROVAL_REQUIRED") return null;
+  if (typeof details !== "object" || details === null) return null;
+  const { approvalId, approvalUrl } = details as Record<string, unknown>;
+  if (typeof approvalId !== "string" || typeof approvalUrl !== "string") {
+    return null;
+  }
+  return {
+    approvalId,
+    approvalUrl,
+    detail: typeof detail === "string" ? detail : undefined,
+  };
+}
+
 // ── Registration ────────────────────────────────────────────────────
 
 export function registerCardCommands(program: Command): void {
@@ -124,7 +173,9 @@ export function registerCardCommands(program: Command): void {
           console.log(`\n${c.green("Magic link sent!")} Check your email.`);
           console.log(`State: ${result.state}`);
           console.log(
-            `\nPoll with: ${c.cyan(`acp card signup-poll --state ${result.state}`)}`
+            `\nPoll with: ${c.cyan(
+              `acp card signup-poll --state ${result.state}`
+            )}`
           );
           printNextStep(result.nextStep);
         }
@@ -180,7 +231,119 @@ export function registerCardCommands(program: Command): void {
           printTable([
             ["Email", result.email ?? c.dim("(not signed up)")],
             ["Verified", result.verified ? "Yes" : "No"],
+            [
+              "Approval Threshold",
+              result.approvalThresholdCents
+                ? formatCents(result.approvalThresholdCents)
+                : c.dim("(not set)"),
+            ],
           ]);
+          printNextStep(result.nextStep);
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  // -- Approval threshold --
+
+  card
+    .command("approval-threshold")
+    .description(
+      "Set the spend approval threshold (cents, multiples of 100; $0 = requires approval for all). Signed with the active agent wallet."
+    )
+    .option(
+      "--amount <cents>",
+      "Approval threshold in cents (multiples of 100)"
+    )
+    .option("--disable", "Disable approval — no spend will require approval")
+    .option("--chain-id <id>", "Chain ID to sign with", "8453")
+    .action(async (opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+      const agentId = getActiveAgentId(json);
+      if (!agentId) return;
+
+      try {
+        if (opts.disable && opts.amount !== undefined) {
+          outputError(json, "Pass either --amount or --disable, not both.");
+          return;
+        }
+        if (!opts.disable && opts.amount === undefined) {
+          outputError(json, "Provide --amount <cents> or --disable.");
+          return;
+        }
+
+        let amountCents: number;
+        if (opts.disable) {
+          amountCents = MAX_CARD_CENTS;
+        } else {
+          amountCents = parseInt(opts.amount, 10);
+          if (
+            !Number.isInteger(amountCents) ||
+            amountCents < 0 ||
+            amountCents % 100 !== 0
+          ) {
+            outputError(
+              json,
+              "Approval threshold must be a non-negative integer divisible by 100 cents."
+            );
+            return;
+          }
+        }
+
+        const chainId = Number(opts.chainId);
+        const walletAddress = getWalletAddress();
+        const issuedAt = Math.floor(Date.now() / 1000);
+
+        const typedData = {
+          ...CARD_THRESHOLD_TYPED_DATA,
+          domain: {
+            ...CARD_THRESHOLD_TYPED_DATA.domain,
+            chainId,
+          },
+          message: {
+            agentId,
+            wallet: walletAddress,
+            approvalRequired: !opts.disable,
+            approvalThresholdCents: opts.disable ? 0 : amountCents,
+            issuedAt,
+          },
+        };
+
+        const signature = await withApprovalGate(async (provider) => {
+          const supportedChainIds = await provider.getSupportedChainIds();
+          if (!supportedChainIds.includes(chainId)) {
+            throw new Error(
+              `Unsupported chain ID: ${
+                opts.chainId
+              }. Supported: ${supportedChainIds.join(", ")}`
+            );
+          }
+          return provider.signTypedData(chainId, typedData);
+        });
+
+        const result = await agentApi.cardSetApprovalThreshold(agentId, {
+          approvalThresholdCents: amountCents,
+          signature,
+          issuedAt,
+          chainId,
+        });
+
+        if (json) {
+          outputResult(json, result as unknown as Record<string, unknown>);
+        } else if (opts.disable) {
+          console.log(
+            c.green("Approval disabled — no spend will require approval.")
+          );
+          printNextStep(result.nextStep);
+        } else {
+          const cents = result.approvalThresholdCents ?? amountCents;
+          console.log(
+            `${c.green("Approval threshold set to")} ${c.bold(
+              formatCents(cents)
+            )}${cents === 0 ? c.dim(" (all spends require approval)") : ""}`
+          );
           printNextStep(result.nextStep);
         }
       } catch (err) {
@@ -387,7 +550,9 @@ export function registerCardCommands(program: Command): void {
           outputResult(json, result as unknown as Record<string, unknown>);
         } else {
           console.log(
-            `${c.green("Spend limit set to")} ${c.bold(formatCents(result.spendLimitCents))}`
+            `${c.green("Spend limit set to")} ${c.bold(
+              formatCents(result.spendLimitCents)
+            )}`
           );
           printTable([
             ["Spent", formatCents(result.spentCents)],
@@ -447,19 +612,38 @@ export function registerCardCommands(program: Command): void {
           amountCents > 7500 ||
           amountCents % 100 !== 0
         ) {
-          outputError(
-            json,
-            "Amount must be 100–7500 cents, divisible by 100."
-          );
+          outputError(json, "Amount must be 100–7500 cents, divisible by 100.");
           return;
         }
+        const result = await withApprovalGate(async () => {
+          try {
+            return await agentApi.cardIssue(agentId, amountCents);
+          } catch (err) {
+            const approval = parseApprovalRequired(err);
+            if (!approval) throw err;
 
-        const result = await agentApi.cardIssue(agentId, amountCents);
+            if (json) {
+              process.stderr.write(
+                `Owner approval required — approve at: ${approval.approvalUrl}\n`
+              );
+            } else {
+              console.log(`\n${c.yellow("Owner approval required.")}`);
+              if (approval.detail) console.log(`  ${c.dim(approval.detail)}`);
+              console.log(`  Approve at: ${c.cyan(approval.approvalUrl)}`);
+              console.log(c.dim("  Waiting for owner approval…"));
+            }
+
+            return awaitApproval<IssuedCardResponse>(approval.approvalId);
+          }
+        });
+
         if (json) {
           outputResult(json, result as unknown as Record<string, unknown>);
         } else {
           console.log(
-            `\n${c.green("Card issued!")} ${c.dim("(PAN/CVV shown once — store them now)")}`
+            `\n${c.green("Card issued!")} ${c.dim(
+              "(PAN/CVV shown once — store them now)"
+            )}`
           );
           const rows: [string, string][] = [
             ["Request ID", result.id],
@@ -580,7 +764,9 @@ export function registerCardCommands(program: Command): void {
         for (const item of result.codes) {
           const amount = `USD ${item.amount.toFixed(2)}`;
           console.log(
-            `  ${c.bold(item.code.padEnd(codeWidth))}   ${c.green(amount.padEnd(10))} ${c.dim(formatAge(item.receivedAt))}`
+            `  ${c.bold(item.code.padEnd(codeWidth))}   ${c.green(
+              amount.padEnd(10)
+            )} ${c.dim(formatAge(item.receivedAt))}`
           );
         }
         console.log(

@@ -13,6 +13,22 @@ import {
   ACP_TESTNET_SERVER_URL,
 } from "@virtuals-protocol/acp-node-v2";
 
+export class ApiError extends Error {
+  readonly status: number;
+  readonly body: unknown;
+
+  constructor(status: number, rawBody: string) {
+    super(`HTTP ${status}: ${rawBody}`);
+    this.name = "ApiError";
+    this.status = status;
+    try {
+      this.body = JSON.parse(rawBody);
+    } catch {
+      this.body = rawBody;
+    }
+  }
+}
+
 export class ApiClient {
   constructor(private baseUrl: string, private token?: string) {}
 
@@ -26,7 +42,7 @@ export class ApiClient {
       for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     }
     const res = await fetch(url.toString(), { headers: this.authHeaders() });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new ApiError(res.status, await res.text());
     return res.json() as Promise<T>;
   }
 
@@ -37,7 +53,7 @@ export class ApiClient {
       headers: { "Content-Type": "application/json", ...this.authHeaders() },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new ApiError(res.status, await res.text());
     return res.json() as Promise<T>;
   }
 
@@ -48,7 +64,7 @@ export class ApiClient {
       headers: { "Content-Type": "application/json", ...this.authHeaders() },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new ApiError(res.status, await res.text());
     return res.json() as Promise<T>;
   }
 
@@ -59,7 +75,7 @@ export class ApiClient {
       headers: { "Content-Type": "application/json", ...this.authHeaders() },
       body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new ApiError(res.status, await res.text());
     return res.json() as Promise<T>;
   }
 
@@ -69,7 +85,7 @@ export class ApiClient {
       method: "DELETE",
       headers: this.authHeaders(),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new ApiError(res.status, await res.text());
     return res.json() as Promise<T>;
   }
 
@@ -78,14 +94,14 @@ export class ApiClient {
   // `content-type` / `content-disposition` headers from upstream.
   async getRaw(
     path: string,
-    params?: Record<string, string>,
+    params?: Record<string, string>
   ): Promise<Response> {
     const url = new URL(path, this.baseUrl);
     if (params) {
       for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     }
     const res = await fetch(url.toString(), { headers: this.authHeaders() });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new ApiError(res.status, await res.text());
     return res;
   }
 }

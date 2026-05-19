@@ -686,6 +686,10 @@ See the [EconomyOS whitepaper → Agent Card](https://github.com/Virtual-Protoco
 for architecture, the full `nextStep` contract, and setup diagrams. All
 amount flags below are **cents** (the BE DTO takes integer cents).
 
+The owner can set an **approval threshold**: issuing a card above it
+returns an approval request instead of a card, and `card issue` blocks
+until the owner approves at the returned URL before printing the card.
+
 | Command | Description | Required Flags | Optional Flags |
 |---|---|---|---|
 | `card signup` | Start magic-link signup with agentcard.ai | — | `--email` |
@@ -697,7 +701,8 @@ amount flags below are **cents** (the BE DTO takes integer cents).
 | `card payment-method` | Create Stripe setup session; open returned `url`. Re-run to replace the saved method (accounts hold at most one). | — | — |
 | `card limit` | View current spend limit + `spent`/`remaining` | — | — |
 | `card limit set` | Set spend limit (cents, min 100) | — | `--amount` |
-| `card issue` | Issue a single-use virtual card (cents, 100–7500, multiples of 100). Returns PAN/CVV inline **once**. | — | `--amount` |
+| `card approval-threshold` | Set the owner approval threshold (cents, multiples of 100; `0` = every issuance needs approval). Signed with the active agent wallet. | — | `--amount`, `--disable`, `--chain-id` |
+| `card issue` | Issue a single-use virtual card (cents, 100–7500, multiples of 100). Returns PAN/CVV inline **once**. Amounts over the approval threshold block until the owner approves. | — | `--amount` |
 | `card list` | List spend-requests issued by this agent | — | — |
 | `card get` | Retrieve a spend-request by ID | `--request-id` | — |
 
