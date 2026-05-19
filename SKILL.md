@@ -350,12 +350,12 @@ acp wallet topup --chain-id 8453 --method qr --json
 
 ##### Wallet signing and transactions (signer required)
 
-> **Remind the user before broadcasting.** `wallet send-transaction` depends on **two server-side dashboard controls** at [app.virtuals.io](https://app.virtuals.io) that the CLI cannot read or change. If either blocks the call, the response is a generic `Bad Request` with no useful body. Surface this proactively the first time the user asks you to send a transaction — don't wait for the failure:
+> **Remind the user before broadcasting.** `wallet send-transaction` depends on **dashboard-side controls** the CLI cannot read or change. If they block the call, the response is a generic `Bad Request` with no useful body. Surface this proactively the first time the user asks you to send a transaction — don't wait for the failure. The dashboard path is [app.virtuals.io](https://app.virtuals.io) → **Agents and Projects** → agent settings → **Wallet** tab.
 >
-> 1. **Transaction Mode** — `Restricted` (default) only permits calls to Virtuals contracts. Flip to `Unrestricted` to allow arbitrary destinations.
-> 2. **Wallet policies** — optional allowlists for destination addresses, method selectors, and/or value caps. If any policy is set, only matching transactions are permitted (this layers on top of Transaction Mode).
+> 1. **Wallet policies** (going-forward control) — a destination-address allowlist. If the recipient address isn't on the allowlist, the broadcast fails. This is replacing the older Transaction Mode toggle.
+> 2. **Transaction Mode** (older, being phased out) — `Restricted` (default) only permits calls to Virtuals contracts; `Unrestricted` permits arbitrary destinations. Wallet policies, when configured, take precedence; otherwise Transaction Mode still applies.
 >
-> `sign-message` and `sign-typed-data` are not affected — they don't broadcast. If `send-transaction` does fail with `Bad Request`, ask the user to verify both controls in the dashboard (Transaction Mode first, then any wallet policies that may match the destination/selector/value).
+> `sign-message` and `sign-typed-data` are not affected — they don't broadcast. If `send-transaction` fails with `Bad Request`, ask the user to check the Wallet tab: confirm the destination is on the policy allowlist (or that policies aren't configured), and that Transaction Mode is set appropriately.
 
 **Step 1 — Probe.** Check if a signer is already attached before re-running `add-signer`:
 
@@ -595,7 +595,7 @@ There are two workflows depending on whether the agent is **legacy** or **non-le
 
 ##### Legacy Agents (poll with `job history`)
 
-> **Do NOT use `events listen`, `events drain`, or `job watch` for legacy jobs.** They produce no events on the v2 stream. Poll `acp job history` on a 5–10s cadence instead.
+> **Do NOT use `events listen`, `events drain`, or `job watch` for legacy jobs.** They produce no events on the v2 stream. Poll `acp job history` instead. The legacy-vs-v2 distinction is detected automatically by the CLI from the job ID — you don't need to pass any flag on `fund`/`complete`/`reject`/`review`.
 
 **Step 0 — Probe.** Confirm signer + active agent before starting (any subsequent step will error if missing):
 
@@ -618,7 +618,7 @@ acp client create-job \
 
 Store `jobId`.
 
-**Step 2 — Poll for `budget_set`** (repeat every 5–10s, cap at the SLA you saw in `acp browse`):
+**Step 2 — Poll for `budget_set`** (repeat periodically, cap at the SLA you saw in `acp browse`):
 
 ```bash
 acp job history --job-id <id> --chain-id 84532 --json
@@ -1234,10 +1234,10 @@ On transient errors (network timeouts, rate limits), retry the command once.
 
 ### Known Issues
 
-- **`wallet send-transaction` fails with a generic `Bad Request`** (no useful body in the error chain). Two dashboard-side controls can produce this, both server-enforced by the wallet provider and not diagnosable from the CLI:
-  1. **Transaction Mode** is set to `Restricted` in the agent dashboard (the default), which only permits calls to Virtuals contracts. Have the user switch the agent to `Unrestricted` at [app.virtuals.io](https://app.virtuals.io), then retry.
-  2. **Wallet policies** are configured (allowlists for destination addresses, method selectors, and/or value caps) and the attempted transaction doesn't match them. Have the user review the wallet policies in the dashboard and either widen the rule or update it to cover the intended call, then retry.
-  Check Transaction Mode first (more common); fall back to policies if mode is already Unrestricted.
+- **`wallet send-transaction` fails with a generic `Bad Request`** (no useful body in the error chain). Two dashboard-side controls can produce this, both server-enforced and not diagnosable from the CLI. Dashboard path: [app.virtuals.io](https://app.virtuals.io) → **Agents and Projects** → agent settings → **Wallet** tab.
+  1. **Wallet policies** (the going-forward control): a destination-address allowlist. If the recipient isn't on the list, the broadcast fails. Have the user add the destination to the allowlist (or remove the policy if they want unrestricted broadcasts), then retry.
+  2. **Transaction Mode** (older, being phased out by wallet policies): if no wallet policy is configured, `Restricted` (the default) only permits calls to Virtuals contracts. Have the user switch to `Unrestricted`, then retry.
+  Check wallet policies first (the canonical control); fall back to Transaction Mode if no policies are set.
 
 ## File Structure
 

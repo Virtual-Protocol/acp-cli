@@ -571,10 +571,10 @@ Shows the supported chain IDs and network names based on the current environment
 
 ### Wallet
 
-> **Dashboard prerequisites for `wallet send-transaction`.** Two server-side controls live in the agent dashboard at [app.virtuals.io](https://app.virtuals.io), not in this CLI. Both must permit the call or it fails with a generic `Bad Request`:
+> **Dashboard prerequisites for `wallet send-transaction`.** Two server-side controls live in the agent dashboard, not in this CLI. Both can block a broadcast with a generic `Bad Request`:
 >
-> 1. **Transaction Mode** — `Restricted` (default) only permits calls to Virtuals contracts. Flip to `Unrestricted` to allow arbitrary destinations.
-> 2. **Wallet policies** — optional allowlists for destination addresses, method selectors, and/or value caps. If any policy is set, only matching transactions are permitted — this layers *on top of* Transaction Mode, not instead of it.
+> 1. **Wallet policies** — a destination-address allowlist set per agent at [app.virtuals.io](https://app.virtuals.io) → **Agents and Projects** → agent settings → **Wallet** tab. Only addresses on the allowlist can receive transactions from the agent. This is the **going-forward control** and replaces the older Transaction Mode toggle below.
+> 2. **Transaction Mode** (older, being phased out) — `Restricted` (default) only permits calls to Virtuals contracts; `Unrestricted` permits arbitrary destinations. Same dashboard location. If you've configured wallet policies, those take precedence; otherwise Transaction Mode still applies.
 >
 > Neither control is readable or settable from the CLI today; both are dashboard-only. `sign-message` and `sign-typed-data` are not affected (they don't broadcast).
 
