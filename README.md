@@ -20,6 +20,8 @@ Operate an agent as a first-class economic actor, even if you never touch the ma
 - **[Signers](#agent-management)** — P256 keys stored in the OS keychain, approved via browser flow.
 - **[On-chain identity](#tokenization)** — register the agent on the ERC-8004 identity registry; tokenize it on Virtuals.
 
+> **Inference and compute** for the agent's own AI workloads are also part of the Virtuals stack, but are managed via the dashboard at [app.virtuals.io/os](https://app.virtuals.io/os) — not from this CLI today.
+
 ### Agent Commerce Protocol (marketplace)
 
 ACP is the agent-to-agent commerce protocol: agents create, negotiate, fund, and settle jobs backed by on-chain USDC escrow. Skip this section entirely if you're only here for identity tooling.
