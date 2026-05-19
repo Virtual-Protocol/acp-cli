@@ -322,8 +322,9 @@ acp card get --request-id <id>             # detail for one
 acp card 3ds
 ```
 
-> **PAN/CVV is shown exactly once** — on `card issue`. There is no way to
-> re-fetch unmasked details later. Store them immediately.
+> **Store PAN/CVV at issuance.** `card issue` returns them inline. `card get`
+> *may* still return them while the spend-request is active, but they're
+> absent after capture or expiry — don't rely on `get` for re-fetch.
 
 ### Browsing Agents
 

@@ -67,7 +67,7 @@ Single-use virtual cards backed by agentcard.ai. Separate identity from the Virt
 | `addPaymentMethod` | `acp card payment-method --json` → open returned `url` for Stripe setup | `{url, nextStep}` |
 | `completePaymentMethod` | Re-open the previous Stripe `url` in the user's browser, then re-probe `card profile` | (re-check `profile.nextStep`) |
 | `setLimit` | `acp card limit set --amount <cents, min 100> --json` | `{spendLimitCents, spentCents, remainingCents, nextStep}` |
-| `issueCard` / `null` | `acp card issue --amount <cents 100–7500, %100> --json` | `{id, amountCents, pan, cvv, expiryMonth, expiryYear, last4, zip?, cardholderName?, expiresAt, nextStep}` — **PAN/CVV inline once, store immediately** |
+| `issueCard` / `null` | `acp card issue --amount <cents 100–7500, %100> --json` | `{id, amountCents, pan, cvv, expiryMonth, expiryYear, last4?, zip?, cardholderName?, expiresAt, nextStep}` — **PAN/CVV inline; store immediately** |
 
 **Reads & utilities** (not part of the setup loop):
 
@@ -76,8 +76,8 @@ Single-use virtual cards backed by agentcard.ai. Separate identity from the Virt
 | `acp card whoami --json` | Session probe (email + verified) | `{email \| null, verified, nextStep}` |
 | `acp card profile --json` | View profile + current setup state | `{email, firstName, lastName, phoneNumber, hasPaymentMethod, paymentMethod, spendLimitCents, locked, nextStep}` |
 | `acp card limit --json` | View spend limit | `{spendLimitCents, spentCents, remainingCents, nextStep}` |
-| `acp card list --json` | All spend-requests issued by this agent | `{requests:[{id, amountCents, status, createdAt, expiresAt, issuedAt?, capturedAmountCents?, capturedAt?, last4}]}` |
-| `acp card get --request-id <id> --json` | One spend-request (PAN/CVV not included) | Single `SpendRequest` |
+| `acp card list --json` | All spend-requests issued by this agent | `{requests:[{id, amountCents, status, createdAt, expiresAt, issuedAt?, capturedAmountCents?, capturedAt?, last4?, pan?, cvv?, expiryMonth?, expiryYear?, zip?, cardholderName?}]}` |
+| `acp card get --request-id <id> --json` | One spend-request. PAN/CVV/expiry **may be present while the request is still active**; absent after capture or expiry. Best practice: store on issuance, don't rely on `get`. | Single `SpendRequest` (same shape as list rows) |
 | `acp card 3ds --json` | 3DS verification codes from recent merchant challenges (~5 min window) | `{codes:[{code, amount (USD dollars, not cents), receivedAt}]}` |
 | `acp card profile reset --json` | Wipe name/phone/payment method (keeps token + limit) | `{ok, nextStep}` |
 
@@ -168,12 +168,14 @@ open ──► budget_set ──► funded ──► submitted ──► complet
 
 ```bash
 acp browse "logo design" --top-k 5 --online online --json
-# → {results:[{
-#     name, walletAddress, supportedChains:[...],
-#     subscriptions:[{packageId, price, durationDays, ...}],
-#     offerings:[{id, name, priceValue, priceType, slaMinutes, requirements, subscriptionPackageIds:[...]}],
-#     resources:[...]
+# → {data:[{
+#     id, name, description, walletAddress, role, cluster, rating,
+#     chains:[{chainId, tokenAddress, virtualAgentId, acpV2AgentId, erc8004AgentId, symbol, active}],
+#     offerings:[{id, name, description, requirements, deliverable, slaMinutes, priceType, priceValue, requiredFunds, isHidden}],
+#     resources:[{id, name, description, params, url}],
+#     ...
 #   }]}
+# Note: wrapper key is "data", not "results".
 ```
 
 If results are empty, retry with `--legacy` to include v1 agents before concluding "no agents available."
@@ -299,7 +301,8 @@ acp client review --job-id <id> --chain-id 8453 --rating 5 --review "..." --json
 ```bash
 acp agent whoami --json     # active agent + signer
 acp offering list --json    # confirm offerings exist; capture priceValue + priceType
-# → {offerings:[{id, name, priceValue, priceType, slaMinutes, requirements, ...}]}
+# → [{id, name, priceValue, priceType, slaMinutes, requirements, deliverable, isHidden, ...}, ...]
+# Note: returns the array directly — no wrapper key.
 ```
 
 If no offerings, see [Managing offerings/subscriptions/resources](#managing-offerings-subscriptions-resources) first.
