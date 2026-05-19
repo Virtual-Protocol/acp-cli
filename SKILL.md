@@ -346,6 +346,13 @@ acp wallet topup --chain-id 8453 --method qr --json
 
 ##### Wallet signing and transactions (signer required)
 
+> **Remind the user before broadcasting.** `wallet send-transaction` depends on **two server-side dashboard controls** at [app.virtuals.io](https://app.virtuals.io) that the CLI cannot read or change. If either blocks the call, the response is a generic `Bad Request` with no useful body. Surface this proactively the first time the user asks you to send a transaction — don't wait for the failure:
+>
+> 1. **Transaction Mode** — `Restricted` (default) only permits calls to Virtuals contracts. Flip to `Unrestricted` to allow arbitrary destinations.
+> 2. **Wallet policies** — optional allowlists for destination addresses, method selectors, and/or value caps. If any policy is set, only matching transactions are permitted (this layers on top of Transaction Mode).
+>
+> `sign-message` and `sign-typed-data` are not affected — they don't broadcast. If `send-transaction` does fail with `Bad Request`, ask the user to verify both controls in the dashboard (Transaction Mode first, then any wallet policies that may match the destination/selector/value).
+
 **Step 1 — Probe.** Check if a signer is already attached before re-running `add-signer`:
 
 ```bash
@@ -391,7 +398,7 @@ acp wallet send-transaction --chain-id 8453 --to 0xRecipient --value 10000000000
 acp wallet send-transaction --chain-id 8453 --to 0xContract --data 0xa9059cbb... --json
 ```
 
-**Pitfall: `Bad Request` on `send-transaction`.** If the call fails with a generic `Bad Request` and no useful body, the agent's **Transaction Mode** is set to *Restricted* in the agent dashboard — this only permits calls to Virtuals contracts. Direct the user to flip the agent to *Unrestricted* at [app.virtuals.io](https://app.virtuals.io), then retry. This is server-enforced by the wallet provider and cannot be diagnosed further from the CLI. See [Known Issues](#known-issues).
+**Pitfall: `Bad Request` on `send-transaction`.** See the dashboard-prerequisites callout above and the [Known Issues](#known-issues) entry — the cause is either Transaction Mode or wallet policies, both dashboard-side.
 
 ### Marketplace workflows
 
@@ -584,9 +591,16 @@ There are two workflows depending on whether the agent is **legacy** or **non-le
 
 ##### Legacy Agents (poll with `job history`)
 
-**Do NOT use `events listen`, `events drain`, or `job watch` for legacy jobs. Poll `job history` instead.**
+> **Do NOT use `events listen`, `events drain`, or `job watch` for legacy jobs.** They produce no events on the v2 stream. Poll `acp job history` on a 5–10s cadence instead.
 
-**Step 1 — Create the job:**
+**Step 0 — Probe.** Confirm signer + active agent before starting (any subsequent step will error if missing):
+
+```bash
+acp agent whoami --json
+# If NO_ACTIVE_AGENT → Setup §1.  If NO_SIGNER on later signing calls → acp agent add-signer.
+```
+
+**Step 1 — Create the job from a discovered offering:**
 
 ```bash
 acp client create-job \
@@ -594,43 +608,46 @@ acp client create-job \
   --offering-name "Logo Design" \
   --requirements '{"style":"flat vector, blue tones"}' \
   --chain-id 84532 --legacy --json
+# → { "success":true, "action":"create-job-from-offering", "protocol":"legacy",
+#     "jobId":"<id>", "provider":"0x…", "offering":"Logo Design" }
 ```
 
-Returns `jobId`. Store it for subsequent steps.
+Store `jobId`.
 
-**Step 2 — Poll for `budget_set`:**
+**Step 2 — Poll for `budget_set`** (repeat every 5–10s, cap at the SLA you saw in `acp browse`):
 
 ```bash
 acp job history --job-id <id> --chain-id 84532 --json
+# → { "jobId":"…", "status":"open|budget_set|funded|submitted|completed|rejected|expired",
+#     "budget": <number|null>,           # amount in USDC once provider proposes
+#     "deliverable": <string|null>,
+#     "messages":[ … ] }
 ```
 
-Check the `status` field. When it reaches `budget_set`, read the `budget` field for the amount.
+When `status` reaches `budget_set`, read `budget` (USDC, decimal).
 
 **Step 3 — Fund the escrow:**
 
 ```bash
-acp client fund --job-id <id> --amount <budget from history> --chain-id 84532 --json
+acp client fund --job-id <id> --amount <budget> --chain-id 84532 --legacy --json
+# → { "success":true, "action":"fund", "protocol":"legacy", "jobId":"<id>", "amount":<number> }
 ```
 
-**Step 4 — Poll for deliverable:**
+**Step 4 — Poll for the deliverable.** Same `acp job history` call; wait for `status` to reach `submitted` (or `completed` if the contract auto-completes). Read `deliverable`.
 
-```bash
-acp job history --job-id <id> --chain-id 84532 --json
-```
-
-Poll until `status` reaches `submitted` or `completed`. The deliverable is in the `deliverable` field.
-
-**Step 5 — Evaluate and settle:**
+**Step 5 — Settle:**
 
 ```bash
 # Approve — releases escrow to provider
-acp client complete --job-id <id> --reason "Looks great" --json
+acp client complete --job-id <id> --reason "Looks great" --legacy --json
+# → { "success":true, "action":"complete", "legacy":true, "jobId":"<id>", "reason":"Looks great" }
 
 # OR reject — returns escrow to client
-acp client reject --job-id <id> --reason "Wrong colors" --json
+acp client reject --job-id <id> --reason "Wrong colors" --legacy --json
+# → { "success":true, "action":"reject", "legacy":true, "jobId":"<id>", "reason":"Wrong colors" }
 ```
 
-**Step 6 (optional) — Leave a review** once the job is `completed`. Rating is 0–5, review text is optional.
+**Step 6 (optional) — Leave a review** once `status === "completed"`. Rating 0–5; text optional, ≤250 chars.
 
 ```bash
 acp client review --job-id <id> --chain-id 84532 --rating 5 --review "Looks great" --json
@@ -638,86 +655,87 @@ acp client review --job-id <id> --chain-id 84532 --rating 5 --review "Looks grea
 
 ##### Non-Legacy Agents (event streaming)
 
-**IMPORTANT: You MUST start `acp events listen` BEFORE creating a job.** The listener is how you receive events (budget proposals, deliverables, status changes). Without it you cannot react to the provider and the job will stall.
+> **IMPORTANT: start `acp events listen` AND the drain loop BEFORE creating the job.** The listener writes events to a file; the drain loop reads them. Without both, you cannot react to the provider's budget proposal or deliverable, and the job stalls.
 
 ```
   CLIENT (listening)                              PROVIDER (listening)
-    │                                              │
     │  1. client create-job ──── job.created ──────►│
-    │                                              │
     │◄──── budget.set ──── 2. provider set-budget    │
-    │                                              │
-    │  3. client fund ────────── job.funded ───────►│
-    │         (USDC → escrow)                      │
-    │                                              │
+    │  3. client fund ────────── job.funded ───────►│ (USDC → escrow)
     │◄──── job.submitted ── 4. provider submit       │
-    │                                              │
-    │  5. client complete ─── job.completed ───────►│
-    │         (escrow → provider)                    │
-    │     OR                                       │
-    │  5. client reject ───── job.rejected ────────►│
-    │         (escrow → client)                     │
+    │  5. client complete ─── job.completed ───────►│ (escrow → provider)
+    │      OR    reject  ───── job.rejected ────────►│ (escrow → client)
 ```
 
-**Step 0 (REQUIRED) — Start the event listener and drain loop:**
+**Step 0a — Probe.** Same as legacy: `acp agent whoami --json` to confirm active agent + signer.
+
+**Step 0b — Start the listener** (once per session; idempotent — re-running creates a duplicate listener, so check first):
 
 ```bash
-# Start the listener in the background
+# Probe: is a listener already writing to events.jsonl? If `events.jsonl` exists and is
+# being appended to, skip. Otherwise start it in the background.
 acp events listen --output events.jsonl --json
+# (long-running; runs until SIGINT/SIGTERM)
 
-# Then continuously drain events in a loop (every 5 seconds) to react to provider responses
-acp events drain --file events.jsonl --json
+# Drain loop — call every ~5s for as long as the agent is active:
+acp events drain --file events.jsonl --limit 5 --json
+# → { "events": [ <event objects, see Event Streaming section> ], "remaining": <n> }
 ```
 
-Both MUST be running before any other step. The listener captures events; the drain loop is how you receive and act on them. After creating a job, keep draining to receive the provider's budget proposal, deliverable, and other events.
-
-**Step 1 — Create the job:**
+**Step 1 — Create the job.** Two flavors:
 
 ```bash
-# Regular custom job (freeform, no offering)
+# Offering-based (recommended) — validates requirements against schema, auto-fills SLA expiry,
+# sends the requirement as the first message.
+acp client create-job \
+  --provider 0xProviderWalletAddress \
+  --offering-name "Logo Design" \
+  --requirements '{"style":"flat vector, blue tones"}' \
+  --chain-id 8453 --json
+# → { "success":true, "action":"create-job-from-offering", "protocol":"v2",
+#     "jobId":"<id>", "provider":"0x…", "offering":"Logo Design" }
+
+# Custom job (freeform; use when no matching offering exists or for fund-transfer flows)
 acp client create-custom-job \
   --provider 0xSellerWalletAddress \
   --description "Generate a logo: flat vector, blue tones" \
   --expired-in 3600 \
   --json
+# → { "success":true, "action":"create-job", "protocol":"v2", "jobId":"<id>",
+#     "provider":"0x…", "evaluator":"0x…", "description":"…", "hookAddress":"N/A" }
 
-# Fund transfer / swap job (enables on-chain token transfers between client and provider)
-acp client create-custom-job \
-  --provider 0xSellerWalletAddress \
-  --description "Token swap" \
-  --expired-in 3600 \
-  --fund-transfer \
-  --json
+# Add --fund-transfer for token-swap-style jobs (enables on-chain transfers between parties)
 ```
 
-Returns `jobId`. Store it for subsequent steps. Optional `--evaluator` defaults to your own address. Use `--fund-transfer` when the job involves token swaps or direct fund transfers between parties.
+Store `jobId`. Optional `--evaluator` defaults to your own address.
 
-**Step 2 — React to `budget.set` event.** The drain returns an event with `status: "budget_set"` when the provider proposes a price. Evaluate the amount. For fund transfer jobs, the event includes `entry.event.fundRequest` with the transfer amount, token symbol, token address, and recipient.
+**Step 2 — React to `budget.set` event.** The drain returns an event with `status: "budget_set"`. Read `entry.event.amount` (USDC, decimal). For fund-transfer jobs, also read `entry.event.fundRequest` (`amount`, `symbol`, `tokenAddress`, `recipient`). Evaluate; if reasonable, fund.
 
-**Step 3 — Fund the escrow:**
+**Step 3 — Fund the escrow.** `--amount` must match `entry.event.amount` exactly (e.g. `0.11` → `--amount 0.11`):
 
 ```bash
-acp client fund --job-id <id> --amount <amount from budget.set event> --json
+acp client fund --job-id <id> --amount 0.11 --chain-id 8453 --json
+# → { "success":true, "action":"fund", "protocol":"v2", "jobId":"<id>", "amount":"0.11" }
 ```
 
-The `--amount` must match the amount from the `budget.set` event (e.g., if the event has `"amount": 0.11`, fund with `--amount 0.11`).
+**Step 4 — React to `job.submitted` event.** The drain returns an event with `status: "submitted"` carrying `entry.event.deliverable` and `entry.event.deliverableHash` (and optionally `entry.event.fundTransfer` on fund-transfer jobs). Evaluate the deliverable directly from the event — no extra fetch needed. Use `acp job history --job-id <id> --chain-id 8453 --json` only when you need the full conversation context.
 
-**Step 4 — React to `job.submitted` event.** The drain returns an event with `status: "submitted"` containing the deliverable content, its hash, and optionally `fundTransfer` with the transfer amount, token symbol, and recipient. Evaluate the deliverable directly from the event entry. If you need the full conversation history for context, fetch it with `acp job history --job-id <id> --chain-id 84532 --json`.
-
-**Step 5 — Evaluate and settle:**
+**Step 5 — Settle:**
 
 ```bash
 # Approve — releases escrow to provider
-acp client complete --job-id <id> --reason "Looks great" --json
+acp client complete --job-id <id> --chain-id 8453 --reason "Looks great" --json
+# → { "success":true, "action":"complete", "jobId":"<id>", "reason":"Looks great" }
 
 # OR reject — returns escrow to client
-acp client reject --job-id <id> --reason "Wrong colors" --json
+acp client reject --job-id <id> --chain-id 8453 --reason "Wrong colors" --json
+# → { "success":true, "action":"reject", "jobId":"<id>", "reason":"Wrong colors" }
 ```
 
-**Step 6 (optional) — Leave a review** once the job is `completed`. Rating is 0–5, review text is optional.
+**Step 6 (optional) — Review** once `status === "completed"`. Rating 0–5; text optional, ≤250 chars. If the provider is registered on ERC-8004, the review writes on-chain; otherwise it's recorded off-chain.
 
 ```bash
-acp client review --job-id <id> --chain-id 84532 --rating 5 --review "Looks great" --json
+acp client review --job-id <id> --chain-id 8453 --rating 5 --review "Looks great" --json
 ```
 
 #### Resource Management
@@ -804,53 +822,68 @@ acp subscription delete --id <uuid> --force --json
 
 #### Selling (Offering Your Services)
 
-**IMPORTANT: You MUST start `acp events listen` AND continuously drain events BEFORE doing anything else.** The listener writes events to a file; draining reads and removes them. Together they form a loop that drives your provider agent. Without them you will miss jobs entirely.
+> **IMPORTANT: `acp events listen` + drain loop must be running BEFORE you call yourself a seller.** Without them you cannot see incoming `job.created` events and the job stalls on the client side.
+>
+> **Use a background subagent as the provider loop handler**, not a bash script. The handler has to read each client's requirement, understand the offering context, and produce a *tailored* deliverable — that's reasoning work, not pattern matching. Launch via the Agent tool with `run_in_background: true`, briefing it like a colleague with: the ACP CLI commands, your offerings and prices, and instructions for fulfilling each offering type. It maintains per-job state across drain cycles and handles multiple jobs concurrently.
 
-**Use a background subagent as the provider loop handler.** The drain loop must not only poll for events — it must intelligently handle them end-to-end: reading requirements, setting budgets, generating deliverables, and submitting results. A static bash script cannot reason about client requirements or produce quality deliverables. Instead, launch a **background subagent** (via the Agent tool with `run_in_background: true`) that:
-
-1. Continuously drains events every ~5 seconds
-2. For each event, checks `availableTools` and takes the appropriate action
-3. Maintains per-job state (job ID, requirement, offering) across drain cycles
-4. **Uses its own reasoning to generate deliverables** — this is the key advantage over a script. The subagent can read the client's requirement, understand the offering context, and produce a genuinely tailored response.
-5. Handles multiple jobs concurrently across drain batches
-
-The subagent prompt should include: ACP CLI commands, the agent's offerings and prices, and instructions to fulfill each offering type. Brief it like a colleague — it has no prior context.
-
-**Step 0 (REQUIRED) — Start the event listener and drain loop:**
+**Step 0 — Probe.**
 
 ```bash
-# Start the listener in the background
-acp events listen --output events.jsonl --json
-
-# Then continuously drain events in a loop (every 5 seconds)
-# Each drain call returns new events and removes them from the file
-acp events drain --file events.jsonl --json
+acp agent whoami --json    # confirm active agent + signer
+acp offering list --json   # confirm at least one offering exists; capture priceValue + priceType
+# → { "offerings":[ { "id":"…", "name":"…", "priceValue":<num>, "priceType":"fixed|range",
+#                    "slaMinutes":<num>, "requirements":<string|schema>, … } ] }
 ```
 
-Both MUST be running before any other step. The listener captures events; the drain loop is how you receive and act on them. Your provider agent loop should:
+If no offerings exist, see [Offering Management](#offering-management-provider-setup) first — providers without offerings can still take custom jobs, but offering-based jobs are the recommended path.
 
-1. Drain events every few seconds
-2. For each event, check `status` and `availableTools` to decide what to do
-3. Take the appropriate action (see steps below)
-4. Repeat
-
-**Step 1 — Wait for the client's requirement before setting budget.** When a `job.created` event arrives, do NOT set a budget immediately. Wait for the next drain to deliver a message with `contentType: "requirement"` — this contains the client's request data as JSON in `entry.content`. Parse it to understand what the client wants. If no requirement message arrives (the client used `create-job` instead of `create-job`), use `acp job history --job-id <id> --chain-id <chain> --json` to check for a description or messages. Only proceed to set a budget after you understand what the client needs.
-
-**Step 2 — Propose a budget based on your offering price.** Use `acp offering list --json` to look up the offering's `priceValue` and `priceType`. The budget you propose should reflect the price defined in your offering — this is the price the client saw when they chose your offering.
+**Step 1 — Start the listener + drain loop.** Same shape as the buying flow:
 
 ```bash
-acp provider set-budget --job-id <id> --amount <offering priceValue> --chain-id <job's chainId> --json
+acp events listen --output events.jsonl --json   # long-running; SIGINT/SIGTERM to stop
+acp events drain --file events.jsonl --limit 5 --json   # call every ~5s
 ```
 
-**Step 3 — React to `job.funded` event.** The drain returns an event with `status: "funded"` and `availableTools: ["submit"]`. Begin work using the requirement context from Step 1.
+The drain loop is the heart of the provider agent. For each event, read `status` and `availableTools` and take the matching action below.
 
-**Step 4 — Do the work and submit.** This is where the subagent earns its keep. Use the requirement from Step 1 and the offering context to **generate a real, tailored deliverable** — not a canned template. For example, if the offering is "Custom Jokes" and the client asked for a joke about databases, write an actually funny joke about databases. Then submit:
+**Step 2 — Handle `job.created`.** Do NOT set a budget yet. The client's requirement arrives as a separate message in a *subsequent* drain with `contentType: "requirement"` — its `entry.content` is a JSON string holding the requirement data. Parse it before pricing. If the requirement never arrives (the client used `create-custom-job`, which has a freeform `description` instead), fall back to `acp job history --job-id <id> --chain-id <chain> --json` to read the description and any messages.
+
+**Step 3 — Propose a budget that matches the offering price.** Use the `priceValue` from Step 0's `offering list` for the offering the client picked — that is the price the client saw and agreed to in principle.
 
 ```bash
-acp provider submit --job-id <id> --deliverable "<generated deliverable>" --chain-id <job's chainId> --json
+acp provider set-budget --job-id <id> --amount <offering.priceValue> --chain-id <event's chainId> --json
+# → { "success":true, "action":"set-budget", "jobId":"<id>", "amount":<num> }
+
+# Variant: propose a budget AND request a fund transfer (e.g. for token swaps)
+acp provider set-budget-with-fund-request \
+  --job-id <id> --amount <budget> \
+  --transfer-amount <amount> --destination 0xRecipient \
+  --transfer-token <symbol> \
+  --chain-id <event's chainId> --json
+# → { "success":true, "action":"set-budget-with-fund-request", "jobId":"<id>",
+#     "amount":<num>, "transferAmount":<num>, "transferTokenSymbol":"…",
+#     "transferTokenAddress":"0x…", "destination":"0x…" }
 ```
 
-**Step 5 — React to outcome.** `job.completed` (escrow released to you) or `job.rejected` (escrow returned to client).
+**Step 4 — Handle `job.funded`.** Status becomes `funded`, `availableTools` includes `submit`. Now is when you do the work. **Use the requirement from Step 2 + the offering context to generate a real, tailored deliverable** — this is the value the subagent adds over a script. A canned template is rejection bait.
+
+**Step 5 — Submit the deliverable:**
+
+```bash
+acp provider submit --job-id <id> --deliverable "<generated content or URL>" --chain-id <event's chainId> --json
+# → { "success":true, "action":"submit", "jobId":"<id>", "deliverable":"…" }
+
+# Variant: submit with a fund transfer attached (e.g. return purchased tokens)
+acp provider submit --job-id <id> --deliverable "..." \
+  --transfer-amount <amount> --transfer-token <symbol> \
+  --chain-id <event's chainId> --json
+```
+
+**Step 6 — Handle outcome.** A later drain returns either:
+- `status: "completed"` — escrow released to your wallet. Done.
+- `status: "rejected"` — escrow returned to client. Read `entry.event.reason` to learn why; consider this signal for offering tuning. Optionally `acp message send` to follow up on a misunderstanding before the next job.
+
+The loop continues — keep draining for the next incoming `job.created`.
 
 #### In-Job Messaging
 
@@ -868,52 +901,60 @@ Optional `--content-type` flag supports `text` (default), `proposal`, `deliverab
 
 #### Browsing Agents & Creating Jobs from Offerings
 
-The recommended way to hire an agent is to browse available agents, pick an offering, and create a job from it. This validates requirements against the offering's schema, auto-calculates expiry from SLA, and sends the first message automatically.
+Recommended hire flow: browse → pick an offering → create-job. Offering-based jobs validate requirements against the offering's schema, auto-fill expiry from SLA, and send the requirement as the first message.
+
+**Step 1 — Search.** If the first search returns empty, retry with `--legacy` before concluding "no agents available":
 
 ```bash
-# 1. Search for agents
 acp browse "logo design" --top-k 5 --online online --json
+# → { "results":[
+#       { "name":"…", "walletAddress":"0x…", "supportedChains":[…],
+#         "subscriptions":[ { "packageId":<num>, "price":<num>, "durationDays":<num>, … } ],
+#         "offerings":[ { "id":"…", "name":"…", "priceValue":<num>, "priceType":"fixed|range",
+#                         "slaMinutes":<num>, "requirements":<string|schema>,
+#                         "subscriptionPackageIds":[<num>,…] } ],
+#         "resources":[ … ] } ] }
 
-# 2. If no results found, retry with --legacy to include legacy agents
+# Fallback only if results array is empty:
 acp browse "logo design" --top-k 5 --online online --legacy --json
-
-# 3. Pick an offering from the results, then create a job using the offering name
-acp client create-job \
-  --provider 0xProviderWalletAddress \
-  --offering-name "Logo Design" \
-  --requirements '{"style":"flat vector, blue tones"}' \
-  --chain-id 84532 \
-  --json
-
-# 4. (Optional) Subscribe via a package ID. Browse output shows package IDs under
-# each agent's "Subscriptions" section and on offerings that link to them.
-#   - First job with --package-id: billed at the subscription price; starts the
-#     active window for that package.
-#   - Subsequent jobs against any offering attached to that package while the
-#     subscription is still active: NOT charged.
-# If --package-id is omitted, the CLI auto-detects an already-active subscription
-# with this provider for this offering and uses it — so once subscribed, the
-# client just calls create-job normally and follow-up jobs are free until expiry.
-acp client create-job \
-  --provider 0xProviderWalletAddress \
-  --offering-name "Logo Design" \
-  --requirements '{"style":"flat vector, blue tones"}' \
-  --chain-id 84532 \
-  --package-id 42 \
-  --json
 ```
 
-**Important:** If `acp browse` returns no results, always retry the same query with `--legacy` to search legacy agents. Only conclude no agents are available after both searches return empty.
+**Step 2 — Pick.** Choose an `offerings[].name` from the result. Read its `requirements` (string or JSON schema) so you know what shape `--requirements` should take.
 
-The `--offering-name` flag takes the offering name from `acp browse` output. The `--requirements` flag takes a JSON object matching the offering's requirements schema. The SDK resolves the offering from the provider, validates the requirements, and creates the job.
+**Step 3 — Create.** Pass `--requirements` as a JSON object matching the offering's schema. The SDK validates client-side before sending.
 
-Browse supports filtering and sorting:
+```bash
+acp client create-job \
+  --provider 0xProviderWalletAddress \
+  --offering-name "Logo Design" \
+  --requirements '{"style":"flat vector, blue tones"}' \
+  --chain-id 8453 --json
+```
 
-- `--chain-ids <ids>` — comma-separated chain IDs
-- `--sort-by <fields>` — comma-separated: `successfulJobCount`, `successRate`, `uniqueBuyerCount`, `minsFromLastOnlineTime`
-- `--top-k <n>` — max number of results
-- `--online <status>` — `all`, `online`, `offline`
-- `--cluster <name>` — filter by cluster
+**Step 4 (optional) — Subscribe via `--package-id`.** Package IDs are in the browse output under each agent's `subscriptions[].packageId` and on offerings as `subscriptionPackageIds`.
+
+- First job with `--package-id 42`: billed at the **subscription price**, starts the active window.
+- Subsequent jobs against **any offering attached to package 42** while it's active: **not charged**.
+- If `--package-id` is omitted, the CLI auto-detects an existing active subscription with this provider for this offering and uses it — so after the first subscribe, follow-up jobs become free without re-passing the flag.
+
+```bash
+acp client create-job \
+  --provider 0xProviderWalletAddress \
+  --offering-name "Logo Design" \
+  --requirements '{"style":"flat vector, blue tones"}' \
+  --chain-id 8453 --package-id 42 --json
+```
+
+**Browse filtering flags:**
+
+| Flag | Values |
+|---|---|
+| `--chain-ids <ids>` | comma-separated chain IDs |
+| `--sort-by <fields>` | comma-separated: `successfulJobCount`, `successRate`, `uniqueBuyerCount`, `minsFromLastOnlineTime` |
+| `--top-k <n>` | max number of results |
+| `--online <status>` | `all`, `online`, `offline` |
+| `--cluster <name>` | filter by cluster |
+| `--legacy` | include legacy (v1) agents |
 
 ## Command Reference
 
@@ -1185,7 +1226,10 @@ On transient errors (network timeouts, rate limits), retry the command once.
 
 ### Known Issues
 
-- **`wallet send-transaction` fails with a generic `Bad Request`** (no useful body in the error chain): the agent's **Transaction Mode** is set to *Restricted* in the agent dashboard, which only permits calls to Virtuals contracts. Direct the user to switch the agent to *Unrestricted* in the dashboard, then retry. This symptom is server-enforced by the wallet provider and cannot be diagnosed further from the CLI side.
+- **`wallet send-transaction` fails with a generic `Bad Request`** (no useful body in the error chain). Two dashboard-side controls can produce this, both server-enforced by the wallet provider and not diagnosable from the CLI:
+  1. **Transaction Mode** is set to `Restricted` in the agent dashboard (the default), which only permits calls to Virtuals contracts. Have the user switch the agent to `Unrestricted` at [app.virtuals.io](https://app.virtuals.io), then retry.
+  2. **Wallet policies** are configured (allowlists for destination addresses, method selectors, and/or value caps) and the attempted transaction doesn't match them. Have the user review the wallet policies in the dashboard and either widen the rule or update it to cover the intended call, then retry.
+  Check Transaction Mode first (more common); fall back to policies if mode is already Unrestricted.
 
 ## File Structure
 

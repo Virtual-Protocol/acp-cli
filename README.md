@@ -571,6 +571,13 @@ Shows the supported chain IDs and network names based on the current environment
 
 ### Wallet
 
+> **Dashboard prerequisites for `wallet send-transaction`.** Two server-side controls live in the agent dashboard at [app.virtuals.io](https://app.virtuals.io), not in this CLI. Both must permit the call or it fails with a generic `Bad Request`:
+>
+> 1. **Transaction Mode** — `Restricted` (default) only permits calls to Virtuals contracts. Flip to `Unrestricted` to allow arbitrary destinations.
+> 2. **Wallet policies** — optional allowlists for destination addresses, method selectors, and/or value caps. If any policy is set, only matching transactions are permitted — this layers *on top of* Transaction Mode, not instead of it.
+>
+> Neither control is readable or settable from the CLI today; both are dashboard-only. `sign-message` and `sign-typed-data` are not affected (they don't broadcast).
+
 ```bash
 # Show configured wallet address
 acp wallet address
@@ -578,18 +585,16 @@ acp wallet address
 # Show token balances
 acp wallet balance --chain-id 8453
 
-# Sign a plaintext message
+# Sign a plaintext message (no dashboard prerequisites)
 acp wallet sign-message --message "hello world" --chain-id 8453
 
-# Sign EIP-712 typed data
+# Sign EIP-712 typed data (no dashboard prerequisites)
 acp wallet sign-typed-data --data '{"domain":{},"types":{"EIP712Domain":[]},"primaryType":"EIP712Domain","message":{}}' --chain-id 8453
 
 # Broadcast a transaction (--value is wei, --data is optional calldata)
+# Requires Transaction Mode + any wallet policies to permit the call — see callout above.
 acp wallet send-transaction --chain-id 8453 --to 0xRecipient --value 1000000000000000
 acp wallet send-transaction --chain-id 8453 --to 0xContract --data 0xa9059cbb...
-# Note: requires the agent's Transaction Mode to be set to "Unrestricted" in the agent
-# dashboard. In "Restricted" mode (the default), only transactions to Virtuals contracts
-# are allowed and others fail with a generic "Bad Request" 
 
 # Add funds to your wallet (interactive — choose a funding method)
 acp wallet topup --chain-id 8453
