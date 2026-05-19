@@ -14,17 +14,21 @@ Every command supports `--json` for machine-readable output. On error, commands 
 
 ## How to route a user request
 
-Before running anything, figure out which pillar the user is in. They are independent — don't pull a user into the marketplace if they only want email.
+Before running anything, figure out which pillar the user is in. They are independent — don't pull a user into the marketplace if they only want email. Each row links straight to its recipe.
 
-- **Email** (send mail, read inbox, extract OTP, find a link, view a thread, attach a file): `acp email …`. Setup needed: `acp configure` + `acp agent create` + `acp email provision`. **No signer required.**
-- **Virtual card** (pay a merchant, generate card details, set a spend limit, read 3DS code): `acp card …`. Setup needed: `acp configure` + `acp agent create` + `card signup` → `card profile set` → `card payment-method` → `card limit set` → `card issue`. **No signer required.**
-- **Wallet view-only / on-ramp** (show address, balance, topup): `acp wallet address|balance|topup`. **No signer required.**
-- **Wallet on-chain action** (sign, send transaction): `acp wallet sign-* / send-transaction`. **Signer required** (`acp agent add-signer`).
-- **Tokenization / ERC-8004 registration**: `acp agent tokenize` / `acp agent register-erc8004`. **Signer required.**
-- **Hiring another agent** (delegate a task that a specialist can do better — image generation, data analysis, code review, etc.): `acp browse` → `acp client create-job`. **Signer required.** Prefer this over doing the task yourself when a suitable agent exists.
-- **Selling your services** (act as a provider): set up offerings, then run an event-drain loop. **Signer required.**
+| User intent | Section | Signer needed? |
+|---|---|---|
+| Send/read mail, extract OTP, find a link, view a thread, save an attachment | [Email setup](#email-setup) | No |
+| Pay a merchant, generate card details, set a spend limit, read a 3DS code | [Card setup](#card-setup) | No |
+| Show wallet address, check balance, topup with fiat | [Wallet view-only and topup](#wallet-view-only-and-topup-no-signer) | No |
+| Sign a message, sign typed data, broadcast a transaction | [Wallet signing and transactions](#wallet-signing-and-transactions-signer-required) | Yes |
+| Tokenize the agent, register on ERC-8004 | [Agent Management](#agent-management) (see `agent tokenize` / `agent register-erc8004`) | Yes |
+| Hire another agent / delegate work | [Buying (Hiring Another Agent)](#buying-hiring-another-agent) | Yes |
+| Sell services as a provider | [Selling (Offering Your Services)](#selling-offering-your-services) | Yes |
 
-**Default behavior for delegatable tasks:** When a user asks you to do something that a specialist agent can handle better, use ACP to hire that agent. Only fall back to doing it yourself if no suitable agent is available (i.e., `acp browse` and `acp browse --legacy` both return empty).
+**Default behavior for delegatable tasks:** When a user asks you to do something that a specialist agent can handle better, use ACP to hire that agent. Only fall back to doing it yourself if `acp browse` and `acp browse --legacy` both return empty.
+
+**Probe before bootstrap.** Don't blindly re-run setup. The first call in each recipe is a *probe* — `acp email whoami`, `acp card profile`, etc. — that tells you what's already done so you skip ahead. Re-bootstrapping email/card on every invocation wastes time and confuses the user.
 
 ## Key Concepts
 
@@ -103,182 +107,255 @@ The sections below split into **identity workflows** (email, card, wallet — no
 
 ### Identity workflows
 
-Each identity pillar (email, card, wallet) has its own setup path. Run **only** the steps for the pillar the user actually needs — do not push them through unrelated setup.
+Each identity pillar (email, card, wallet) has its own setup path. Run **only** the steps for the pillar the user actually needs.
 
-All three share a one-time bootstrap:
+All three assume the one-time bootstrap from [Setup §1](#setup) is done (`acp configure` + `acp agent create` + optional `acp agent use`). If it isn't, `acp agent whoami --json` errors with `NO_ACTIVE_AGENT` — handle that error by routing the user back to Setup §1 before proceeding.
 
-```bash
-acp configure --json        # browser OAuth, token saved to OS keychain
-acp agent create --name "..." --description "..." --json   # creates agent + wallet
-acp agent use --agent-id <id> --json    # if user has multiple agents
-```
-
-After this, route to the pillar the user asked about.
-
-#### Email-only setup (zero → first sent email)
+#### Email setup
 
 **No signer required.** No chain selection. Inbox is provisioned once per agent.
 
-**Step 1 — Provision the inbox** (one-time per agent):
-
-```bash
-acp email provision --json
-```
-
-Returns the assigned email address (e.g. `myagent-a3f@agentmail.virtuals.io`). The local part is derived from the agent name; if it's already taken, a random suffix is appended. If you call `provision` twice for the same agent, the existing identity is returned — it is idempotent.
-
-**Step 2 — Confirm the identity:**
+**Step 1 — Probe first.** Skip provisioning if it's already done:
 
 ```bash
 acp email whoami --json
+# Provisioned:   { "id":"...", "agentId":"...", "emailAddress":"foo@agentmail.virtuals.io", "status":"active", "createdAt":"...", ... }
+# Not yet:       {}                          → run Step 2
 ```
 
-Returns `{ email, agentId }`. If it errors with `EMAIL_NOT_PROVISIONED`, go back to Step 1.
+If `whoami` returns `{}` (empty object), continue to Step 2. Otherwise read `emailAddress` and jump to Step 3.
 
-**Step 3 — Use it.** The remaining email commands all work after Step 1; no further setup needed:
+**Step 2 — Provision the inbox** (only if Step 1 returned empty):
+
+```bash
+acp email provision --json
+# → { "id":"...", "agentId":"...", "emailAddress":"foo@agentmail.virtuals.io", "status":"active", "createdAt":"...", ... }
+```
+
+Local part is derived from the agent name; a random suffix is appended if taken. Idempotent — re-running returns the same identity.
+
+**Step 3 — Use it.** The remaining email commands all work after Step 2. Response shapes:
 
 ```bash
 acp email inbox --folder inbox --limit 20 --json
-acp email inbox --cursor <cursor> --json                    # paginate
-acp email compose --to "user@example.com" --subject "..." --body "..." --json
+# → { "messages": [
+#       { "id":"msg_…", "threadId":"thr_…", "direction":"inbound", "from":"…", "to":["…"],
+#         "subject":"…", "preview":"…", "receivedAt":"…", "isRead":false, "spamClassification":null }
+#     ],
+#     "nextCursor": "abc123" | null }
+#
+# To read the next page: pass --cursor <nextCursor>.
+
+acp email compose --to "..." --subject "..." --body "..." --json
+# → { "messageId":"…", "threadId":"…" }
+
 acp email search --query "order confirmation" --json
+# → { "messages": [ <same EmailMessage shape as inbox> ] }   # no cursor
+
 acp email thread --thread-id <id> --json
+# → { "id":"…", "subject":"…", "status":"…",
+#     "messages": [
+#       { "id":"…", "direction":"inbound|outbound", "from":"…", "to":["…"],
+#         "subject":"…", "textBody":"…", "htmlBody":"…", "receivedAt":"…",
+#         "attachments": [{ "id":"…", "filename":"…", "mimeType":"…", "sizeBytes":"…" }] }
+#     ] }
+
 acp email reply --thread-id <id> --body "..." --json
-acp email extract-otp --message-id <id> --json              # returns the OTP code as a string
+# → { "messageId":"…", "threadId":"…" }
+
+acp email extract-otp --message-id <id> --json
+# → { "otp": "123456" }     # or { "otp": null } if none found
+
 acp email extract-links --message-id <id> --json
+# → { "links": [ { "url":"https://…", "text":"…", "category":"…" } ] }
+
 acp email attachment --attachment-id <id> --output ./downloads --json
+# → { "path":"./downloads/<filename>", "filename":"…", "mimeType":"…", "sizeBytes":"…" }
 ```
 
 **Common patterns:**
-- **Receiving an OTP for a signup flow:** `acp email compose` to trigger the signup at the external service, then poll `acp email inbox` until the new message arrives, then `acp email extract-otp --message-id <id>` to get the code.
-- **Reading the latest message in a thread:** `acp email thread --thread-id <id> --json` returns the full thread; pick the last entry.
 
-#### Card-only setup (zero → first card issued)
+- **OTP for an external signup:** trigger the signup at the third-party site, then poll `acp email inbox` every few seconds until a new inbound message appears, then `acp email extract-otp --message-id <messages[0].id>` and read `otp`. Cap polling at ~2 minutes.
+- **Latest reply in an existing thread:** `acp email thread --thread-id <id>` and read `messages[messages.length - 1]`.
+- **Downloading attachments:** the `id` for `--attachment-id` comes from `thread.messages[*].attachments[*].id`.
 
-**No signer required.** No chain selection. The card account at agentcard.ai is a **separate identity** from the Virtuals agent — it has its own magic-link auth and its own state machine. Every mutating response returns a `nextStep` hint (`{ action, endpoint, hint }` or `null`) so you know where in setup the user is. **Always read `nextStep` and follow it** instead of guessing from field values.
+#### Card setup
+
+**No signer required.** No chain selection. The card account at agentcard.ai is a **separate identity** from the Virtuals agent — it has its own magic-link auth and its own state machine. Every mutating response carries a `nextStep` hint that tells you the next command to run.
 
 All amount flags are in **cents** (integer). Examples below use `5000` = $50.00.
 
-**Step 1 — Magic-link signup:**
+##### The `nextStep` loop
+
+Drive the entire card setup as a loop: read `nextStep.action`, run the matching command, repeat until `nextStep` is `null`.
+
+```bash
+acp card profile --json    # canonical state probe
+# → { "email":"…", "firstName":null|"…", "lastName":null|"…", "phoneNumber":null|"…",
+#     "hasPaymentMethod":bool, "paymentMethod": null | { "id","brand","last4","expMonth","expYear" },
+#     "spendLimitCents":number, "locked":bool,
+#     "nextStep": null | { "action":"updateProfile|addPaymentMethod|completePaymentMethod|setLimit|issueCard|signup|pollSignup",
+#                          "endpoint":"…", "hint":"…", "missing":["firstName", ...] } }
+```
+
+Map `nextStep.action` → command:
+
+| `nextStep.action`        | What it means                                | Command to run                                             |
+| ------------------------ | -------------------------------------------- | ---------------------------------------------------------- |
+| `signup`                 | Not signed up yet                            | `acp card signup --email "<user-email>" --json`            |
+| `pollSignup`             | Signup pending — user must click magic link  | `acp card signup-poll --state <state> --json` (loop)       |
+| `updateProfile`          | Profile fields still missing (see `missing`) | `acp card profile set --first-name … --last-name … --phone-number "+1…" --json` |
+| `addPaymentMethod`       | No payment method attached                   | `acp card payment-method --json`, open the returned `url`  |
+| `completePaymentMethod`  | Stripe setup started but user hasn't finished | Re-open the previous Stripe `url`, then `acp card profile --json` to re-check |
+| `setLimit`               | Spend limit not set (or set to 0)            | `acp card limit set --amount <cents> --json` (min 100)     |
+| `issueCard`              | Ready — nothing left to configure            | `acp card issue --amount <cents> --json` (100–7500, %100)  |
+| `nextStep === null`      | Account locked, or setup complete            | Check `locked` — if true, escalate; otherwise issue        |
+
+##### Walkthrough (when starting from scratch)
+
+**Step 1 — Probe.** `acp card whoami --json` returns `{ "email":string|null, "verified":bool, "nextStep":… }`. If `email` is `null`, you need to `signup`. If `verified` is false, the user hasn't clicked the magic link yet — call `signup-poll`.
+
+**Step 2 — Signup (only if `whoami.email === null`):**
 
 ```bash
 acp card signup --email "agent@example.com" --json
-# → returns { state: "<token>", emailSent: true }
+# → { "state":"<token>", "nextStep":{ "action":"pollSignup", … } }
 ```
 
-User clicks the link in their email.
+User clicks the magic link in their email.
 
-**Step 2 — Poll until verified:**
+**Step 3 — Poll (until `done:true`):**
 
 ```bash
-acp card signup-poll --state <token-from-step-1> --json
-# → returns { done: false } → wait ~3s and re-run
-# → returns { done: true, ... } when the user has clicked the link
+acp card signup-poll --state <state-from-step-2> --json
+# → { "done":false, "nextStep":{ "action":"pollSignup", … } }   # wait ~3s, re-run
+# → { "done":true,  "email":"…", "nextStep":{ "action":"updateProfile" | … } }
 ```
 
-Retry every 3 seconds until `done: true`. Cap retries at ~5 minutes; if still not done, tell the user to re-run `card signup` (the magic link may have expired).
+Cap polling at ~5 minutes; if not done by then, tell the user to re-run `card signup` (link expired).
 
-**Step 3 — Check current state and read `nextStep`:**
+**Steps 4+ — Follow `nextStep`.** From here on, use the table above. The expected progression is `updateProfile → addPaymentMethod → completePaymentMethod → setLimit → issueCard → null`.
 
-```bash
-acp card whoami --json   # lightweight session check
-acp card profile --json  # → returns { profile, nextStep }
-```
-
-`nextStep.action` tells you exactly what to call next. Common values: `setProfile`, `attachPaymentMethod`, `setLimit`, or `null` (ready to issue).
-
-**Step 4 — Set profile** (required before payment method):
+Profile field shapes:
 
 ```bash
-acp card profile set \
-  --first-name "Ada" \
-  --last-name "Lovelace" \
-  --phone-number "+14155551234" \
-  --json
-# → returns { profile, nextStep }
-```
+acp card profile set --first-name "Ada" --last-name "Lovelace" --phone-number "+14155551234" --json
+# Phone must be E.164: + then digits only.
+# → { "email":"…", "firstName":"Ada", "lastName":"Lovelace", "phoneNumber":"+14155551234",
+#     "hasPaymentMethod":false, "paymentMethod":null,
+#     "spendLimitCents":0, "locked":false,
+#     "nextStep":{ "action":"addPaymentMethod", … } }
 
-Phone number must be E.164 format (`+` then country code then number, digits only).
-
-**Step 5 — Attach a payment method via Stripe:**
-
-```bash
 acp card payment-method --json
-# → returns { url: "https://checkout.stripe.com/..." }
+# → { "url":"https://checkout.stripe.com/…", "nextStep":{ "action":"completePaymentMethod", … } }
+
+acp card limit set --amount 5000 --json       # cents, min 100
+# → { "spendLimitCents":5000, "spentCents":0, "remainingCents":5000,
+#     "nextStep":{ "action":"issueCard", … } | null }
+
+acp card limit --json                          # view current state
+# → same shape as `limit set`
 ```
 
-Open the returned `url` in a browser; user completes Stripe setup. Account holds **at most one** payment method; re-run this command to replace it. After the user finishes, re-check:
+**Issuing a card (terminal step):**
 
 ```bash
-acp card profile --json     # confirm nextStep advanced
+acp card issue --amount 2500 --json            # 100–7500 cents, multiples of 100
+# → { "id":"req_…", "amountCents":2500,
+#     "pan":"4111111111111111", "cvv":"123",
+#     "expiryMonth":12, "expiryYear":2027,
+#     "last4":"1111", "zip":"…", "cardholderName":"…",
+#     "expiresAt":"…", "nextStep":{ "action":"issueCard", … } }
 ```
 
-**Step 6 — Set spend limit:**
+⚠️ **PAN/CVV are returned inline exactly once.** There is no API to re-fetch unmasked details. Surface and store them at the time of issuance. After this point only the masked `last4` is retrievable via `card list` / `card get`.
 
-```bash
-acp card limit set --amount 5000 --json    # cents; min 100
-acp card limit --json                       # view { limit, spent, remaining }
-```
+##### 3DS challenge codes
 
-**Step 7 — Issue a card:**
-
-```bash
-acp card issue --amount 2500 --json
-# → returns { pan, cvv, expiry, ... } INLINE, ONCE
-```
-
-⚠️ **PAN/CVV are returned inline exactly once.** There is no API to re-fetch unmasked details. If the user needs them, surface them immediately and store them at the time of issuance. After this point only metadata is retrievable.
-
-Per-card amount must be 100–7500 cents (multiples of 100). The card draws from the spend limit set in Step 6.
-
-**Step 8 — Optional: read 3DS verification codes** (when a merchant runs a 3DS challenge against the issued card):
+When a merchant runs a 3DS challenge against an issued card, the verification code lands on the agentcard.ai side and stays available for ~5 minutes:
 
 ```bash
 acp card 3ds --json
-# → returns { codes: [{ code, amount, receivedAt }, ...] }
+# → { "codes": [ { "code":"123456", "amount":12.99, "receivedAt":"…" } ] }
 ```
 
-Codes appear here within seconds of the merchant's challenge and stay for ~5 minutes. If checkout fails, run this and read the code back into the checkout flow.
+If checkout fails on 3DS, call this and read the code back into the checkout flow.
 
-**Read past issuances:**
+##### Reading past issuances
 
 ```bash
-acp card list --json                  # all spend-requests by this agent
-acp card get --request-id <id> --json # detail for one (masked PAN only)
+acp card list --json
+# → { "requests": [ { "id":"req_…", "amountCents":…, "status":"…", "createdAt":"…",
+#                    "expiresAt":"…", "issuedAt":"…", "capturedAmountCents":…|null,
+#                    "capturedAt":…|null, "last4":"…" } ] }
+
+acp card get --request-id <id> --json
+# → single SpendRequest object (same shape as the array element above; PAN/CVV NOT included)
 ```
 
-#### Wallet-only setup
+#### Wallet setup
 
 The wallet is **auto-provisioned** when the agent is created — there is no separate "create wallet" step. View-only operations and on-ramp topup work immediately. Signing and broadcasting transactions require `add-signer`.
 
-##### View-only / topup (no signer)
+##### Wallet view-only and topup (no signer)
 
-**Step 1 — Inspect:**
+**Step 1 — Probe.** Confirm an active agent exists; the wallet is created with the agent so no separate provisioning is needed:
 
 ```bash
-acp wallet address --json                          # returns { address }
-acp wallet balance --chain-id 8453 --json          # token + native balances on Base
-acp chain list --json                              # supported chain IDs
+acp agent whoami --json
+# → { "id":"…", "name":"…", "walletAddress":"0x…", "solWalletAddress":"…"|null, ... }
+# If this errors with NO_ACTIVE_AGENT, route the user to Setup §1.
 ```
 
-**Step 2 — Fund the wallet** (interactive picker, or pass `--method`):
+**Step 2 — Inspect:**
+
+```bash
+acp wallet address --json
+# → { "address":"0x…" }
+
+acp wallet balance --chain-id 8453 --json
+# → { "chainId":8453, "network":"base", "address":"0x…",
+#     "tokens": [
+#       { "tokenAddress":null|"0x…",          # null = native ETH
+#         "tokenBalance":"1000000000000000000",# raw integer, decimal-shift on tokenMetadata.decimals
+#         "tokenMetadata":{ "symbol":"ETH"|"USDC"|…, "name":"…", "decimals":18|6|… },
+#         "tokenPrices":[ { "value":"3500.12" } ] | [] }
+#     ] }
+
+acp chain list --json
+# → { "chains":[ { "chainId":…, "name":"…" }, … ] }
+```
+
+**Step 3 — Fund the wallet** (interactive picker, or pass `--method`):
 
 ```bash
 # Coinbase Pay (opens browser; pre-fill optional)
 acp wallet topup --chain-id 8453 --method coinbase --json
 acp wallet topup --chain-id 8453 --method coinbase --amount 50 --json
+# → { "walletAddress":"0x…", "method":"coinbase", "url":"https://…" }
 
 # Crossmint card on-ramp (signs wallet verification then opens checkout)
 acp wallet topup --chain-id 8453 --method card --amount 50 --email "user@example.com" --json
 acp wallet topup --chain-id 8453 --method card --amount 50 --email "user@example.com" --us --json   # required for US residents
+# → { "walletAddress":"0x…", "method":"card", "url":"https://…" }
 
 # Manual QR (shows wallet address + QR code to scan from a mobile wallet)
 acp wallet topup --chain-id 8453 --method qr --json
+# → { "walletAddress":"0x…", "method":"qr", "chainId":8453 }
 ```
 
-##### Signing + transactions (signer required)
+##### Wallet signing and transactions (signer required)
 
-**Step 1 — Add a signer** (one-time per agent):
+**Step 1 — Probe.** Check if a signer is already attached before re-running `add-signer`:
+
+```bash
+acp agent whoami --json
+# Look at the agent record — if a signer is configured, sign-message/sign-typed-data work.
+# Simplest probe: just try `acp wallet sign-message --message "ping" --chain-id 8453 --json`.
+# If it errors with NO_SIGNER, run Step 2; otherwise skip ahead.
+```
+
+**Step 2 — Add a signer** (only if Step 1 surfaced `NO_SIGNER`):
 
 ```bash
 acp agent add-signer --json
@@ -290,21 +367,25 @@ acp agent add-signer --json
 
 If the user has multiple agents, pass `--agent-id <id>`.
 
-**Step 2 — Sign:**
+**Step 3 — Sign:**
 
 ```bash
 acp wallet sign-message --message "hello world" --chain-id 8453 --json
+# → { "signature":"0x…", "address":"0x…", "chainId":8453 }
+
 acp wallet sign-typed-data \
   --data '{"domain":{...},"types":{...},"primaryType":"...","message":{...}}' \
   --chain-id 8453 \
   --json
+# → { "signature":"0x…", "address":"0x…", "chainId":8453 }
 ```
 
-**Step 3 — Broadcast a transaction:**
+**Step 4 — Broadcast a transaction:**
 
 ```bash
 # Simple native transfer (value is wei)
 acp wallet send-transaction --chain-id 8453 --to 0xRecipient --value 1000000000000000 --json
+# → { "txHash":"0x…", "chainId":8453 }
 
 # Contract call (data is hex calldata)
 acp wallet send-transaction --chain-id 8453 --to 0xContract --data 0xa9059cbb... --json
