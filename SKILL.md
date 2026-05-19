@@ -170,7 +170,8 @@ acp email extract-links --message-id <id> --json
 # → { "links": [ { "url":"https://…", "text":"…", "category":"…" } ] }
 
 acp email attachment --attachment-id <id> --output ./downloads --json
-# → { "path":"./downloads/<filename>", "filename":"…", "mimeType":"…", "sizeBytes":"…" }
+# → { "id":"…", "messageId":"…", "filename":"…", "mimeType":"…",
+#     "sizeBytes":"…", "path":"./downloads/<filename>" }
 ```
 
 **Common patterns:**
@@ -279,6 +280,8 @@ acp card 3ds --json
 # → { "codes": [ { "code":"123456", "amount":12.99, "receivedAt":"…" } ] }
 ```
 
+⚠️ **`amount` here is USD dollars, not cents** — this is the one card endpoint where the unit deviates from the rest of the card API (which is integer cents). The upstream 3DS contract is dollars.
+
 If checkout fails on 3DS, call this and read the code back into the checkout flow.
 
 ##### Reading past issuances
@@ -323,7 +326,8 @@ acp wallet balance --chain-id 8453 --json
 #     ] }
 
 acp chain list --json
-# → { "chains":[ { "chainId":…, "name":"…" }, … ] }
+# → { "environment":"mainnet"|"testnet", "chains":[ { "id":…, "name":"…" }, … ] }
+# Note: field is "id" (not "chainId").
 ```
 
 **Step 3 — Fund the wallet** (interactive picker, or pass `--method`):
@@ -337,7 +341,7 @@ acp wallet topup --chain-id 8453 --method coinbase --amount 50 --json
 # Crossmint card on-ramp (signs wallet verification then opens checkout)
 acp wallet topup --chain-id 8453 --method card --amount 50 --email "user@example.com" --json
 acp wallet topup --chain-id 8453 --method card --amount 50 --email "user@example.com" --us --json   # required for US residents
-# → { "walletAddress":"0x…", "method":"card", "url":"https://…" }
+# → { "walletAddress":"0x…", "method":"card", "checkoutUrl":"https://…" }
 
 # Manual QR (shows wallet address + QR code to scan from a mobile wallet)
 acp wallet topup --chain-id 8453 --method qr --json
@@ -378,13 +382,13 @@ If the user has multiple agents, pass `--agent-id <id>`.
 
 ```bash
 acp wallet sign-message --message "hello world" --chain-id 8453 --json
-# → { "signature":"0x…", "address":"0x…", "chainId":8453 }
+# → { "signature":"0x…" }
 
 acp wallet sign-typed-data \
   --data '{"domain":{...},"types":{...},"primaryType":"...","message":{...}}' \
   --chain-id 8453 \
   --json
-# → { "signature":"0x…", "address":"0x…", "chainId":8453 }
+# → { "signature":"0x…" }
 ```
 
 **Step 4 — Broadcast a transaction:**
@@ -392,7 +396,7 @@ acp wallet sign-typed-data \
 ```bash
 # Simple native transfer (value is wei)
 acp wallet send-transaction --chain-id 8453 --to 0xRecipient --value 1000000000000000 --json
-# → { "txHash":"0x…", "chainId":8453 }
+# → { "transactionHash":"0x…" }
 
 # Contract call (data is hex calldata)
 acp wallet send-transaction --chain-id 8453 --to 0xContract --data 0xa9059cbb... --json
@@ -629,9 +633,11 @@ When `status` reaches `budget_set`, read `budget` (USDC, decimal).
 **Step 3 — Fund the escrow:**
 
 ```bash
-acp client fund --job-id <id> --amount <budget> --chain-id 84532 --legacy --json
+acp client fund --job-id <id> --amount <budget> --chain-id 84532 --json
 # → { "success":true, "action":"fund", "protocol":"legacy", "jobId":"<id>", "amount":<number> }
 ```
+
+The CLI auto-detects legacy vs v2 from the job ID (set when the job was created). Do **not** pass `--legacy` on `fund`/`complete`/`reject`/`review` — it's only a flag on `create-job` and `create-custom-job`.
 
 **Step 4 — Poll for the deliverable.** Same `acp job history` call; wait for `status` to reach `submitted` (or `completed` if the contract auto-completes). Read `deliverable`.
 
@@ -639,11 +645,11 @@ acp client fund --job-id <id> --amount <budget> --chain-id 84532 --legacy --json
 
 ```bash
 # Approve — releases escrow to provider
-acp client complete --job-id <id> --reason "Looks great" --legacy --json
+acp client complete --job-id <id> --reason "Looks great" --json
 # → { "success":true, "action":"complete", "legacy":true, "jobId":"<id>", "reason":"Looks great" }
 
 # OR reject — returns escrow to client
-acp client reject --job-id <id> --reason "Wrong colors" --legacy --json
+acp client reject --job-id <id> --reason "Wrong colors" --json
 # → { "success":true, "action":"reject", "legacy":true, "jobId":"<id>", "reason":"Wrong colors" }
 ```
 
@@ -669,7 +675,7 @@ acp client review --job-id <id> --chain-id 84532 --rating 5 --review "Looks grea
 
 **Step 0a — Probe.** Same as legacy: `acp agent whoami --json` to confirm active agent + signer.
 
-**Step 0b — Start the listener** (once per session; idempotent — re-running creates a duplicate listener, so check first):
+**Step 0b — Start the listener** (exactly one per output file). The listener uses `appendFileSync` with no locking, so two concurrent listeners writing to the same `--output` path will race and produce duplicate / interleaved events. Before starting, verify no other listener is running against this file (`pgrep -f "events listen"` works for local environments).
 
 ```bash
 # Probe: is a listener already writing to events.jsonl? If `events.jsonl` exists and is
@@ -1191,7 +1197,7 @@ open ──► budget_set ──► funded ──► submitted ──► complet
 
 ## Error Handling
 
-On error, commands exit with code 1. In `--json` mode, errors include a machine-readable `code` and optional `recovery` hint:
+On error, commands exit with code 1. In `--json` mode, **most** errors come back as a single-line JSON object with a machine-readable `code` and optional `recovery` hint:
 
 ```json
 {
@@ -1206,6 +1212,8 @@ In human-readable mode, the recovery hint is printed as a second line:
 Error: No active agent set.
   Run `acp agent use` to set an active agent.
 ```
+
+⚠️ **Known exception — `NOT_AUTHENTICATED` on auth-first commands.** Commands that call `getClient()` *before* the action body captures `--json` mode (`agent whoami`, `agent list`, `email whoami`, `email *`, `offering list`, `subscription list`, `card *`, etc.) throw an **unstructured `CliError` stack trace to stderr** when no auth token is present — the JSON contract above is not honored for these. Detect this by checking: exit code 1 + stderr starts with `CliError:`. The fix is the same — run `acp configure` — but parsers expecting JSON must fall back to plaintext detection for this case.
 
 ### Error Codes
 
