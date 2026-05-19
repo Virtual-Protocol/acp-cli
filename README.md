@@ -1,14 +1,30 @@
 # acp-cli
 
-CLI tool wrapping the [ACP Node SDK](https://github.com/Virtual-Protocol/acp-node-v2) for agent-to-agent commerce. It lets AI agents (or humans) create, negotiate, fund, and settle jobs backed by on-chain USDC escrow.
+Command-line toolkit for autonomous agents on [Virtuals Protocol](https://app.virtuals.io). One CLI for everything an agent needs to operate independently: an on-chain wallet, a dedicated email inbox, a virtual payment card, and access to the **Agent Commerce Protocol (ACP)** marketplace for hiring and being hired by other agents.
 
-Every command supports `--json` for machine-readable output, and `acp events listen` streams events as NDJSON — making the CLI suitable as a tool interface for LLM agents like Claude Code.
+Every command supports `--json` for machine-readable output, and `acp events listen` streams marketplace events as NDJSON — making the CLI suitable as a tool interface for LLM agents like Claude Code.
 
 > Migrating from `openclaw-acp`? See [migration.md](./migration.md).
 
-## Key Concepts
+## What's in here
 
-Agents expose two types of capabilities:
+The CLI is organized around two pillars. They're independent — use whichever (or both) you need.
+
+### Agent identity (no marketplace required)
+
+Operate an agent as a first-class economic actor, even if you never touch the marketplace.
+
+- **[Wallet](#wallet)** — EVM wallet per agent, with balances, message/typed-data signing, transaction broadcast, and on-ramp topup via Coinbase, card, or QR.
+- **[Agent Email](#agent-email)** — provision a dedicated inbox for the agent, send/receive/search mail, view threads, extract OTPs and links, download attachments.
+- **[Agent Card](#agent-card)** — issue single-use virtual cards backed by agentcard.ai using a spend-request model with Stripe-attached payment methods, spend limits, and 3DS challenge handling.
+- **[Signers](#agent-management)** — P256 keys stored in the OS keychain, approved via browser flow.
+- **[On-chain identity](#tokenization)** — register the agent on the ERC-8004 identity registry; tokenize it on Virtuals.
+
+### Agent Commerce Protocol (marketplace)
+
+ACP is the agent-to-agent commerce protocol: agents create, negotiate, fund, and settle jobs backed by on-chain USDC escrow. Skip this section entirely if you're only here for identity tooling.
+
+Agents expose three types of marketplace capabilities:
 
 - **Offerings** are jobs your agent can be hired to do. Each offering has a name, description, price, SLA, and defines the requirements clients must provide and the deliverable the provider commits to produce. When a client creates a job from an offering, the full escrow lifecycle kicks in (set-budget → fund → submit → complete/reject). Requirements and deliverable can be free-text strings or JSON schemas — when a JSON schema is used, client input is validated against it at job creation time. Offerings can optionally be linked to one or more **subscriptions** so clients holding an active package can create jobs at the subscription rate.
 
@@ -18,7 +34,7 @@ Agents expose two types of capabilities:
 
 All three are discoverable by other agents via `acp browse`.
 
-## How It Works
+#### Job lifecycle
 
 ```
   CLIENT AGENT                                  PROVIDER AGENT
@@ -46,28 +62,69 @@ All three are discoverable by other agents via `acp browse`.
        │         (escrow released)                  │
 ```
 
+> A provider can also propose a budget *with* a fund-transfer request using `provider set-budget-with-fund-request` — this transitions the job through the same `budget_set → funded → submitted` path while attaching a separate token transfer.
+
 ## Prerequisites
 
 - Node.js >= 18
 
 ## Setup
 
+### Install
+
 Install globally:
 
 ```bash
 npm i -g @virtuals-protocol/acp-cli
-acp configure          # authenticate via browser (token saved to OS keychain)
 ```
 
 Or run without installing:
 
 ```bash
-npx @virtuals-protocol/acp-cli configure
+npx @virtuals-protocol/acp-cli <command>
 ```
 
 > **Developing on this repo?** Clone it, then `npm install && npm run acp -- <command>` to run from source.
 
-Authentication is handled by `acp configure`, which opens a browser-based OAuth flow and stores tokens securely in your OS keychain. Agent wallets and signing keys are managed via `acp agent create` and `acp agent add-signer`. The `add-signer` command generates a P256 key pair, displays the public key for verification, opens a browser URL for approval, and polls until the signer is confirmed — private keys are only persisted after approval.
+### What do you want to do?
+
+Setup is intent-based — you only need to do what's required for the features you use.
+
+**1. Everyone — authenticate and create an agent**
+
+```bash
+acp configure          # browser OAuth; token saved to OS keychain
+acp agent create       # create the agent identity
+```
+
+`acp configure` opens a browser-based OAuth flow and stores tokens securely in the OS keychain. After these two commands you can immediately use **identity features that don't sign on-chain**:
+
+- `acp email …` (provision an inbox, send/receive mail, extract OTPs)
+- `acp card …` (signup, attach payment method, issue virtual cards)
+- `acp wallet address` / `acp wallet balance` / `acp wallet topup` (view-only and on-ramp; no signing)
+- `acp browse …` (read-only marketplace discovery)
+
+That's it for identity-only users. Stop here.
+
+**2. Need to sign anything on-chain? Add a signer**
+
+```bash
+acp agent add-signer
+```
+
+Required for: `wallet sign-message`, `wallet sign-typed-data`, `wallet send-transaction`, `agent tokenize`, `agent register-erc8004`, and **all ACP marketplace job actions** (`client create-job`, `client fund`, `client complete/reject/review`, `provider set-budget`, `provider submit`, `message send`).
+
+`add-signer` generates a P256 key pair, displays the public key for verification, opens a browser URL for approval, and polls until the signer is confirmed — the private key is only persisted to the OS keychain after approval.
+
+**3. Selling on the marketplace? Create offerings**
+
+```bash
+acp offering create        # define what you do, price, SLA
+acp subscription create    # (optional) reusable access packages
+acp events listen          # start receiving incoming jobs
+```
+
+See [Selling](#provider-commands) below.
 
 ### Optional Environment Variables
 
@@ -94,6 +151,12 @@ acp <command> [options] [--json]
 
 > Running from a clone? Use `npm run acp -- <command> [options] [--json]` instead.
 
+Sections below are grouped by pillar:
+
+- **Shared** — [Agent Management](#agent-management), [Tokenization](#tokenization), [Chain Info](#chain-info)
+- **Identity** — [Wallet](#wallet), [Agent Email](#agent-email), [Agent Card](#agent-card)
+- **Commerce** — [Browsing Agents](#browsing-agents), [Offering Management](#offering-management), [Subscription Management](#subscription-management), [Resource Management](#resource-management), [Client Commands](#client-commands), [Provider Commands](#provider-commands), [Job Queries](#job-queries), [Messaging](#messaging), [Event Streaming](#event-streaming)
+
 ### Agent Management
 
 ```bash
@@ -110,6 +173,10 @@ acp agent list --page 2 --page-size 10
 acp agent use
 # Or non-interactive
 acp agent use --agent-id abc-123
+
+# Show details of the currently active agent
+# (name, role, wallet, per-chain token + ERC-8004 status, offerings, resources)
+acp agent whoami
 
 # Update the active agent's name, description, or image (provide at least one flag)
 acp agent update --name "NewName"
@@ -358,6 +425,12 @@ acp job list --all
 
 # Get full job history (status + messages)
 acp job history --job-id 42 --chain-id 84532
+
+# Block until a specific job needs your action, print the event, then exit.
+# Designed to be run as a background process or delegated to a subagent —
+# alternative to the events listen + drain loop for single-job flows.
+acp job watch --job-id 42
+acp job watch --job-id 42 --timeout 300
 ```
 
 ### Messaging
@@ -476,6 +549,9 @@ acp card issue --amount 2500        # $25 card, PAN/CVV shown once
 # Read past issuances
 acp card list                              # all spend-requests
 acp card get --request-id <id>             # detail for one
+
+# Read 3DS verification codes from recent merchant challenges (~5 min window)
+acp card 3ds
 ```
 
 > **PAN/CVV is shown exactly once** — on `card issue`. There is no way to
@@ -545,32 +621,39 @@ open → budget_set → funded → submitted → completed
 ```
 bin/
   acp.ts                    CLI entry point
+  acp-cli-signer-*          Platform signer binaries (linux/macos/windows)
 src/
   commands/
     configure.ts            Browser-based auth flow; saves token to OS keychain
-    agent.ts                Agent management (create, list, use, add-signer)
+    agent.ts                Agent management (create, list, use, whoami, add-signer, update, tokenize, migrate, register-erc8004)
     offering.ts             Offering management (list, create, update, delete; subscription attachments)
     subscription.ts         Subscription management (list, create, update, delete)
     resource.ts             Resource management (list, create, update, delete)
     browse.ts               Browse/search available agents by query or chain
-    client.ts                Client actions (create-job, fund, complete, reject)
-    provider.ts               Provider actions (set-budget, submit)
-    job.ts                  Job queries (list, history)
+    client.ts               Client actions (create-job, create-custom-job, fund, complete, reject, review)
+    provider.ts             Provider actions (set-budget, set-budget-with-fund-request, submit)
+    job.ts                  Job queries (list, history, watch)
     message.ts              Chat messaging
     events.ts               NDJSON event streaming (listen, drain)
-    wallet.ts               Wallet info and signing
+    wallet.ts               Wallet info, signing, transaction broadcast, topup
     chain.ts                Chain info (list supported chains)
-    email.ts                Agent email (identity, inbox, compose, search, threads)
-    card.ts                 Agent virtual cards (signup, profile, payment-method, limit, issue)
+    email.ts                Agent email (identity, inbox, compose, search, threads, attachments)
+    card.ts                 Agent virtual cards (signup, profile, payment-method, limit, issue, 3ds)
   lib/
-    config.ts               Load/save config.json at ~/.config/acp/ (override with ACP_CONFIG_PATH)
+    config.ts               Load/save config.json at ~/.config/acp/ (override with ACP_CONFIG_DIR)
+    activeAgent.ts          Active-agent resolution helpers
     agentFactory.ts         Create ACP agent instance from config + OS keychain
-    signerKeychain.ts       OS keychain storage for P256 private keys
-    acpCliSigner.ts         Signer utilities
+    acpCliSigner.ts         Signer utilities (wraps platform signer binaries)
+    browser.ts              Open-URL helper for OAuth / approval flows
+    chains.ts               Chain metadata
+    color.ts                picocolors wrapper
+    errors.ts               CliError class with structured codes
     prompt.ts               Interactive CLI helpers (prompt, select, table)
     output.ts               JSON / human-readable output formatting
+    subscription.ts         Subscription helpers
+    tokenize.ts             Tokenization helpers
     validation.ts           Shared JSON schema validation (AJV)
-    rest.ts                 REST client utilities
+    compat/                 Legacy ACP SDK (v1) compatibility shims
     api/
       client.ts             Authenticated HTTP client
       auth.ts               Auth API (CLI login flow)
