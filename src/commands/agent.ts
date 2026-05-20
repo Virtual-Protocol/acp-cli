@@ -655,6 +655,77 @@ export function registerAgentCommands(program: Command): void {
     });
 
   agent
+    .command("generate-signer-key")
+    .description(
+      "Generate a P-256 signer keypair locally. The private key stays in the keystore; the public key is printed for partner-side agent provisioning.",
+    )
+    .action((_opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const { publicKey } = generateNativeKeyPair();
+        if (json) {
+          outputResult(json, { publicKey });
+        } else {
+          console.log(`\nPublic Key: ${publicKey}\n`);
+          console.log(
+            "Send this public key to your partner provisioning API. Keep using this CLI on the same machine to retain access to the private key.",
+          );
+        }
+      } catch (err) {
+        outputError(
+          json,
+          `Failed to generate key pair: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    });
+
+  agent
+    .command("link")
+    .description(
+      "Link an existing local signer keypair to an agent that was provisioned externally (e.g. by a partner backend).",
+    )
+    .requiredOption("--agent-id <id>", "Agent ID returned by the partner")
+    .requiredOption(
+      "--wallet <address>",
+      "Agent's wallet address returned by the partner",
+    )
+    .requiredOption(
+      "--signer-public-key <key>",
+      "Public key previously emitted by `acp agent generate-signer-key`",
+    )
+    .option("--wallet-id <id>", "Privy wallet ID (optional)")
+    .option(
+      "--make-active",
+      "Also set this agent as the currently active one",
+      false,
+    )
+    .action((opts, cmd) => {
+      const json = isJson(cmd);
+      const wallet = String(opts.wallet);
+      try {
+        setPublicKey(wallet, String(opts.signerPublicKey));
+        setAgentId(wallet, String(opts.agentId));
+        if (opts.walletId) setWalletId(wallet, String(opts.walletId));
+        if (opts.makeActive) setActiveWallet(wallet);
+        outputResult(json, {
+          success: true,
+          agentId: String(opts.agentId),
+          walletAddress: wallet,
+          activeWallet: opts.makeActive ? wallet : getActiveWallet(),
+        });
+      } catch (err) {
+        outputError(
+          json,
+          `Failed to link agent: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    });
+
+  agent
     .command("whoami")
     .description("Show details of the currently active agent")
     .action(async (_opts, cmd) => {
