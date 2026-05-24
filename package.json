@@ -5,6 +5,9 @@
   "bin": {
     "acp": "./dist/bin/acp.js"
   },
+  "dexter": {
+    "skill": "./SKILL.md"
+  },
   "files": [
     "dist",
     "bin/acp-cli-signer-*",
