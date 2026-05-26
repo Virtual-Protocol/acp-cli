@@ -12,42 +12,115 @@ Without partner credentials the CLI still works — just not headlessly. Anyone 
 
 ## How it works (in plain terms)
 
-The end user's machine generates its own signing key locally and never reveals the private half to anyone. Your backend creates the agent on Virtuals' side using just the public half. The end user then plugs the returned tokens and agent details into their local CLI in one step.
+The end user's machine generates its own signing key locally and never reveals the private half to anyone. Your backend then asks the end user to sign a short consent message proving they approved this specific agent. With consent in hand, your backend creates the agent on Virtuals' side and returns CLI tokens that the machine plugs in.
 
 ```
-  [end-user's machine]                         [your backend]                       [virtuals]
-        │                                            │                                  │
-        │  1. acp agent generate-signer-key          │                                  │
-        │ ─────────────► generates keypair locally   │                                  │
-        │                                            │                                  │
-        │  2. publicKey ─────────────────────────► creates agent on the user's behalf ► │
-        │                                            │ ◄────── { agentId, wallet,       │
-        │                                            │           accessToken,           │
-        │                                            │           refreshToken }         │
-        │                                            │                                  │
-        │  3. tokens + agent details ◄───────────────│                                  │
-        │                                            │                                  │
-        │  4. acp configure (stores tokens)          │                                  │
-        │  5. acp agent link (records agent)         │                                  │
+  [end-user's machine]            [end user's wallet]            [your backend]              [virtuals]
+        │                                 │                            │                          │
+        │  1. acp agent generate-signer-key                            │                          │
+        │ ──────────► generates P-256 keypair locally                  │                          │
+        │                                                                                          
+        │  2. publicKey ─────────────────► sign EIP-712 consent ──────►                          │
+        │                                  (proves user owns           │                          │
+        │                                   the wallet)                │                          │
+        │                                                              │                          │
+        │                                                  3. call Virtuals with:                │
+        │                                                     { walletAddress,                    │
+        │                                                       signerPublicKey,                  │
+        │                                                       ownerSignature,                   │
+        │                                                       issuedAt } ──────────────────────►│
+        │                                                              │                          │
+        │                                                              │   ◄─── { agentId,        │
+        │                                                              │          wallet,         │
+        │                                                              │          accessToken,    │
+        │                                                              │          refreshToken }  │
+        │                                                              │                          │
+        │  4. tokens + agent details ◄─────────────────────────────────│                          │
+        │                                                                                          
+        │  5. acp configure (stores tokens)                                                       │
+        │  6. acp agent link (records agent)                                                      │
 ```
 
 The private half of the signing key never leaves the user's machine. Your backend doesn't see it. We don't see it. Only the holder of that machine can sign on behalf of the agent.
 
-## The four commands the machine runs
+## Capturing the end user's consent
+
+Before your backend can ask Virtuals to provision the agent, it needs a fresh EIP-712 signature from the end user's EVM wallet. This proves the user actually owns the address you're claiming and approves this specific signer being attached to their wallet.
+
+### Typed-data shape
+
+```ts
+const domain = { name: 'Virtuals Partner', version: '1' };
+
+const types = {
+  PartnerAgentConsent: [
+    { name: 'walletAddress',   type: 'address' },
+    { name: 'signerPublicKey', type: 'string'  },
+    { name: 'issuedAt',        type: 'uint256' },
+  ],
+};
+
+const message = {
+  walletAddress,                                   // end user's EVM wallet
+  signerPublicKey,                                 // from step 1 above
+  issuedAt: BigInt(Math.floor(Date.now() / 1000)), // unix seconds; ±10-min window
+};
+```
+
+### Signing with `viem`
+
+```ts
+import { privateKeyToAccount } from 'viem/accounts';
+
+const account = privateKeyToAccount(endUserPrivateKey);
+// (or use a connected wallet: MetaMask, WalletConnect, embedded SDK, …)
+
+const ownerSignature = await account.signTypedData({
+  domain,
+  types,
+  primaryType: 'PartnerAgentConsent',
+  message,
+});
+
+// Send `ownerSignature` (0x… hex) and `issuedAt` to Virtuals alongside
+// walletAddress + signerPublicKey.
+```
+
+### Why each field is in there
+
+- **`walletAddress`** — Virtuals checks the signature recovers to this exact address. Prevents you (or anyone with your API key) from registering agents under EVM addresses the user doesn't control.
+- **`signerPublicKey`** — Binds the consent to the specific signer being attached. The same signature can't be reused later to attach a different signer.
+- **`issuedAt`** — Virtuals rejects anything outside a ±10-minute window from server time. Stops stale signatures from being replayed.
+
+### What the user sees
+
+Modern wallets show structured EIP-712 fields, so the user's prompt looks like:
+
+```
+PartnerAgentConsent
+  walletAddress:   0xAbC1234567890abcdef1234567890ABCDEF12345
+  signerPublicKey: MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…
+  issuedAt:        1716624000
+```
+
+Readable enough that the user can verify the signing key matches what your UI claims, but compact enough not to overwhelm.
+
+## The bootstrap from the machine's perspective
 
 You'll have **two different wallet addresses** flowing through the bootstrap:
 
 - **End user's wallet** — the EVM address (EOA) you set up the user with. Owns the agent. Used to key tokens locally.
 - **Agent's wallet** — a separate EVM address Virtuals creates when the agent is provisioned. Used to identify the agent in the local config.
 
-Once your backend has returned the agent details to the machine, the bootstrap is four CLI calls:
+Once your backend has provisioned and returned the agent details, the bootstrap is four CLI calls:
 
 ```bash
 # 1. Generate the keypair (run once, before contacting your backend).
 acp agent generate-signer-key --json
 # → { "publicKey": "MFkwEwYHK…" }
 
-# 2. (your backend uses that publicKey to provision the agent, returning the values below)
+# 2. (your backend collects the consent signature and provisions the agent,
+#     returning the values below)
 
 # 3. Persist the tokens against the end user's wallet.
 acp configure \
@@ -63,11 +136,11 @@ acp agent link \
   --make-active
 ```
 
-That's it — no browser opens, no human input required.
+That's it — no browser opens, no human input required on the machine itself.
 
 ### Full bootstrap script
 
-If you're injecting this into a first-boot script, the whole thing fits in one bash file. The script generates the keypair, asks **your** backend to provision the agent (your backend then talks to Virtuals on the machine's behalf), and wires the CLI up:
+If you're injecting this into a first-boot script, the whole thing fits in one bash file. The script generates the keypair, asks **your** backend to provision the agent (your backend collects the user's signature and forwards the call to Virtuals), and wires the CLI up:
 
 ```bash
 #!/usr/bin/env bash
@@ -81,8 +154,9 @@ set -euo pipefail
 # 1. Generate the keypair locally; private half stays on the machine.
 PUBLIC_KEY=$(acp agent generate-signer-key --json | jq -r .publicKey)
 
-# 2. Ask your backend to provision the agent. Your backend forwards the
-#    public key to Virtuals and returns the tokens + agent details.
+# 2. Ask your backend to provision the agent. Your backend collects the
+#    end-user's EIP-712 consent signature (e.g. via a wallet prompt in your
+#    own UI), then forwards everything to Virtuals.
 PROVISION=$(curl --fail -sS -X POST "$PARTNER_AGENT_CREATE_URL" \
   -H "Authorization: Bearer $PARTNER_API_TOKEN" \
   -H "Content-Type: application/json" \
@@ -107,7 +181,7 @@ acp agent link \
   --make-active
 ```
 
-The request/response shape between the machine and your backend is yours to design. The example above mirrors what Virtuals returns, which keeps the script trivially thin — your backend can simply forward the response back. Just be careful with the two wallet addresses: `acp configure --wallet` takes the end user's wallet; `acp agent link --wallet` takes the agent's wallet.
+The request/response shape between the machine and your backend is yours to design. The example above is the minimum — your backend is responsible for plumbing the consent signature into the call to Virtuals before relaying the response back. Just be careful with the two wallet addresses: `acp configure --wallet` takes the end user's wallet; `acp agent link --wallet` takes the agent's wallet.
 
 ### Env-var alternative
 
@@ -152,4 +226,3 @@ ACP_CONFIG_DIR=~/.config/acp/bob   acp …
 ```
 
 Each profile has its own `config.json`, its own keys in the keychain, and its own active agent.
-
