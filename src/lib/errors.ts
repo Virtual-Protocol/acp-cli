@@ -6,7 +6,9 @@ export type ErrorCode =
   | "VALIDATION_ERROR"
   | "API_ERROR"
   | "ALREADY_EXISTS"
-  | "TIMEOUT";
+  | "TIMEOUT"
+  | "SLIPPAGE_TOO_LOW"
+  | "INSUFFICIENT_GAS";
 
 export class CliError extends Error {
   code: ErrorCode;

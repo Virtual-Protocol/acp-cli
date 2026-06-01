@@ -13,6 +13,7 @@ import { registerBrowseCommand } from "../src/commands/browse";
 import { registerOfferingCommands } from "../src/commands/offering";
 import { registerResourceCommands } from "../src/commands/resource";
 import { registerChainCommands } from "../src/commands/chain";
+import { registerTradeCommands } from "../src/commands/trade";
 
 program
   .name("acp")
@@ -21,7 +22,10 @@ program
   .option("--json", "Output results as JSON")
   .addHelpText(
     "after",
-    "\nGet started:\n  acp configure → acp agent create → acp agent add-signer → acp browse\n"
+    "\nGet started:\n  acp configure → acp agent create → acp agent add-signer → acp browse\n" +
+      "\nTrading:\n" +
+      "  acp trade  Swaps (cross-chain/spot), Hyperliquid deposits, and HL perps/spot.\n" +
+      "             Routes by the params you pass — see `acp trade --help`.\n"
   );
 
 registerClientCommands(program);
@@ -36,5 +40,6 @@ registerBrowseCommand(program);
 registerOfferingCommands(program);
 registerResourceCommands(program);
 registerChainCommands(program);
+registerTradeCommands(program);
 
 program.parse();

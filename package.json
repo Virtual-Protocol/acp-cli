@@ -9,13 +9,17 @@
     "acp": "tsx bin/acp.ts",
     "build": "tsc"
   },
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "author": "",
   "license": "ISC",
   "description": "CLI tool wrapping the ACP Node SDK for agent tool use",
   "dependencies": {
+    "@nktkas/hyperliquid": "^0.32.2",
     "@privy-io/node": "^0.11.0",
     "@virtuals-protocol/acp-node": "^0.3.0-beta.40",
-    "@virtuals-protocol/acp-node-v2": "^0.0.4",
+    "@virtuals-protocol/acp-node-v2": "^0.1.2",
     "ajv": "^8.18.0",
     "commander": "^13.0.0",
     "cross-keychain": "^1.1.0",
