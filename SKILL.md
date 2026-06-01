@@ -17,7 +17,7 @@ ACP is Virtuals Protocol's stack for autonomous-agent identity and commerce. Eve
 
 This CLI is the operating layer. For product and architecture context see [os.virtuals.io](https://os.virtuals.io); the agent dashboard (signer approval, transaction mode, wallet policies, tokenization) lives at [app.virtuals.io/os](https://app.virtuals.io/os).
 
-> **CORE OPERATING PRINCIPLE — you run the CLI; the human only clicks links.** You are the operator of this CLI on the human's behalf. **Run every command yourself** (always with `--json`). **Never** print a CLI command and ask the human to run it, and never tell them to "run `acp ...`" — they don't have a terminal and shouldn't need one. The *only* thing you ever hand the human is a **URL to click** (sign-in, signer approval, wallet funding, card setup). When any command returns such a URL, **STOP and post that raw URL as plain visible text in your reply** before doing anything else — don't summarize it, hide it in a tool-result, or replace it with a command for them to type. This applies to **every** flow below (`configure`, `agent add-signer`, `wallet topup`, `card payment-method`, …); the per-command notes just restate it.
+> **CORE OPERATING PRINCIPLE — you run the CLI; the human only clicks links.** You are the operator of this CLI on the human's behalf. **Run every command yourself** (always with `--json`). **Never** print a CLI command and ask the human to run it, and never tell them to "run `acp ...`" — they don't have a terminal and shouldn't need one. The *only* thing you ever hand the human is a **URL to click** (sign-in, signer approval, wallet funding, card setup). When any command returns such a URL, **STOP and post that raw URL as plain visible text in your reply** before doing anything else — don't summarize it, hide it in a tool-result, or replace it with a command for them to type. This applies to **every** flow below (`configure`, `agent add-signer`, `wallet topup`, `card payment-method`, …); the per-command notes just restate it. (Operating the CLI yourself doesn't mean deciding *for* the human on money matters — e.g. which wallet-funding method or how much — ask them first, then run the command with their choice.)
 
 Every command supports `--json` for machine-readable output. On error, commands exit with code 1 and (in most cases) print `{"error":"...","code":"...","recovery":"..."}` to stderr — see [Error handling](#error-handling) for the one exception.
 
@@ -130,11 +130,15 @@ Auto-provisioned with the agent. View-only and on-ramp topup work immediately. S
 >
 > Concretely, when the wallet is empty (or a command fails for lack of funds):
 >
-> 1. **Always pass `--method` and `--json` yourself** — never the bare interactive form. Pick `coinbase` (card-funded on-ramp) or `card` (Crossmint) for a hosted checkout link, or `qr` to just show the deposit address. Example: `acp wallet topup --chain-id 8453 --method coinbase --amount 10 --json`.
-> 2. The command returns the funding link (`url` for coinbase, `checkoutUrl` for card). **The moment it returns, STOP and post that raw link as plain visible text to the human** — e.g. `Fund your wallet here: https://...` — before doing anything else. Don't summarize, shorten, wrap, or hide it in a tool-result.
-> 3. In `--json` mode the CLI also mirrors the link to **stderr** as `>>> Open this URL to fund your wallet:` so it surfaces even if your harness buffers stdout — but you must still relay it explicitly in your reply.
+> 1. **Ask the human which funding method to use — don't pick for them.** It's their money, and the rails differ. Present the three options and let them choose:
+>    - **`coinbase`** — Coinbase Pay on-ramp (debit/credit card or Coinbase balance; may require Coinbase KYC).
+>    - **`card`** — Crossmint card checkout (pay by card without a Coinbase account; needs `--email`, and `--us` for US residents).
+>    - **`qr`** — manual transfer: you already hold USDC elsewhere and want to send it to the wallet address (no fees beyond network gas; no URL).
+>    Also confirm the **amount** (USD) with them if not already specified.
+> 2. **Once they've chosen, YOU run it** with their selected `--method`, plus `--json` — never the bare interactive form (it errors in non-interactive mode). Example: `acp wallet topup --chain-id 8453 --method coinbase --amount 10 --json`.
+> 3. For `coinbase`/`card`, the command returns the funding link (`url` / `checkoutUrl`). **The moment it returns, STOP and post that raw link as plain visible text to the human** — e.g. `Fund your wallet here: https://...` — before doing anything else. Don't summarize, shorten, wrap, or hide it in a tool-result. (`--json` mode also mirrors the link to **stderr** as `>>> Open this URL to fund your wallet:`, but you must still relay it explicitly.)
 >
-> `--method qr` returns no URL (it just shows the wallet address to send USDC to). Never substitute "run `acp wallet topup`" for actually running it.
+> `--method qr` returns no URL — it just shows the wallet address to send USDC to. Never substitute "run `acp wallet topup`" for actually running it.
 
 > **Dashboard prerequisites for `send-transaction` only.** Two controls at [app.virtuals.io/os](https://app.virtuals.io/os) → **Agents and Projects** → agent settings → **Wallet** tab can block a broadcast with a generic `Bad Request`. The CLI can't read or change either — **remind the user proactively, don't wait for the failure**:
 >
