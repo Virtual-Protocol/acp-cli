@@ -17,6 +17,8 @@ ACP is Virtuals Protocol's stack for autonomous-agent identity and commerce. Eve
 
 This CLI is the operating layer. For product and architecture context see [os.virtuals.io](https://os.virtuals.io); the agent dashboard (signer approval, transaction mode, wallet policies, tokenization) lives at [app.virtuals.io/os](https://app.virtuals.io/os).
 
+> **CORE OPERATING PRINCIPLE — you run the CLI; the human only clicks links.** You are the operator of this CLI on the human's behalf. **Run every command yourself** (always with `--json`). **Never** print a CLI command and ask the human to run it, and never tell them to "run `acp ...`" — they don't have a terminal and shouldn't need one. The *only* thing you ever hand the human is a **URL to click** (sign-in, signer approval, wallet funding, card setup). When any command returns such a URL, **STOP and post that raw URL as plain visible text in your reply** before doing anything else — don't summarize it, hide it in a tool-result, or replace it with a command for them to type. This applies to **every** flow below (`configure`, `agent add-signer`, `wallet topup`, `card payment-method`, …); the per-command notes just restate it.
+
 Every command supports `--json` for machine-readable output. On error, commands exit with code 1 and (in most cases) print `{"error":"...","code":"...","recovery":"..."}` to stderr — see [Error handling](#error-handling) for the one exception.
 
 > **This copy of the skill may be stale.** The CLI is upgraded independently of the skill text your harness loaded — an `npm update` bumps the binary but does NOT refresh this document. The version this copy was written for is in the frontmatter (`metadata.acpCliVersion`, currently `1.0.9`). The authoritative, version-matched SKILL.md ships *inside* the installed npm package. **At the start of a session that uses this CLI, verify freshness and re-load if drifted:**
@@ -124,7 +126,15 @@ Auto-provisioned with the agent. View-only and on-ramp topup work immediately. S
 | `acp wallet sign-typed-data --data <json> --chain-id <id> --json` | Sign EIP-712 (signer required) | `{signature}` |
 | `acp wallet send-transaction --chain-id <id> --to <addr> [--value <wei>] [--data <hex>] --json` | Broadcast (signer + dashboard prerequisites — see callout below) | `{transactionHash}` |
 
-> **Relay the topup URL — don't swallow it.** For `--method coinbase` and `--method card`, the human must open the returned link (`url` / `checkoutUrl`) to actually move money. Same rule as the auth/signer URLs: **the moment the command returns, STOP and post the raw link as plain visible text to the human** before doing anything else. In `--json` mode the CLI also mirrors the link to **stderr** as `>>> Open this URL to fund your wallet:` so it surfaces even if your harness buffers stdout — but you should still relay it explicitly. `--method qr` needs no URL (it just shows the wallet address to send USDC to).
+> **CRITICAL — YOU run topup; never tell the human to run it.** When the wallet needs funds, **you (the agent) run the topup command yourself** and relay the resulting link. Do **NOT** print a command like `acp wallet topup --chain-id 8453` and ask the human to run it — that is the single most common failure here. The human's only job is to click the link you give them; they should never touch the CLI.
+>
+> Concretely, when the wallet is empty (or a command fails for lack of funds):
+>
+> 1. **Always pass `--method` and `--json` yourself** — never the bare interactive form. Pick `coinbase` (card-funded on-ramp) or `card` (Crossmint) for a hosted checkout link, or `qr` to just show the deposit address. Example: `acp wallet topup --chain-id 8453 --method coinbase --amount 10 --json`.
+> 2. The command returns the funding link (`url` for coinbase, `checkoutUrl` for card). **The moment it returns, STOP and post that raw link as plain visible text to the human** — e.g. `Fund your wallet here: https://...` — before doing anything else. Don't summarize, shorten, wrap, or hide it in a tool-result.
+> 3. In `--json` mode the CLI also mirrors the link to **stderr** as `>>> Open this URL to fund your wallet:` so it surfaces even if your harness buffers stdout — but you must still relay it explicitly in your reply.
+>
+> `--method qr` returns no URL (it just shows the wallet address to send USDC to). Never substitute "run `acp wallet topup`" for actually running it.
 
 > **Dashboard prerequisites for `send-transaction` only.** Two controls at [app.virtuals.io/os](https://app.virtuals.io/os) → **Agents and Projects** → agent settings → **Wallet** tab can block a broadcast with a generic `Bad Request`. The CLI can't read or change either — **remind the user proactively, don't wait for the failure**:
 >
