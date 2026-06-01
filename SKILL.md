@@ -30,19 +30,18 @@ acp agent create     # creates the agent identity + EVM wallet
 
 **You — the agent — run `acp configure` yourself.** Do not tell the human to "run `acp configure`." All you need from the human is one click on a URL you give them.
 
-There are two ways to drive this, depending on whether your runtime can hold a long-running process open.
+> **CRITICAL — relay the URL, don't swallow it.** The single most common failure is the agent running the auth command, receiving the URL in tool output, and never showing it to the human — so they sit waiting forever. To avoid this:
+>
+> 1. **Always use the split flow below — never run bare `acp configure`.** Bare `configure` blocks for up to 5 min; many harnesses buffer its stdout until the process exits, so the URL never surfaces in time.
+> 2. **The moment `acp configure start` returns, STOP and post the raw `url` as plain visible text in your reply to the human, before doing anything else.** Do not summarize it, shorten it, wrap it, or hide it inside a tool-result. Paste the full URL on its own line: e.g. `Sign in here: https://...`.
+> 3. Only after you've shown the URL should you move on to polling with `complete`.
 
-**Option A — split flow (recommended for agents that can't stream stdout).** Two short, non-blocking commands:
+**Split flow (always use this).** Two short, non-blocking commands:
 
-1. `acp configure start --json` → prints `{"url":"...","requestId":"..."}` and **exits immediately** (~1–2s). **Relay the `url` to the human** for the one-click sign-in, and keep the `requestId`.
+1. `acp configure start --json` → prints `{"url":"...","requestId":"..."}` and **exits immediately** (~1–2s). **Immediately relay the raw `url` to the human** as visible text (see CRITICAL note above) for the one-click sign-in, and keep the `requestId`.
 2. `acp configure complete --request-id <requestId> --json` → exchanges the requestId for tokens and persists them. Returns `{"status":"pending"}` while sign-in is still in progress (call again), and `{"status":"authenticated","walletAddress":"..."}` once done. Add `--wait [--timeout <seconds>]` to block-poll until authenticated instead of checking once.
 
-**Option B — single blocking command.** `acp configure --json`:
-
-1. Prints `{"url":"..."}` to stdout almost immediately. **Relay this URL to the human.**
-2. The command then waits (up to ~5 min) until the human finishes the sign-in, then prints the final `{"message":"...","walletAddress":"..."}` and exits 0.
-
-If your runtime can tolerate a long-running command, stream stdout line-by-line: the URL appears on the first JSON line so you can relay it the moment it's printed, even though the process is still alive. If it can't, prefer Option A. Either way, tokens are saved to the OS keychain.
+**Fallback — single blocking command (only if you can stream stdout line-by-line).** `acp configure --json` prints `{"url":"..."}` on the first stdout line almost immediately, then waits (up to ~5 min) until the human signs in and prints the final `{"message":"...","walletAddress":"..."}`. Only use this if your runtime can read and relay that first line *while the process is still alive*. If it can't (most harnesses), use the split flow — otherwise the URL stays buffered and the human never sees it. Either way, tokens are saved to the OS keychain.
 
 After auth + `acp agent create` you can immediately use email, card, wallet view-only/topup, and read-only marketplace browse. Anything that signs on-chain (wallet sign/send, tokenization, compute top-up, marketplace job actions) additionally needs `acp agent add-signer` — covered in the recipe that needs it.
 
@@ -101,9 +100,9 @@ Single-use virtual cards backed by agentcard.ai. Separate identity from the Virt
 
 Auto-provisioned with the agent. View-only and on-ramp topup work immediately. Signing and broadcasting need `acp agent add-signer` (one-time; opens browser to approve, persists P256 key to OS keychain after approval). Probe before re-running: if a signer-required command errors with `NO_SIGNER`, *then* run `add-signer`.
 
-**add-signer also has a split flow** (same shape as `configure`), for harnesses that can't hold a blocking command open:
+**add-signer also has a split flow** (same shape as `configure`), for harnesses that can't hold a blocking command open. Same CRITICAL rule applies: the moment `--no-wait` returns, **STOP and post the raw `signerUrl` as plain visible text to the human before polling** — don't summarize or hide it, and prefer this split over the blocking `add-signer` so the URL never gets buffered.
 
-1. `acp agent add-signer --agent-id <id> --no-wait --json` → generates the key and prints `{"signerUrl":"...","requestId":"...","publicKey":"...","agentId":"...","expiresIn":"5 minutes"}`, then **exits immediately**. Relay `signerUrl` to the human for one-click approval; keep `requestId` and `publicKey`.
+1. `acp agent add-signer --agent-id <id> --no-wait --json` → generates the key and prints `{"signerUrl":"...","requestId":"...","publicKey":"...","agentId":"...","expiresIn":"5 minutes"}`, then **exits immediately**. Immediately relay the raw `signerUrl` to the human for one-click approval; keep `requestId` and `publicKey`.
 2. `acp agent signer-status --agent-id <id> --request-id <requestId> --public-key <publicKey> --json` → returns `{"status":"pending"}` until approved (call again), then `{"status":"completed",...}` and persists the signer. Add `--wait [--timeout <seconds>]` to block-poll instead of checking once. Pass `--agent-id` in non-interactive runs to skip the TTY agent picker.
 
 | Command | What it does | Response shape |
@@ -432,7 +431,7 @@ Most commands print structured JSON errors to stderr on `--json`:
 
 | Code | Meaning | Recovery |
 |---|---|---|
-| `NOT_AUTHENTICATED` | No token or session expired | Run auth yourself (don't push to the human): `acp configure start` → relay the printed URL → `acp configure complete --request-id <id>`. Or run the blocking `acp configure` and stream stdout to relay the URL. |
+| `NOT_AUTHENTICATED` | No token or session expired | Run auth yourself (don't push to the human): `acp configure start` → **immediately post the raw URL as visible text** → `acp configure complete --request-id <id>`. Never run bare `acp configure` unless you can stream stdout line-by-line. |
 | `NO_ACTIVE_AGENT` | No active agent set | `acp agent use` or `acp agent list` |
 | `NO_SIGNER` | No signing key, or key missing from keychain | `acp agent add-signer` |
 | `SESSION_NOT_FOUND` | Job ID doesn't exist or wallet isn't a participant | `acp job list` to verify |
