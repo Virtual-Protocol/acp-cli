@@ -45,7 +45,7 @@ acp agent create     # creates the agent identity + EVM wallet
 
 After auth + `acp agent create` you can immediately use email, card, wallet view-only/topup, and read-only marketplace browse. Anything that signs on-chain (wallet sign/send, tokenization, compute top-up, marketplace job actions) additionally needs `acp agent add-signer` — covered in the recipe that needs it.
 
-`ACP_CONFIG_DIR` overrides where the saved config lives (default `~/.config/acp`). Other environment knobs (`IS_TESTNET`, `PARTNER_ID`) are in [Reference](#environment-variables).
+`ACP_CONFIG_DIR` overrides where the saved config lives (default `~/.config/acp`). The `IS_TESTNET` toggle is in [Reference](#environment-variables).
 
 ## Recipes
 
@@ -456,7 +456,6 @@ All optional. The CLI works out of the box after `acp configure`.
 | Variable | Default | Purpose |
 |---|---|---|
 | `IS_TESTNET` | `false` | Set to `true` for testnet chains, API, and Privy app. Global toggle — affects all commands. |
-| `PARTNER_ID` | — | Partner ID for `acp agent tokenize`. Niche; only matters for tokenization launches. |
 | `ACP_CONFIG_DIR` | `~/.config/acp` | Directory holding the config file(s). Mentioned in Setup; listed here for completeness. |
 
 Mainnet and testnet store state in separate config files (`config.json` vs `config-testnet.json`) so identities don't mix when toggling `IS_TESTNET`.
