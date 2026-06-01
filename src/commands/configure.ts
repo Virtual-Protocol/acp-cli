@@ -6,6 +6,14 @@ import { getClient } from "../lib/api/client";
 import { setCurrentOwnerWallet, setTokens } from "../lib/config";
 import { openBrowser } from "../lib/browser";
 
+// In --json mode the URL goes to stdout as JSON for machine parsing, but many
+// agent harnesses buffer or suppress stdout while passing stderr through to the
+// human. Mirroring a plain, copy-pasteable line to stderr guarantees the
+// sign-in link reaches the human even if the agent never relays the JSON.
+function emitAuthUrlToStderr(url: string): void {
+  process.stderr.write(`\n>>> Open this URL to sign in:\n\n    ${url}\n\n`);
+}
+
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -100,6 +108,11 @@ async function runBrowserConfigure(json: boolean): Promise<void> {
 
   if (json) {
     process.stdout.write(JSON.stringify({ url }) + "\n");
+    // Also surface the URL on stderr as a plain human line. Many agent
+    // harnesses buffer or hide stdout but pass stderr through to the human,
+    // so this guarantees the sign-in link is visible even if the agent
+    // never relays the JSON itself. Does not affect the stdout JSON contract.
+    emitAuthUrlToStderr(url);
   } else {
     console.log(`\nOpen this URL to authenticate:\n\n  ${url}\n`);
   }
@@ -158,6 +171,9 @@ async function runConfigureStart(json: boolean): Promise<void> {
 
   if (json) {
     outputResult(json, { url, requestId });
+    // See note in runBrowserConfigure: mirror the URL to stderr so harnesses
+    // that swallow stdout still show the human a clickable sign-in link.
+    emitAuthUrlToStderr(url);
   } else {
     console.log(`\nOpen this URL to authenticate:\n\n  ${url}\n`);
     console.log(

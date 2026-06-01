@@ -49,6 +49,15 @@ import * as viemChains from "viem/chains";
 import { formatEther, parseEther } from "viem";
 import { formatChainId } from "../lib/chains";
 
+// In --json mode the signer approval URL goes to stdout as JSON for machine
+// parsing, but many agent harnesses buffer or suppress stdout while passing
+// stderr through to the human. Mirroring a plain, copy-pasteable line to stderr
+// guarantees the approval link reaches the human even if the agent never
+// relays the JSON. Does not affect the stdout JSON contract.
+function emitSignerUrlToStderr(url: string): void {
+  process.stderr.write(`\n>>> Open this URL to approve the signer:\n\n    ${url}\n\n`);
+}
+
 function parseLegacyId(raw: string, json: boolean): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id)) {
@@ -238,6 +247,7 @@ async function runAddSignerFlow(
 
   if (json) {
     outputResult(json, { signerUrl, expiresIn: "5 minutes" });
+    emitSignerUrlToStderr(signerUrl);
   } else {
     console.log(`\nPublic Key: ${publicKey}`);
     console.log(
@@ -725,6 +735,7 @@ export function registerAgentCommands(program: Command): void {
           agentId: selected.id,
           expiresIn: "5 minutes",
         });
+        emitSignerUrlToStderr(started.signerUrl);
         return;
       }
 
