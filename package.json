@@ -22,7 +22,7 @@
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19.0"
   },
   "publishConfig": {
     "access": "public"
@@ -47,6 +47,7 @@
     "web3"
   ],
   "dependencies": {
+    "@nktkas/hyperliquid": "^0.32.2",
     "@privy-io/node": "^0.11.0",
     "@virtuals-protocol/acp-node": "^0.3.0-beta.40",
     "@virtuals-protocol/acp-node-v2": "^0.1.3",

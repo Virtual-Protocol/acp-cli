@@ -141,3 +141,19 @@ export async function getClient(unauthenticated?: boolean): Promise<{
     authApi: new AuthApi(httpClient),
   };
 }
+
+export async function getAgentApi(walletAddress?: string): Promise<AgentApi> {
+  return (await getClient(walletAddress)).agentApi;
+}
+
+/**
+ * Resolve the ACP API base URL + a valid bearer token for direct calls that
+ * aren't covered by AgentApi/AuthApi (e.g. the `/trade/*` proxy). Reuses the
+ * same testnet switch and token-refresh logic as getClient().
+ */
+export async function getApiContext(): Promise<{ apiUrl: string; token: string }> {
+  const isTestnet = process.env.IS_TESTNET === "true";
+  const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const token = await resolveToken(apiUrl);
+  return { apiUrl, token };
+}
