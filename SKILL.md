@@ -186,6 +186,21 @@ Quick pointers:
 | `acp agent register-erc8004 [--agent-id --chain-id]` | Register on the ERC-8004 identity registry (signer required) |
 | `acp agent migrate [--agent-id --complete]` | Migrate a legacy v1 agent to v2 (two phases) |
 
+> **CRITICAL — `tokenize` is an irreversible, fee-bearing launch; let the human set the economics, don't default for them.** Running `acp agent tokenize` without flags silently applies defaults (anti-sniper `1`/60s, no pre-buy, ACF off, 60-days off, no airdrop, robotics off) and only prompts for chain/symbol — so launching non-interactively bakes in economic choices the human never made. These shape the token permanently and spend the human's VIRTUAL (launch fee + any pre-buy) + ETH gas. **Treat it like funding: surface the params, confirm, then run.**
+>
+> 1. **Walk the human through the launch params and let them decide each** (don't pick for them):
+>    - **`--symbol`** — token ticker (uppercased). Ask; don't invent one.
+>    - **`--chain-id`** — which chain to launch on (must be a provider-supported chain).
+>    - **`--anti-sniper <0|1|2>`** — transfer-tax window vs sniper bots: `0` off, `1` 60s (default), `2` 98min.
+>    - **`--prebuy <virtuals>`** — VIRTUAL spent at launch to atomically buy your own token (whole units; `0`/omit = none). Wallet must hold `launchFee + prebuy`.
+>    - **`--acf`** — Capital Formation: higher launch fee (surcharge), dev-allocation tokenomics + sell wall; pre-buy capped at ≤50% of LP.
+>    - **`--60-days`** — reversible 60-day fit-test mode; pre-buy follows a 60-day cliff. (Growth Allocation Pool is web-UI only.)
+>    - **`--airdrop-percent <0–5>`** — % of supply to veVIRTUAL holders (no fee impact).
+>    - **`--robotics`** — mark as Embodied/Eastworld-eligible (no fee impact; onboarding is post-launch on the web).
+>    Confirm the **total cost** (the CLI shows launch fee + pre-buy + the ACF surcharge if enabled) before proceeding.
+> 2. **Prerequisites you run/check yourself first:** an active agent (`acp agent use`), a signer (`acp agent add-signer` — tokenize refuses without one), and enough **VIRTUAL** (`launchFee + prebuy`) + **ETH** gas in the wallet. If short, run the [topup flow](#wallet) (which itself asks the human which funding method).
+> 3. **Once they've chosen, YOU run it** with their values as flags (not the bare interactive form): `acp agent tokenize --chain-id <id> --symbol <SYM> --anti-sniper <n> [--prebuy <v>] [--acf] [--60-days] [--airdrop-percent <p>] [--robotics] --json`. See [docs/tokenization.md](docs/tokenization.md) for full semantics.
+
 ## Chain info
 
 ```bash
