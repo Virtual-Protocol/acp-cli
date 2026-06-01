@@ -89,7 +89,7 @@ Single-use virtual cards backed by agentcard.ai. Separate identity from the Virt
 | `signup` | `acp card signup --email "..." --json` | `{state, nextStep}` |
 | `pollSignup` | `acp card signup-poll --state <token> --json` (retry every ~3s, cap ~5 min then re-signup) | `{done, email?, nextStep}` |
 | `updateProfile` | `acp card profile set --first-name --last-name --phone-number "+E164" --json` | `{profile, nextStep}` |
-| `addPaymentMethod` | `acp card payment-method --json` → open returned `url` for Stripe setup | `{url, nextStep}` |
+| `addPaymentMethod` | `acp card payment-method --json` → **relay the returned `url` to the human** for Stripe setup (also mirrored to stderr as `>>> Open this URL to set up your card payment method:` so it surfaces even if stdout is buffered) | `{url, nextStep}` |
 | `completePaymentMethod` | Re-open the previous Stripe `url` in the user's browser, then re-probe `card profile` | (re-check `profile.nextStep`) |
 | `setLimit` | `acp card limit set --amount <cents, min 100> --json` | `{spendLimitCents, spentCents, remainingCents, nextStep}` |
 | `issueCard` / `null` | `acp card issue --amount <cents 100–7500, %100> --json` | `{id, amountCents, pan, cvv, expiryMonth, expiryYear, last4?, zip?, cardholderName?, expiresAt, nextStep}` — **PAN/CVV inline; store immediately** |
@@ -123,6 +123,8 @@ Auto-provisioned with the agent. View-only and on-ramp topup work immediately. S
 | `acp wallet sign-message --message <text> --chain-id <id> --json` | Sign plaintext (signer required) | `{signature}` |
 | `acp wallet sign-typed-data --data <json> --chain-id <id> --json` | Sign EIP-712 (signer required) | `{signature}` |
 | `acp wallet send-transaction --chain-id <id> --to <addr> [--value <wei>] [--data <hex>] --json` | Broadcast (signer + dashboard prerequisites — see callout below) | `{transactionHash}` |
+
+> **Relay the topup URL — don't swallow it.** For `--method coinbase` and `--method card`, the human must open the returned link (`url` / `checkoutUrl`) to actually move money. Same rule as the auth/signer URLs: **the moment the command returns, STOP and post the raw link as plain visible text to the human** before doing anything else. In `--json` mode the CLI also mirrors the link to **stderr** as `>>> Open this URL to fund your wallet:` so it surfaces even if your harness buffers stdout — but you should still relay it explicitly. `--method qr` needs no URL (it just shows the wallet address to send USDC to).
 
 > **Dashboard prerequisites for `send-transaction` only.** Two controls at [app.virtuals.io/os](https://app.virtuals.io/os) → **Agents and Projects** → agent settings → **Wallet** tab can block a broadcast with a generic `Bad Request`. The CLI can't read or change either — **remind the user proactively, don't wait for the failure**:
 >

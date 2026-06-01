@@ -13,6 +13,17 @@ import { openBrowser } from "../lib/browser";
 import { selectOption, prompt } from "../lib/prompt";
 import qrcode from "qrcode-terminal";
 
+// In --json mode the funding URL goes to stdout as JSON for machine parsing,
+// but many agent harnesses buffer or suppress stdout while passing stderr
+// through to the human. Mirroring a plain, copy-pasteable line to stderr
+// guarantees the link reaches the human even if the agent never relays the
+// JSON. Mirrors emitAuthUrlToStderr() in configure.ts.
+function emitTopupUrlToStderr(url: string): void {
+  process.stderr.write(
+    `\n>>> Open this URL to fund your wallet:\n\n    ${url}\n\n`
+  );
+}
+
 export function registerWalletCommands(program: Command): void {
   const wallet = program.command("wallet").description("Wallet commands");
 
@@ -328,7 +339,9 @@ export function registerWalletCommands(program: Command): void {
           );
           const { url } = result.data;
           outputResult(json, { walletAddress, method: "coinbase", url });
-          if (!json && isTTY()) {
+          if (json) {
+            emitTopupUrlToStderr(url);
+          } else if (isTTY()) {
             console.log(`\n  Opening Coinbase Pay in your browser...\n`);
             openBrowser(url);
           }
@@ -393,7 +406,9 @@ export function registerWalletCommands(program: Command): void {
             method: "card",
             checkoutUrl,
           });
-          if (!json && isTTY()) {
+          if (json) {
+            emitTopupUrlToStderr(checkoutUrl);
+          } else if (isTTY()) {
             console.log(`\n  Opening Crossmint checkout in your browser...\n`);
             openBrowser(checkoutUrl);
           }
