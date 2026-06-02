@@ -389,51 +389,83 @@ export function registerAgentCommands(program: Command): void {
 
       let name: string = opts.name?.trim() ?? "";
       let description: string = opts.description?.trim() ?? "";
-      // Treat any explicit --image (including empty) as "user opted out of the
-      // image prompt". Only fall back to prompting when the flag was omitted.
+      // image is OPTIONAL. Treat any explicit --image (including empty) as
+      // "caller opted out of the image prompt". Only fall back to prompting
+      // for it when the flag was omitted AND we're in an interactive terminal.
       const imageFlagProvided = opts.image !== undefined;
       let image: string | undefined = opts.image?.trim() || undefined;
 
-      const needsPrompt = !name || !description || !imageFlagProvided;
-      let rl: readline.Interface | undefined;
+      const interactive = isTTY();
 
-      try {
-        if (needsPrompt) {
-          rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-          });
-        }
-
+      // Non-interactive (agent harness, pipe, CI): never open a readline
+      // prompt — it would hang with no stdin. Require the genuinely-mandatory
+      // fields as flags and proceed with image left empty when it's omitted.
+      if (!interactive) {
         if (!name) {
-          name = (await prompt(rl!, "Agent name: ")).trim();
-          if (!name) {
-            outputError(json, "Agent name cannot be empty.");
-            return;
-          }
-        }
-
-        if (!description) {
-          description = (await prompt(rl!, "Agent description: ")).trim();
-          if (!description) {
-            outputError(json, "Agent description cannot be empty.");
-            return;
-          }
-        }
-
-        if (!imageFlagProvided && rl) {
-          const imageInput = (
-            await prompt(
-              rl,
-              "Agent image URL (optional, press Enter to skip): "
+          outputError(
+            json,
+            new CliError(
+              "Agent name is required",
+              "VALIDATION_ERROR",
+              "Pass --name in non-interactive mode, e.g. acp agent create --name \"My Agent\" --description \"...\" --json"
             )
-          ).trim();
-          if (imageInput) {
-            image = imageInput;
-          }
+          );
+          return;
         }
-      } finally {
-        rl?.close();
+        if (!description) {
+          outputError(
+            json,
+            new CliError(
+              "Agent description is required",
+              "VALIDATION_ERROR",
+              "Pass --description in non-interactive mode. --image is OPTIONAL: omit it (or pass --image \"\") to create the agent without one."
+            )
+          );
+          return;
+        }
+        // image stays undefined when --image is omitted — that's fine, it's optional.
+      } else {
+        const needsPrompt = !name || !description || !imageFlagProvided;
+        let rl: readline.Interface | undefined;
+
+        try {
+          if (needsPrompt) {
+            rl = readline.createInterface({
+              input: process.stdin,
+              output: process.stdout,
+            });
+          }
+
+          if (!name) {
+            name = (await prompt(rl!, "Agent name: ")).trim();
+            if (!name) {
+              outputError(json, "Agent name cannot be empty.");
+              return;
+            }
+          }
+
+          if (!description) {
+            description = (await prompt(rl!, "Agent description: ")).trim();
+            if (!description) {
+              outputError(json, "Agent description cannot be empty.");
+              return;
+            }
+          }
+
+          if (!imageFlagProvided && rl) {
+            const imageInput = (
+              await prompt(
+                rl,
+                "Agent image URL (optional, press Enter to skip): "
+              )
+            ).trim();
+            if (imageInput) {
+              image = imageInput;
+            }
+          }
+        } finally {
+          rl?.close();
+        }
       }
 
       let created: Agent;

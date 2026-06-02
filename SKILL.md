@@ -175,7 +175,7 @@ Quick pointers:
 
 | Command | What it does |
 |---|---|
-| `acp agent create [--name --description --image]` | Create a new agent + wallet |
+| `acp agent create --name <n> --description <d> [--image <url>]` | Create a new agent + wallet. **Non-interactively, pass `--name` + `--description` (both required) and `--json`; `--image` is OPTIONAL — just omit it.** Don't run the bare form in an agent harness: with no TTY it can't prompt and will error for missing name/description. |
 | `acp agent list [--page --page-size]` | List your agents |
 | `acp agent use [--agent-id]` | Switch active agent |
 | `acp agent whoami --json` | Show details of the active agent (per-chain tokenization status, ERC-8004 IDs, offerings, resources) |
