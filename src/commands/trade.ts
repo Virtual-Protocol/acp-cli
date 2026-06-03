@@ -127,7 +127,7 @@ export function registerTradeCommands(program: Command): void {
         "  --chain-in <evm>  --chain-out 1337    → deposit USDC into Hyperliquid\n" +
         "  --chain-in 1337   --chain-out 1337    → Hyperliquid spot order\n" +
         "  --chain-in 1337   --chain-out <evm>   → withdraw USDC from Hyperliquid\n" +
-        "  --side long|short                     → Hyperliquid perp (leveraged)\n" +
+        "  --side long|short                     → Hyperliquid perp (leveraged; crypto, stocks, FX, commodities)\n" +
         "  (no flags, in a terminal)             → interactive picker\n" +
         "\nExamples:\n" +
         "  acp trade --token-in usdc --chain-in 8453 --amount-in 50 --token-out virtual --chain-out 8453\n" +
@@ -153,7 +153,7 @@ export function registerTradeCommands(program: Command): void {
     .option("--slippage <pct>", "HL market-order slippage as a percent (default 5)", "5")
     // -- Hyperliquid perp (position shape) -------------------------------
     .option("--side <side>", "Perp side: long or short")
-    .option("--token <symbol>", "Perp token symbol, e.g. BTC, ETH, SOL")
+    .option("--token <symbol>", "Perp market symbol — crypto, equity/stock, FX, or commodity (e.g. BTC, ETH, SOL)")
     .option("--size <size>", "Perp order size in token units")
     .option("--leverage <n>", "Set leverage for this token before a perp order")
     .option("--isolated", "Use isolated margin when setting leverage", false)
