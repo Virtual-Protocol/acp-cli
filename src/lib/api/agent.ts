@@ -1049,6 +1049,60 @@ export class AgentApi {
     );
   }
 
+  // ── Developer campaign methods ───────────────────────────────────
+
+  async evaluateDeveloperCampaign(
+    githubLogin: string,
+    githubToken?: string
+  ): Promise<any> {
+    const headers = githubToken ? { "x-github-token": githubToken } : {};
+    return this.client.post<any>(
+      "/developer-campaign/github/evaluate",
+      { githubLogin }
+    );
+  }
+
+  async linkDeveloperCampaignGithub(
+    agentId: string,
+    githubLogin: string,
+    githubToken: string,
+    repositoryName?: string
+  ): Promise<any> {
+    // Custom post because of headers override
+    const url = new URL(`/developer-campaign/agents/${agentId}/github-link`, this.client["baseUrl"]);
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...this.client["authHeaders"](),
+        "x-github-token": githubToken,
+      },
+      body: JSON.stringify({ githubLogin, repositoryName }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json();
+  }
+
+  async enrollDeveloperCampaign(
+    agentId: string,
+    githubLogin: string,
+    githubToken: string,
+    repositoryName?: string
+  ): Promise<any> {
+    const url = new URL("/developer-campaign/enroll", this.client["baseUrl"]);
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...this.client["authHeaders"](),
+        "x-github-token": githubToken,
+      },
+      body: JSON.stringify({ agentId, githubLogin, repositoryName }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json();
+  }
+
   async getAgentAssets(
     agentId: string,
     networks: string[]
