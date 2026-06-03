@@ -748,7 +748,7 @@ async function runTreasuresStock(
 
   const slippageBps =
     opts.slippageBps !== undefined
-      ? Number(opts.slippageBps)
+      ? parseTreasuresSlippageBps(opts.slippageBps)
       : DEFAULT_TREASURES_SLIPPAGE_BPS;
   const protocol =
     opts.protocol !== undefined
@@ -849,6 +849,18 @@ async function runTreasuresStock(
     submit: submitRes,
     legs: finalStatus.legs,
   });
+
+  // `completed` is the only success; pollTreasuresStatus only returns terminal
+  // states, so anything else here is `partial_failed`/`all_failed`. The per-leg
+  // detail was just printed above — flip the exit code (rather than throw and
+  // re-print via the error path) so scripts can branch on a non-zero exit.
+  if (finalStatus.aggregate_status !== "completed") {
+    process.exitCode = 1;
+    progress(
+      json,
+      `Treasures quote ${quote.quote_id} ended ${finalStatus.aggregate_status}`
+    );
+  }
 }
 
 async function signTreasuresPayload(
@@ -881,13 +893,16 @@ async function pollTreasuresStatus(
 ): Promise<TreasuresQuoteStatusResponse> {
   const deadline = Date.now() + TREASURES_POLL_TIMEOUT_MS;
   let lastAgg: string | undefined;
-  while (Date.now() < deadline) {
+  for (;;) {
     const s = await treasuresQuoteStatus(quoteId);
     if (s.aggregate_status !== "in_progress") return s;
     if (s.aggregate_status !== lastAgg) {
       progress(json, `  status=${s.aggregate_status} (cached=${s.is_cached})`);
       lastAgg = s.aggregate_status;
     }
+    // Stop only *after* a fresh check, so a fill that lands during the final
+    // sleep is still observed rather than misreported as a TIMEOUT.
+    if (Date.now() >= deadline) break;
     await sleep(TREASURES_POLL_MS);
   }
   throw new CliError(
@@ -895,6 +910,21 @@ async function pollTreasuresStatus(
     "TIMEOUT",
     `Re-check later via GET /quote/${quoteId}/status (no auth required).`
   );
+}
+
+// Guard the bps before it hits JSON.stringify — an un-validated Number() turns
+// garbage into NaN, which serializes as `max_slippage_bps: null` and quietly
+// drops the cap server-side. Require a non-negative whole number of bps.
+function parseTreasuresSlippageBps(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new CliError(
+      `Invalid --slippage-bps: ${String(raw)}`,
+      "VALIDATION_ERROR",
+      "Pass a non-negative whole number of basis points, e.g. 300 (=3%)."
+    );
+  }
+  return n;
 }
 
 function validateTreasuresProtocol(s: string): "ondo" | "xstocks" {
