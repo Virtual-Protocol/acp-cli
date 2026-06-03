@@ -49,6 +49,15 @@ import * as viemChains from "viem/chains";
 import { formatEther, parseEther } from "viem";
 import { formatChainId } from "../lib/chains";
 
+// In --json mode the signer approval URL goes to stdout as JSON for machine
+// parsing, but many agent harnesses buffer or suppress stdout while passing
+// stderr through to the human. Mirroring a plain, copy-pasteable line to stderr
+// guarantees the approval link reaches the human even if the agent never
+// relays the JSON. Does not affect the stdout JSON contract.
+function emitSignerUrlToStderr(url: string): void {
+  process.stderr.write(`\n>>> Open this URL to approve the signer:\n\n    ${url}\n\n`);
+}
+
 function parseLegacyId(raw: string, json: boolean): number | null {
   const id = parseInt(raw, 10);
   if (isNaN(id)) {
@@ -103,12 +112,18 @@ async function resolveAgent(
   return null;
 }
 
-async function runAddSignerFlow(
+const SIGNER_POLL_INTERVAL_MS = 5_000;
+const SIGNER_TIMEOUT_MS = 5 * 60 * 1_000;
+
+// Step 1 of the signer flow: generate a local P-256 keypair (private key stays
+// in the native keystore) and obtain the browser approval URL + requestId.
+// Returns null on failure (error already emitted).
+async function startAddSignerFlow(
   api: AgentApi,
   json: boolean,
-  agent: Agent
-): Promise<boolean> {
-  // 1. Generate key pair in native keystore (private key never leaves the binary)
+  agent: Agent,
+  open: boolean
+): Promise<{ publicKey: string; signerUrl: string; requestId: string } | null> {
   let publicKey: string;
   try {
     const result = generateNativeKeyPair();
@@ -120,10 +135,9 @@ async function runAddSignerFlow(
         err instanceof Error ? err.message : String(err)
       }`
     );
-    return false;
+    return null;
   }
 
-  // 2. Get add signer URL
   let signerUrl: string;
   let requestId: string;
   try {
@@ -137,15 +151,103 @@ async function runAddSignerFlow(
         err instanceof Error ? err.message : String(err)
       }`
     );
-    return false;
+    return null;
   }
 
-  // 3. Present the URL and public key for the user to verify and approve
+  if (open) openBrowser(signerUrl);
+  return { publicKey, signerUrl, requestId };
+}
+
+// Persist the public key + EVM walletId to config once a signer is approved.
+function persistSigner(
+  json: boolean,
+  agent: Agent,
+  publicKey: string
+): boolean {
+  const evmProvider = agent.walletProviders.find(
+    (wp) => (wp.chainType ?? "EVM") === "EVM"
+  );
+  if (!evmProvider?.metadata.walletId) {
+    outputError(json, "EVM wallet provider not found for this agent.");
+    return false;
+  }
+  setPublicKey(agent.walletAddress, publicKey);
+  setWalletId(agent.walletAddress, evmProvider.metadata.walletId);
+  return true;
+}
+
+type SignerCheck =
+  | { state: "completed" }
+  | { state: "pending" }
+  | { state: "not_found" };
+
+async function checkSignerStatus(
+  api: AgentApi,
+  agentId: string,
+  requestId: string
+): Promise<SignerCheck> {
+  try {
+    const statusRes = await api.getSignerStatus(agentId, requestId);
+    if (!statusRes.data.status) return { state: "not_found" };
+    if (statusRes.data.status === "completed") return { state: "completed" };
+    return { state: "pending" };
+  } catch {
+    // Transient polling error — treat as pending so the caller retries.
+    return { state: "pending" };
+  }
+}
+
+// Step 2 of the signer flow: poll until approved (or timeout), then persist.
+async function completeAddSignerFlow(
+  api: AgentApi,
+  json: boolean,
+  agent: Agent,
+  publicKey: string,
+  requestId: string,
+  timeoutMs: number = SIGNER_TIMEOUT_MS
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, SIGNER_POLL_INTERVAL_MS));
+    const check = await checkSignerStatus(api, agent.id, requestId);
+    if (check.state === "not_found") {
+      outputError(json, "Signer registration not found. Please try again.");
+      return false;
+    }
+    if (check.state === "completed") {
+      if (!json) console.log("Signer registration approved.");
+      break;
+    }
+    if (Date.now() >= deadline) {
+      outputError(json, "Signer registration timed out. Please try again.");
+      return false;
+    }
+  }
+
+  if (!persistSigner(json, agent, publicKey)) return false;
+
   if (json) {
-    outputResult(json, {
-      signerUrl,
-      expiresIn: "5 minutes",
-    });
+    outputResult(json, { agentId: agent.id, agentName: agent.name });
+  } else {
+    console.log(`\nSigner added to ${agent.name} successfully!`);
+  }
+  return true;
+}
+
+// Original blocking flow, now composed from the split helpers. Used by
+// `agent create`, `agent migrate`, and the default `add-signer` path.
+async function runAddSignerFlow(
+  api: AgentApi,
+  json: boolean,
+  agent: Agent
+): Promise<boolean> {
+  const started = await startAddSignerFlow(api, json, agent, !json);
+  if (!started) return false;
+  const { publicKey, signerUrl, requestId } = started;
+
+  if (json) {
+    outputResult(json, { signerUrl, expiresIn: "5 minutes" });
+    emitSignerUrlToStderr(signerUrl);
   } else {
     console.log(`\nPublic Key: ${publicKey}`);
     console.log(
@@ -153,63 +255,10 @@ async function runAddSignerFlow(
     );
     console.log(`\n  ${signerUrl}\n`);
     console.log(`This link expires in 5 minutes.\n`);
-    openBrowser(signerUrl);
     console.log(`Waiting for approval...`);
   }
 
-  // 3b. Poll signer status until completed or timeout (5 minutes)
-  const POLL_INTERVAL_MS = 5_000;
-  const TIMEOUT_MS = 5 * 60 * 1_000;
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < TIMEOUT_MS) {
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    try {
-      const statusRes = await api.getSignerStatus(agent.id, requestId);
-
-      if (!statusRes.data.status) {
-        outputError(json, "Signer registration not found. Please try again.");
-        return false;
-      }
-
-      if (statusRes.data.status === "completed") {
-        if (!json) {
-          console.log("Signer registration approved.");
-        }
-        break;
-      }
-    } catch {
-      // Ignore transient polling errors and retry
-    }
-
-    if (Date.now() - startTime >= TIMEOUT_MS) {
-      outputError(json, "Signer registration timed out. Please try again.");
-      return false;
-    }
-  }
-
-  // 4. Persist public key reference to config (private key already stored by native binary)
-  const evmProvider = agent.walletProviders.find(
-    (wp) => (wp.chainType ?? "EVM") === "EVM"
-  );
-
-  if (!evmProvider?.metadata.walletId) {
-    outputError(json, "EVM wallet provider not found for this agent.");
-    return false;
-  }
-
-  setPublicKey(agent.walletAddress, publicKey);
-  setWalletId(agent.walletAddress, evmProvider.metadata.walletId);
-
-  if (json) {
-    outputResult(json, {
-      agentId: agent.id,
-      agentName: agent.name,
-    });
-  } else {
-    console.log(`\nSigner added to ${agent.name} successfully!`);
-  }
-  return true;
+  return completeAddSignerFlow(api, json, agent, publicKey, requestId);
 }
 
 async function runRegisterErc8004Flow(
@@ -340,51 +389,83 @@ export function registerAgentCommands(program: Command): void {
 
       let name: string = opts.name?.trim() ?? "";
       let description: string = opts.description?.trim() ?? "";
-      // Treat any explicit --image (including empty) as "user opted out of the
-      // image prompt". Only fall back to prompting when the flag was omitted.
+      // image is OPTIONAL. Treat any explicit --image (including empty) as
+      // "caller opted out of the image prompt". Only fall back to prompting
+      // for it when the flag was omitted AND we're in an interactive terminal.
       const imageFlagProvided = opts.image !== undefined;
       let image: string | undefined = opts.image?.trim() || undefined;
 
-      const needsPrompt = !name || !description || !imageFlagProvided;
-      let rl: readline.Interface | undefined;
+      const interactive = isTTY();
 
-      try {
-        if (needsPrompt) {
-          rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-          });
-        }
-
+      // Non-interactive (agent harness, pipe, CI): never open a readline
+      // prompt — it would hang with no stdin. Require the genuinely-mandatory
+      // fields as flags and proceed with image left empty when it's omitted.
+      if (!interactive) {
         if (!name) {
-          name = (await prompt(rl!, "Agent name: ")).trim();
-          if (!name) {
-            outputError(json, "Agent name cannot be empty.");
-            return;
-          }
-        }
-
-        if (!description) {
-          description = (await prompt(rl!, "Agent description: ")).trim();
-          if (!description) {
-            outputError(json, "Agent description cannot be empty.");
-            return;
-          }
-        }
-
-        if (!imageFlagProvided && rl) {
-          const imageInput = (
-            await prompt(
-              rl,
-              "Agent image URL (optional, press Enter to skip): "
+          outputError(
+            json,
+            new CliError(
+              "Agent name is required",
+              "VALIDATION_ERROR",
+              "Pass --name in non-interactive mode, e.g. acp agent create --name \"My Agent\" --description \"...\" --json"
             )
-          ).trim();
-          if (imageInput) {
-            image = imageInput;
-          }
+          );
+          return;
         }
-      } finally {
-        rl?.close();
+        if (!description) {
+          outputError(
+            json,
+            new CliError(
+              "Agent description is required",
+              "VALIDATION_ERROR",
+              "Pass --description in non-interactive mode. --image is OPTIONAL: omit it (or pass --image \"\") to create the agent without one."
+            )
+          );
+          return;
+        }
+        // image stays undefined when --image is omitted — that's fine, it's optional.
+      } else {
+        const needsPrompt = !name || !description || !imageFlagProvided;
+        let rl: readline.Interface | undefined;
+
+        try {
+          if (needsPrompt) {
+            rl = readline.createInterface({
+              input: process.stdin,
+              output: process.stdout,
+            });
+          }
+
+          if (!name) {
+            name = (await prompt(rl!, "Agent name: ")).trim();
+            if (!name) {
+              outputError(json, "Agent name cannot be empty.");
+              return;
+            }
+          }
+
+          if (!description) {
+            description = (await prompt(rl!, "Agent description: ")).trim();
+            if (!description) {
+              outputError(json, "Agent description cannot be empty.");
+              return;
+            }
+          }
+
+          if (!imageFlagProvided && rl) {
+            const imageInput = (
+              await prompt(
+                rl,
+                "Agent image URL (optional, press Enter to skip): "
+              )
+            ).trim();
+            if (imageInput) {
+              image = imageInput;
+            }
+          }
+        } finally {
+          rl?.close();
+        }
       }
 
       let created: Agent;
@@ -617,6 +698,10 @@ export function registerAgentCommands(program: Command): void {
     .command("add-signer")
     .description("Add a new signer to an agent")
     .option("--agent-id <id>", "Agent ID")
+    .option(
+      "--no-wait",
+      "Agent-friendly: generate the key, print {signerUrl, requestId, publicKey} and exit immediately instead of blocking. Finish with `acp agent signer-status`."
+    )
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
@@ -643,15 +728,124 @@ export function registerAgentCommands(program: Command): void {
           return;
         }
 
+        // selectFromList uses a raw-mode TTY picker; only safe when interactive.
+        if (!isTTY()) {
+          outputError(
+            json,
+            new CliError(
+              "Multiple agents found and no TTY to choose from.",
+              "NO_ACTIVE_AGENT",
+              "Pass --agent-id <id> (see `acp agent list --json`), or set an active agent with `acp agent use`."
+            )
+          );
+          return;
+        }
+
         selected = await selectFromList(
           "Choose the agent you wish to add a new signer:",
           agents
         );
       }
 
-      console.log(`\nSelected: ${selected.name} ${selected.walletAddress}`);
+      if (!json) {
+        console.log(`\nSelected: ${selected.name} ${selected.walletAddress}`);
+      }
+
+      // --no-wait: split flow. commander exposes the negated flag as opts.wait.
+      if (opts.wait === false) {
+        const started = await startAddSignerFlow(
+          agentApi,
+          json,
+          selected,
+          false
+        );
+        if (!started) return;
+        outputResult(json, {
+          signerUrl: started.signerUrl,
+          requestId: started.requestId,
+          publicKey: started.publicKey,
+          agentId: selected.id,
+          expiresIn: "5 minutes",
+        });
+        emitSignerUrlToStderr(started.signerUrl);
+        return;
+      }
 
       await runAddSignerFlow(agentApi, json, selected);
+    });
+
+  agent
+    .command("signer-status")
+    .description(
+      "Complete a split `add-signer --no-wait` flow: check approval and persist the signer. Returns {status:'pending'} until approved."
+    )
+    .requiredOption(
+      "--request-id <requestId>",
+      "The requestId returned by `acp agent add-signer --no-wait`"
+    )
+    .requiredOption(
+      "--public-key <publicKey>",
+      "The publicKey returned by `acp agent add-signer --no-wait`"
+    )
+    .option("--agent-id <id>", "Agent ID (defaults to the active agent)")
+    .option(
+      "--wait",
+      "Block and keep polling until approved or timeout, instead of a single check"
+    )
+    .option(
+      "--timeout <seconds>",
+      "With --wait, maximum seconds to wait (default 300)"
+    )
+    .action(async (opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+
+      const selected = await resolveAgent(agentApi, opts, json);
+      if (!selected) {
+        outputError(
+          json,
+          new CliError(
+            "No agent resolved.",
+            "NO_ACTIVE_AGENT",
+            "Pass --agent-id <id> or set an active agent with `acp agent use`."
+          )
+        );
+        return;
+      }
+
+      const requestId = String(opts.requestId);
+      const publicKey = String(opts.publicKey);
+
+      if (opts.wait) {
+        const timeoutMs = opts.timeout
+          ? Math.max(0, Number(opts.timeout) * 1000)
+          : SIGNER_TIMEOUT_MS;
+        await completeAddSignerFlow(
+          agentApi,
+          json,
+          selected,
+          publicKey,
+          requestId,
+          timeoutMs
+        );
+        return;
+      }
+
+      const check = await checkSignerStatus(agentApi, selected.id, requestId);
+      if (check.state === "not_found") {
+        outputError(json, "Signer registration not found. Please try again.");
+        return;
+      }
+      if (check.state === "pending") {
+        outputResult(json, { status: "pending" });
+        return;
+      }
+      if (!persistSigner(json, selected, publicKey)) return;
+      outputResult(json, {
+        status: "completed",
+        agentId: selected.id,
+        agentName: selected.name,
+      });
     });
 
   agent

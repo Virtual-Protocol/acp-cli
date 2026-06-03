@@ -18,6 +18,17 @@ function formatCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+// In --json mode the Stripe setup URL goes to stdout as JSON for machine
+// parsing, but many agent harnesses buffer or suppress stdout while passing
+// stderr through to the human. Mirroring a plain, copy-pasteable line to
+// stderr guarantees the link reaches the human even if the agent never relays
+// the JSON. Mirrors emitAuthUrlToStderr() in configure.ts.
+function emitCardSetupUrlToStderr(url: string): void {
+  process.stderr.write(
+    `\n>>> Open this URL to set up your card payment method:\n\n    ${url}\n\n`
+  );
+}
+
 // Relative age for 3DS codes — the upstream window is ~5 minutes so a
 // minute-precision label is the right grain.
 function formatAge(receivedAt: string): string {
@@ -309,6 +320,7 @@ export function registerCardCommands(program: Command): void {
         const result = await agentApi.cardStartPaymentMethodSetup(agentId);
         if (json) {
           outputResult(json, result as unknown as Record<string, unknown>);
+          if (result.url) emitCardSetupUrlToStderr(result.url);
         } else {
           console.log(`${c.green("Stripe setup session created.")}`);
           console.log(`\nComplete setup at: ${c.cyan(result.url)}`);

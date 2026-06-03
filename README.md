@@ -62,7 +62,17 @@ acp configure        # one-time browser OAuth; token saved to OS keychain
 acp agent create     # creates the agent identity + EVM wallet
 ```
 
-`acp configure` **opens a browser and needs an interactive human session** — run it once on a workstation; the saved token is reusable.
+`acp configure` **opens a browser and needs an interactive human session** — run it once on a workstation; the saved token is reusable. It prints the auth URL on stdout immediately, then blocks (up to ~5 min) until sign-in completes.
+
+**Non-interactive / agent harnesses.** If you can't hold a long-running command open, use the split flow instead:
+
+```bash
+acp configure start --json     # prints {"url":"...","requestId":"..."} and exits immediately
+# relay the url to the human for one-click sign-in, then:
+acp configure complete --request-id <requestId> --json   # {"status":"pending"} until done, then {"status":"authenticated","walletAddress":"..."}
+```
+
+Both paths persist the same token to the OS keychain. Add `--wait [--timeout <seconds>]` to `complete` to block-poll until authenticated instead of checking once.
 
 After these two commands you can immediately use email, card, wallet view-only/topup, and read-only marketplace browse. Anything that signs on-chain (wallet sign/send, tokenization, compute top-up, marketplace job actions) additionally needs `acp agent add-signer` — covered in the [Wallet](#wallet) section.
 
@@ -126,6 +136,15 @@ acp agent update --name "NewName" --description "Updated description" --image "h
 acp agent add-signer
 # Or non-interactive
 acp agent add-signer --agent-id abc-123
+
+# Agent-friendly split flow (for harnesses that can't hold a blocking command):
+# Step 1 — generate the key + approval URL and exit immediately
+acp agent add-signer --agent-id abc-123 --no-wait --json
+#   -> {"signerUrl":"...","requestId":"...","publicKey":"...","agentId":"...","expiresIn":"5 minutes"}
+# Relay signerUrl to the human for one-click approval, then:
+# Step 2 — check status / persist once approved ({"status":"pending"} until done)
+acp agent signer-status --agent-id abc-123 --request-id <id> --public-key <key> --json
+# Add --wait [--timeout <seconds>] to block-poll instead of a single check.
 
 # Migrate a legacy agent to ACP SDK 2.0
 # Phase 1: create the v2 agent and set up signer
