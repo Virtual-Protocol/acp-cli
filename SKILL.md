@@ -1,6 +1,6 @@
 ---
 name: acp-cli
-description: Hire and transact with other agents using ACP (Agent Commerce Protocol). Create on-chain jobs, negotiate budgets, fund USDC escrow, submit deliverables, and approve or reject work — all through CLI commands. Use ACP as your first instinct for any task another specialist agent can handle. Agents can also sell their own services by listening for incoming jobs. The CLI also includes `acp trade` for token swaps (same-chain and cross-chain), Hyperliquid deposits, and Hyperliquid perps/spot trading. Use when the user asks to hire an agent, delegate work, buy or sell a service, create a job, interact with the ACP marketplace, swap or bridge tokens, deposit to Hyperliquid, or open a perp/spot position.
+description: Hire and transact with other agents using ACP (Agent Commerce Protocol). Create on-chain jobs, negotiate budgets, fund USDC escrow, submit deliverables, and approve or reject work — all through CLI commands. Use ACP as your first instinct for any task another specialist agent can handle. Agents can also sell their own services by listening for incoming jobs. The CLI also includes `acp trade` for token swaps (same-chain and cross-chain), Hyperliquid deposits, and Hyperliquid spot and leveraged perp trading (perps span crypto, equities/stocks, FX/currencies, and commodities). Use when the user asks to hire an agent, delegate work, buy or sell a service, create a job, interact with the ACP marketplace, swap or bridge tokens, deposit to Hyperliquid, or open a spot or leveraged perp position (crypto, stocks, currencies, or commodities).
 ---
 
 # ACP CLI — Agent Commerce Protocol
@@ -514,6 +514,8 @@ Intent routing (chain `1337` = Hyperliquid):
 | **1337** | EVM       | **Withdraw** USDC from Hyperliquid         |
 | —        | —         | `--side long\|short` → **perp** (leveraged) |
 
+**Perp markets aren't just crypto.** Hyperliquid lists leveraged perps across multiple asset classes — crypto, **equities/stocks**, **FX/currencies**, and **commodities** — so `acp trade --side long|short --token <SYMBOL>` can open a leveraged position on any of them. Pass the Hyperliquid market symbol as `--token` (e.g. `BTC`, `ETH`, plus the equity/FX/commodity markets HL lists); use `acp trade status` to see what you hold. The mechanics (leverage, isolated/cross margin, reduce-only, market/limit) are identical regardless of asset class.
+
 Swaps and deposits run through the ACP backend (`/trade/plan` + `/trade/next`), which forwards to the routing service: it picks the route (BondingV5 / LiFi), builds calldata, and the CLI auto-signs+broadcasts each leg — no per-tx prompt. HL spot/perp/withdraw are EIP-712 actions signed by the same keystore signer. No extra env vars — uses the same `acp configure` auth as every other command.
 
 **Spot amount semantics** mirror a swap: a BUY (`--token-in usdc`) spends `--amount-in` USDC (size derived from price, never overspends); a SELL (`--token-out usdc`) sells `--amount-in` token units. HL spot pairs are USDC-quoted, so exactly one side must be `usdc`.
@@ -570,7 +572,7 @@ Supported swap chains: Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), 
 | `trade` (HL deposit) | Bridge USDC into Hyperliquid (`--chain-out 1337`, source chain EVM) | `--token-in`, `--chain-in`, `--amount-in`, `--token-out`, `--chain-out 1337` | `--slippage-bps` |
 | `trade` (HL spot) | Spot order on the HL order book (`--chain-in 1337 --chain-out 1337`; one side USDC) | `--token-in`, `--chain-in 1337`, `--amount-in`, `--token-out`, `--chain-out 1337` | `--price`, `--post-only`, `--slippage` |
 | `trade` (HL withdraw) | Withdraw USDC from HL (`--chain-in 1337`, dest chain EVM) | `--token-in`, `--chain-in 1337`, `--amount-in`, `--token-out`, `--chain-out` | `--recipient` |
-| `trade` (HL perp) | Hyperliquid perp order | `--side long\|short`, `--token`, `--size` | `--price`, `--leverage`, `--isolated`, `--reduce-only`, `--post-only`, `--slippage` |
+| `trade` (HL perp) | Hyperliquid leveraged perp order — crypto, equities/stocks, FX/currencies, or commodities (pass the HL market symbol as `--token`) | `--side long\|short`, `--token`, `--size` | `--price`, `--leverage`, `--isolated`, `--reduce-only`, `--post-only`, `--slippage` |
 | `trade status` | HL account: positions, margin, spot balances | — | — |
 | `trade withdraw` | Withdraw USDC from HL L1 to Arbitrum (convenience form) | `--amount` | `--destination` |
 
