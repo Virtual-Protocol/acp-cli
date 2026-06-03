@@ -5,12 +5,17 @@
 // not a token conversion), so they use --side long|short.
 //
 // ── Intent routing (for LLM agents and humans) ──────────────────────────────
-//   --side long|short                         → Hyperliquid PERP (leveraged)
+//   --token <sym> --side long|short           → Hyperliquid PERP (leveraged)
+//   --token <sym> --amount-usdc|--amount-shares → Treasures TOKENIZED STOCK (spot)
 //   --chain-in 1337  --chain-out 1337         → Hyperliquid SPOT (order book)
 //   --chain-in <evm> --chain-out 1337         → DEPOSIT USDC into Hyperliquid
 //   --chain-in 1337  --chain-out <evm>        → WITHDRAW USDC from Hyperliquid
 //   --chain-in <evm> --chain-out <evm>        → SWAP (DEX: BondingV5 / LiFi)
 //   (no flags, in a terminal)                 → interactive picker (humans only)
+//
+// One asset flag everywhere: --token names the symbol (BTC, AAPL, …); the
+// companion flag picks the venue — --side → leveraged HL perp, --amount-usdc/
+// --amount-shares → Treasures spot tokenized stock.
 //
 // `acp trade status` shows HL positions/margin/balances (read-only).
 //
@@ -139,7 +144,8 @@ export function registerTradeCommands(program: Command): void {
         "  --chain-in <evm>  --chain-out 1337    → deposit USDC into Hyperliquid\n" +
         "  --chain-in 1337   --chain-out 1337    → Hyperliquid spot order\n" +
         "  --chain-in 1337   --chain-out <evm>   → withdraw USDC from Hyperliquid\n" +
-        "  --side long|short                     → Hyperliquid perp (leveraged; crypto, stocks, FX, commodities)\n" +
+        "  --token <sym> --side long|short       → Hyperliquid perp (leveraged; crypto, stocks, FX, commodities)\n" +
+        "  --token <sym> --amount-usdc|-shares   → Treasures tokenized stock (spot buy/sell)\n" +
         "  (no flags, in a terminal)             → interactive picker\n" +
         "\nExamples:\n" +
         "  acp trade --token-in usdc --chain-in 8453 --amount-in 50 --token-out virtual --chain-out 8453\n" +
@@ -149,6 +155,8 @@ export function registerTradeCommands(program: Command): void {
         "  acp trade --token-in PURR --chain-in 1337 --amount-in 50 --token-out usdc --chain-out 1337   # spot sell\n" +
         "  acp trade --token-in usdc --chain-in 1337 --amount-in 25 --token-out usdc --chain-out 42161  # withdraw\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5\n" +
+        "  acp trade --token AAPL --amount-usdc 50                          # buy tokenized AAPL with 50 USDC (Treasures)\n" +
+        "  acp trade --token AAPL --amount-shares 0.1                       # sell 0.1 tokenized AAPL shares (Treasures)\n" +
         "  acp trade status\n"
     )
     // -- Swap / deposit / HL spot / HL withdraw (token-pair shape) --------
@@ -164,14 +172,18 @@ export function registerTradeCommands(program: Command): void {
     .option("--post-only", "HL post-only (Alo) limit order; rejects if it crosses", false)
     .option("--slippage <pct>", "HL market-order slippage as a percent (default 5)", "5")
     // -- Treasures tokenized stock (USDC ↔ stock token swap) -------------
-    .option("--ticker <symbol>", "Tokenized stock ticker, e.g. AAPL (routes via Treasures)")
-    .option("--amount-usdc <amount>", "USDC to spend on a Treasures buy")
-    .option("--amount-shares <amount>", "Shares to liquidate on a Treasures sell")
+    // The asset is named with --token (below); these flags pick buy vs sell.
+    .option("--amount-usdc <amount>", "USDC to spend on a Treasures tokenized-stock buy (with --token)")
+    .option("--amount-shares <amount>", "Shares to liquidate on a Treasures tokenized-stock sell (with --token)")
     .option("--protocol <name>", "Treasures protocol filter: ondo or xstocks")
     .option("--chain <name>", "Treasures chain filter: sol or eth")
     // -- Hyperliquid perp (position shape) -------------------------------
     .option("--side <side>", "Perp side: long or short")
-    .option("--token <symbol>", "Perp market symbol — crypto, equity/stock, FX, or commodity (e.g. BTC, ETH, SOL)")
+    .option(
+      "--token <symbol>",
+      "Asset symbol. With --side → HL perp (crypto/stock/FX/commodity, e.g. BTC). " +
+        "With --amount-usdc/--amount-shares → Treasures tokenized stock (e.g. AAPL)"
+    )
     .option("--size <size>", "Perp order size in token units")
     .option("--leverage <n>", "Set leverage for this token before a perp order")
     .option("--isolated", "Use isolated margin when setting leverage", false)
@@ -265,12 +277,16 @@ function isPerpSide(side: string): boolean {
 }
 
 function detectIntent(opts: Record<string, unknown>, json: boolean): Intent {
-  // --ticker is the unambiguous Treasures (tokenized stock) signal. It wins
-  // over every other route — none of the swap/HL flags carry stock tickers,
-  // so seeing one means the user wants `/quote/buy` or `/quote/sell` and
-  // nothing else can match. Treasures fills settle a tokenized stock token
+  // --amount-usdc / --amount-shares are Treasures-exclusive (swaps use
+  // --amount-in, perps use --size), so either one is the unambiguous tokenized
+  // -stock signal and wins over every other route — it means the user wants
+  // `/quote/buy` or `/quote/sell` and nothing else can match. The asset is
+  // named with --token (shared with perps); --side selects a leveraged perp,
+  // an --amount-* selects Treasures spot, which settles a stock-token ERC-20
   // into the wallet (not a position), so it sits next to swaps shape-wise.
-  if (opts.ticker !== undefined) return "treasures-stock";
+  if (opts.amountUsdc !== undefined || opts.amountShares !== undefined) {
+    return "treasures-stock";
+  }
 
   const side = typeof opts.side === "string" ? opts.side.toLowerCase() : undefined;
   // --side is the unambiguous perp signal. If it's present it MUST be long or
@@ -725,7 +741,15 @@ async function runTreasuresStock(
   opts: Record<string, unknown>,
   json: boolean
 ): Promise<void> {
-  const ticker = String(opts.ticker).trim().toUpperCase();
+  if (opts.token === undefined) {
+    throw new CliError(
+      "A Treasures tokenized-stock trade needs --token <ticker>.",
+      "VALIDATION_ERROR",
+      "e.g. `acp trade --token AAPL --amount-usdc 50` (buy) or " +
+        "`acp trade --token AAPL --amount-shares 0.1` (sell)."
+    );
+  }
+  const ticker = String(opts.token).trim().toUpperCase();
   const amountUsdc =
     opts.amountUsdc !== undefined ? String(opts.amountUsdc) : undefined;
   const amountShares =
@@ -740,8 +764,8 @@ async function runTreasuresStock(
     throw new CliError(
       "Treasures needs exactly one of --amount-usdc (buy) or --amount-shares (sell).",
       "VALIDATION_ERROR",
-      "e.g. `acp trade --ticker AAPL --amount-usdc 50` (buy) or " +
-        "`acp trade --ticker AAPL --amount-shares 0.1` (sell)."
+      "e.g. `acp trade --token AAPL --amount-usdc 50` (buy) or " +
+        "`acp trade --token AAPL --amount-shares 0.1` (sell)."
     );
   }
   const isBuy = amountUsdc !== undefined;
