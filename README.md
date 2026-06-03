@@ -589,7 +589,7 @@ Each event line includes the job ID, chain ID, status, your roles, available act
 | **1337**    | **1337**    | **Spot** order on the Hyperliquid order book |
 | **1337**    | EVM         | **Withdraw** USDC from Hyperliquid           |
 
-Perps are the one exception — a leveraged position isn't a token conversion, so they use `--side long|short` (with `--token`). Running `acp trade` bare in a terminal opens an interactive picker (humans only).
+Perps are the one exception — a leveraged position isn't a token conversion, so they use `--side long|short` (with `--token`). Hyperliquid's perp markets span more than crypto: you can take leveraged positions on **stocks/equities, currencies/FX, and commodities** too, all through the same `--side`/`--token` flags. Running `acp trade` bare in a terminal opens an interactive picker (humans only).
 
 **Auto-balancing.** Hyperliquid keeps perp (collateral) and spot USDC in separate wallets, and deposits land in the *perp* wallet. You don't have to manage that: before an HL order the CLI checks the funding wallet and, if it's short, moves the shortfall over automatically (perp→spot for a spot buy, spot→perp for a perp). It's an instant, free L1 transfer — agents never think about sub-wallets.
 
@@ -637,12 +637,17 @@ HL spot pairs are USDC-quoted, so exactly one side must be `usdc`.
 
 **Hyperliquid — perps:**
 
+Hyperliquid perps aren't limited to crypto — it lists leveraged perp markets across **crypto, equities/stocks, FX/currencies, and commodities**. The command is the same for all of them: pass the Hyperliquid market symbol as `--token`, and `--side`, `--size`, and (optionally) `--leverage` work identically regardless of asset class.
+
 ```bash
-# Market long 0.01 BTC with 5x leverage
+# Market long 0.01 BTC with 5x leverage (crypto)
 acp trade --side long --token BTC --size 0.01 --leverage 5
 
 # Limit short 0.5 ETH at 4000, post-only
 acp trade --side short --token ETH --size 0.5 --price 4000 --post-only
+
+# Same shape for an equity, FX, or commodity perp — just change the symbol
+acp trade --side long --token <HL_MARKET_SYMBOL> --size 1 --leverage 3
 
 # Reduce-only (close part of a position)
 acp trade --side short --token BTC --size 0.01 --reduce-only

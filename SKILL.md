@@ -200,6 +200,16 @@ Supported swap chains: Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), 
 
 **Timing.** Same-chain swaps return in a few seconds. Cross-chain swaps and HL **deposits block until the bridge settles** — the command self-polls every 10s. Typically ~10–30s (the Relay route into HL is near-instant), with a 10-minute cap for slower routes. Agents should treat these as long-running: wait for the command to return rather than killing it early; a couple of poll cycles while LiFi indexes the source tx is normal.
 
+| Command | Description | Required Flags | Optional Flags |
+|---|---|---|---|
+| `trade` (swap) | Same/cross-chain token swap via DEX routing (BondingV5 / LiFi); both chains EVM | `--token-in`, `--chain-in`, `--amount-in`, `--token-out`, `--chain-out` | `--recipient`, `--slippage-bps`, `--deadline-secs` |
+| `trade` (HL deposit) | Bridge USDC into Hyperliquid (`--chain-out 1337`, source chain EVM) | `--token-in`, `--chain-in`, `--amount-in`, `--token-out`, `--chain-out 1337` | `--slippage-bps` |
+| `trade` (HL spot) | Spot order on the HL order book (`--chain-in 1337 --chain-out 1337`; one side USDC) | `--token-in`, `--chain-in 1337`, `--amount-in`, `--token-out`, `--chain-out 1337` | `--price`, `--post-only`, `--slippage` |
+| `trade` (HL withdraw) | Withdraw USDC from HL (`--chain-in 1337`, dest chain EVM) | `--token-in`, `--chain-in 1337`, `--amount-in`, `--token-out`, `--chain-out` | `--recipient` |
+| `trade` (HL perp) | Hyperliquid leveraged perp order — crypto, equities/stocks, FX/currencies, or commodities (pass the HL market symbol as `--token`) | `--side long\|short`, `--token`, `--size` | `--price`, `--leverage`, `--isolated`, `--reduce-only`, `--post-only`, `--slippage` |
+| `trade status` | HL account: positions, margin, spot balances | — | — |
+| `trade withdraw` | Withdraw USDC from HL L1 to Arbitrum (convenience form) | `--amount` | `--destination` |
+
 ### Compute
 
 Pay for the agent's own LLM-inference workloads from a USDC-funded compute account. `top-up` signs an on-chain USDC transfer, so it needs `acp agent add-signer` and a USDC balance in the agent's wallet on the chosen chain (`acp wallet topup` to fund it).
