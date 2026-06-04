@@ -142,8 +142,8 @@ export async function getClient(unauthenticated?: boolean): Promise<{
   };
 }
 
-export async function getAgentApi(walletAddress?: string): Promise<AgentApi> {
-  return (await getClient(walletAddress)).agentApi;
+export async function getAgentApi(): Promise<AgentApi> {
+  return (await getClient()).agentApi;
 }
 
 /**
