@@ -73,7 +73,12 @@ function isKeychainUnavailable(err: unknown): boolean {
 
 async function withKeyringFallback<T>(op: () => Promise<T>): Promise<T> {
   try {
-    return await op();
+    const res = await op();
+    if (res === null) {
+      await useBackend("file");
+      return await op();
+    }
+    return res;
   } catch (err) {
     if (!isKeychainUnavailable(err)) throw err;
     await useBackend("file");
