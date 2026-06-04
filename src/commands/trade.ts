@@ -56,19 +56,6 @@ import {
   resolvePerpAsset,
   resolveSpotAsset,
 } from "../lib/hl/client";
-import {
-  buildChallenge as buildTreasuresChallenge,
-  quoteBuy as treasuresQuoteBuy,
-  quoteSell as treasuresQuoteSell,
-  quoteStatus as treasuresQuoteStatus,
-  tradeSubmit as treasuresTradeSubmit,
-  type QuoteLeg as TreasuresQuoteLeg,
-  type QuoteResponse as TreasuresQuoteResponse,
-  type SignedLeg as TreasuresSignedLeg,
-  type SignedPayload as TreasuresSignedPayload,
-  type QuoteStatusResponse as TreasuresQuoteStatusResponse,
-} from "../lib/treasures/client";
-
 // LiFi's chain id for Hyperliquid Core (the perps/spot collateral ledger).
 // Any leg whose chain is this is "on Hyperliquid".
 const HL_CHAIN_ID = 1337;
@@ -90,6 +77,16 @@ interface SendAction {
   expectedTxKind?: string;
   timeoutMs?: number;
 }
+interface SignAction {
+  kind: "sign";
+  label: string;
+  sigType: "personal" | "eip712";
+  chainId: number;
+  message?: string; // personal_sign
+  typedData?: unknown; // EIP-712
+  expectedSignKind?: string;
+  timeoutMs?: number;
+}
 interface WaitAction {
   kind: "wait";
   label: string;
@@ -109,7 +106,7 @@ interface ErrorAction {
   retryable: boolean;
   partialResult?: Record<string, unknown>;
 }
-type Action = SendAction | WaitAction | DoneAction | ErrorAction;
+type Action = SendAction | SignAction | WaitAction | DoneAction | ErrorAction;
 
 interface PlanResponse {
   tradeId: string;
@@ -145,7 +142,8 @@ export function registerTradeCommands(program: Command): void {
         "  --chain-in 1337   --chain-out 1337    → Hyperliquid spot order\n" +
         "  --chain-in 1337   --chain-out <evm>   → withdraw USDC from Hyperliquid\n" +
         "  --token <sym> --side long|short       → Hyperliquid perp (leveraged; crypto, stocks, FX, commodities)\n" +
-        "  --token <sym> --amount-usdc|-shares   → Treasures tokenized stock (spot buy/sell)\n" +
+        "  --token <sym> --amount-usdc|-shares   → Treasures tokenized stock (spot buy/sell, USDC on Ethereum)\n" +
+        "  --token <sym> --token-in/-chain-in/-amount-in (no --token-out) → Treasures buy funded from any chain\n" +
         "  (no flags, in a terminal)             → interactive picker\n" +
         "\nExamples:\n" +
         "  acp trade --token-in usdc --chain-in 8453 --amount-in 50 --token-out virtual --chain-out 8453\n" +
@@ -155,7 +153,8 @@ export function registerTradeCommands(program: Command): void {
         "  acp trade --token-in PURR --chain-in 1337 --amount-in 50 --token-out usdc --chain-out 1337   # spot sell\n" +
         "  acp trade --token-in usdc --chain-in 1337 --amount-in 25 --token-out usdc --chain-out 42161  # withdraw\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5\n" +
-        "  acp trade --token AAPL --amount-usdc 50                          # buy tokenized AAPL with 50 USDC (Treasures)\n" +
+        "  acp trade --token AAPL --amount-usdc 50                          # buy tokenized AAPL with USDC on Ethereum\n" +
+        "  acp trade --token AAPL --token-in eth --chain-in 8453 --amount-in 0.02  # buy AAPL, funded by ETH on Base\n" +
         "  acp trade --token AAPL --amount-shares 0.1                       # sell 0.1 tokenized AAPL shares (Treasures)\n" +
         "  acp trade status\n"
     )
@@ -176,7 +175,7 @@ export function registerTradeCommands(program: Command): void {
     .option("--amount-usdc <amount>", "USDC to spend on a Treasures tokenized-stock buy (with --token)")
     .option("--amount-shares <amount>", "Shares to liquidate on a Treasures tokenized-stock sell (with --token)")
     .option("--protocol <name>", "Treasures protocol filter: ondo or xstocks")
-    .option("--chain <name>", "Treasures chain filter: sol or eth")
+    .option("--chain <name>", "Treasures venue filter: eth (sol legs can't be signed by the CLI)")
     // -- Hyperliquid perp (position shape) -------------------------------
     .option("--side <side>", "Perp side: long or short")
     .option(
@@ -276,7 +275,7 @@ function isPerpSide(side: string): boolean {
   return PERP_SIDES.has(side.trim().toLowerCase());
 }
 
-function detectIntent(opts: Record<string, unknown>, json: boolean): Intent {
+export function detectIntent(opts: Record<string, unknown>, json: boolean): Intent {
   // --amount-usdc / --amount-shares are Treasures-exclusive (swaps use
   // --amount-in, perps use --size), so either one is the unambiguous tokenized
   // -stock signal and wins over every other route — it means the user wants
@@ -301,6 +300,22 @@ function detectIntent(opts: Record<string, unknown>, json: boolean): Intent {
       );
     }
     return "perp";
+  }
+
+  // Funded Treasures buy: --token names a stock ticker and the funds come via
+  // the swap-shape flags (--token-in/--chain-in/--amount-in), but there's no
+  // --token-out/--chain-out — the "out" is the tokenized stock named by
+  // --token. That missing destination is what distinguishes it from a swap, so
+  // we route it to Treasures (the server bridges to USDC@eth, then buys).
+  if (
+    opts.token !== undefined &&
+    opts.tokenOut === undefined &&
+    opts.chainOut === undefined &&
+    (opts.tokenIn !== undefined ||
+      opts.chainIn !== undefined ||
+      opts.amountIn !== undefined)
+  ) {
+    return "treasures-stock";
   }
 
   const hasTokenParams =
@@ -423,7 +438,7 @@ async function runSwap(opts: Record<string, unknown>, json: boolean): Promise<vo
   outputResult(json, result);
 }
 
-async function runTradeLoop(
+export async function runTradeLoop(
   url: string,
   token: string,
   provider: IEvmProviderAdapter,
@@ -466,6 +481,26 @@ async function runTradeLoop(
           tradeId: plan.tradeId,
           step,
           error: { code: "TX_FAILED", message },
+        };
+      }
+    } else if (action.kind === "sign") {
+      // The server asks the CLI to produce a signature (NOT broadcast a tx):
+      // an EIP-191 personal_sign or an EIP-712 typed-data signature. We sign
+      // with the keystore-backed signer and post the signature back. Used by
+      // the Treasures flow (ownership proof + Fusion orders the server submits).
+      progress(json, `[step ${step + 1}] ${action.label}`);
+      try {
+        const signature =
+          action.sigType === "eip712"
+            ? await provider.signTypedData(action.chainId, action.typedData)
+            : await provider.signMessage(action.chainId, action.message ?? "");
+        nextBody = { tradeId: plan.tradeId, step, signature };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        nextBody = {
+          tradeId: plan.tradeId,
+          step,
+          error: { code: "SIGN_FAILED", message },
         };
       }
     } else if (action.kind === "wait") {
@@ -715,27 +750,15 @@ async function runWithdraw(
 }
 
 // ---------- Treasures tokenized stock (USDC ↔ stock token swap) ----------
-
-// Treasures EVM legs settle on Ethereum mainnet — the stock-token ERC-20s
-// (Ondo's <TICKER>on, Backed's <TICKER>x) are deployed there, not on Base
-// or any other L2. The Fusion order's EIP-712 domain.chainId is the source
-// of truth for what we sign, but we expose this constant so error messages
-// and helpers can reason about "the chain Treasures eth-legs live on".
-const TREASURES_ETH_CHAIN_ID = 1;
-// EIP-191 personal_sign is chain-agnostic by construction (no EIP-155 chain
-// binding), so the chainId we hand the provider for the ownership-proof
-// challenge is only used to pick which keystore client to call. Anything the
-// adapter supports works. We use Base to match `acp wallet sign-message`'s
-// default and avoid forcing a mainnet-chain wiring just to sign a string.
-const TREASURES_PROOF_CHAIN_ID = 8453;
-// Default slippage if --slippage-bps isn't passed. 300 bps (3%) is realistic
-// for liquid AAPL/MSFT-style names; thinner tickers can need 500-1000+.
-const DEFAULT_TREASURES_SLIPPAGE_BPS = 300;
-// Status poll cadence + timeout. Most Fusion fills land in 5-20s; Ondo's
-// settlement window can stretch closer to a minute. 120s gives all-or-nothing
-// resolution before we hand the caller a TIMEOUT to retry status manually.
-const TREASURES_POLL_MS = 3000;
-const TREASURES_POLL_TIMEOUT_MS = 120_000;
+//
+// The Treasures flow lives in the trading-agent planner now: the CLI POSTs a
+// plan with a `treasures` block and drives the same /trade/plan + /trade/next
+// loop as a swap. The server quotes, picks legs, submits, and polls; it asks
+// the CLI to sign via `sign` actions (the ownership proof + each EIP-712 Fusion
+// order). Spot stocks settle in USDC on Ethereum, so a buy can name a funding
+// source on any chain (--token-in/--chain-in/--amount-in) and the server
+// bridges to USDC@eth first. The CLI stays a thin signer; runTradeLoop already
+// handles every action kind.
 
 async function runTreasuresStock(
   opts: Record<string, unknown>,
@@ -754,26 +777,15 @@ async function runTreasuresStock(
     opts.amountUsdc !== undefined ? String(opts.amountUsdc) : undefined;
   const amountShares =
     opts.amountShares !== undefined ? String(opts.amountShares) : undefined;
-
-  // Direction = which amount field you set. Requiring exactly one keeps the
-  // routing unambiguous: --amount-usdc means "spend this much USDC", which
-  // can only be a buy; --amount-shares means "sell this many shares", which
-  // can only be a sell. Sharing --amount-in across both would force a separate
-  // --side flag (and --side is already perp-only).
-  if ((amountUsdc !== undefined) === (amountShares !== undefined)) {
-    throw new CliError(
-      "Treasures needs exactly one of --amount-usdc (buy) or --amount-shares (sell).",
-      "VALIDATION_ERROR",
-      "e.g. `acp trade --token AAPL --amount-usdc 50` (buy) or " +
-        "`acp trade --token AAPL --amount-shares 0.1` (sell)."
-    );
-  }
-  const isBuy = amountUsdc !== undefined;
+  const hasFunding =
+    opts.tokenIn !== undefined ||
+    opts.chainIn !== undefined ||
+    opts.amountIn !== undefined;
 
   const slippageBps =
     opts.slippageBps !== undefined
       ? parseTreasuresSlippageBps(opts.slippageBps)
-      : DEFAULT_TREASURES_SLIPPAGE_BPS;
+      : undefined;
   const protocol =
     opts.protocol !== undefined
       ? validateTreasuresProtocol(String(opts.protocol))
@@ -783,157 +795,76 @@ async function runTreasuresStock(
       ? validateTreasuresChain(String(opts.chain))
       : undefined;
 
+  // Direction + amount source. A sell takes only --amount-shares; a buy spends
+  // either USDC already on Ethereum (--amount-usdc) or funds bridged from
+  // another chain (--token-in/--chain-in/--amount-in).
+  const treasures: Record<string, unknown> = {
+    ticker,
+    ...(slippageBps !== undefined ? { slippageBps } : {}),
+    ...(protocol ? { protocol } : {}),
+    ...(chainFilter ? { chainFilter } : {}),
+  };
+
+  if (amountShares !== undefined) {
+    if (amountUsdc !== undefined || hasFunding) {
+      throw new CliError(
+        "A Treasures sell takes only --amount-shares (it delivers USDC on Ethereum).",
+        "VALIDATION_ERROR",
+        "e.g. `acp trade --token AAPL --amount-shares 0.1`."
+      );
+    }
+    treasures.side = "sell";
+    treasures.amountShares = amountShares;
+  } else if (amountUsdc !== undefined) {
+    if (hasFunding) {
+      throw new CliError(
+        "Use either --amount-usdc (spend USDC on Ethereum) or a funding source (--token-in/--chain-in/--amount-in), not both.",
+        "VALIDATION_ERROR"
+      );
+    }
+    treasures.side = "buy";
+    treasures.amountUsdc = amountUsdc;
+  } else if (hasFunding) {
+    // Funded buy — bridge the source token to USDC@eth, then buy.
+    if (
+      opts.tokenIn === undefined ||
+      opts.chainIn === undefined ||
+      opts.amountIn === undefined
+    ) {
+      throw new CliError(
+        "A funded Treasures buy needs --token-in, --chain-in, and --amount-in.",
+        "VALIDATION_ERROR",
+        "e.g. `acp trade --token AAPL --token-in eth --chain-in 8453 --amount-in 0.02`."
+      );
+    }
+    treasures.side = "buy";
+    treasures.fromToken = String(opts.tokenIn);
+    treasures.fromChain = Number(opts.chainIn);
+    treasures.amountIn = String(opts.amountIn);
+  } else {
+    throw new CliError(
+      "A Treasures trade needs --amount-usdc (buy), --amount-shares (sell), or a funding source (--token-in/--chain-in/--amount-in).",
+      "VALIDATION_ERROR",
+      "e.g. `acp trade --token AAPL --amount-usdc 50` (buy) or " +
+        "`acp trade --token AAPL --token-in eth --chain-in 8453 --amount-in 0.02` (funded buy)."
+    );
+  }
+
+  const { apiUrl, token } = await getApiContext();
   const owner = getWalletAddress() as Address;
-  const ethWallet = owner.toLowerCase() as Address;
   const provider = await createProviderAdapter();
 
-  // 1) Sign the ownership-proof canonical challenge. We use the EVM signer
-  // only — Sol legs aren't submittable from this CLI yet. The challenge
-  // includes an empty sol_wallet line, which the server hashes; if we later
-  // add Sol signing we'll also need to send sol_wallet in the request body.
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const challenge = buildTreasuresChallenge({ issuedAt, ethWallet });
-  progress(json, `Signing Treasures ownership proof (issued_at=${issuedAt})`);
-  const ethSig = await provider.signMessage(TREASURES_PROOF_CHAIN_ID, challenge);
-
-  // 2) Request a quote. The server returns up to N signable legs; for a buy
-  // it's at most 2 (one per chain, best first), for a sell it can be more
-  // (every leg the planner needs across the holding to liquidate the requested
-  // share amount). Either way we sign and submit all of them.
-  const baseQuoteReq = {
-    ticker,
-    max_slippage_bps: slippageBps,
-    eth_wallet: ethWallet,
-    ownership_proof: { eth_signature: ethSig, issued_at: issuedAt },
-    ...(protocol ? { protocol } : {}),
-    ...(chainFilter ? { chain: chainFilter } : {}),
-  };
+  const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", {
+    walletAddress: owner,
+    treasures,
+  });
   progress(
     json,
-    isBuy
-      ? `Requesting buy quote: ${ticker} for ${amountUsdc} USDC @ ${slippageBps}bps`
-      : `Requesting sell quote: ${amountShares} ${ticker} shares @ ${slippageBps}bps`
+    `Treasures ${plan.tradeId.slice(0, 8)} — ${String(treasures.side)} ${ticker}` +
+      (plan.route ? ` (${plan.route})` : "")
   );
-  const quote: TreasuresQuoteResponse = isBuy
-    ? await treasuresQuoteBuy({ ...baseQuoteReq, amount_usdc: amountUsdc! })
-    : await treasuresQuoteSell({ ...baseQuoteReq, amount_shares: amountShares! });
-
-  if (quote.quotes.length === 0) {
-    throw new CliError(
-      `Treasures returned no legs for ${ticker}.`,
-      "API_ERROR",
-      "Try a higher --slippage-bps or a different --protocol / --chain."
-    );
-  }
-  progress(
-    json,
-    `Got quote ${quote.quote_id} (${quote.quotes.length} leg${quote.quotes.length === 1 ? "" : "s"}, expires_at=${quote.expires_at})`
-  );
-
-  // 3) Sign every leg. EVM legs are 1inch Fusion EIP-712 orders bound to
-  // mainnet (domain.chainId=1); we honor whatever the server returns rather
-  // than hard-coding 1, since a future Treasures expansion to other EVM
-  // chains would just change the domain. Sol legs need Ed25519 over the
-  // serialized VersionedTransaction — the current CLI keystore doesn't sign
-  // Sol payloads, so we fail loudly rather than silently dropping the leg
-  // (which would 400 on submit with `incomplete_submit` anyway).
-  const signedLegs: TreasuresSignedLeg[] = [];
-  for (const leg of quote.quotes) {
-    const signedPayloads = await Promise.all(
-      leg.signable_payloads.map((payload) =>
-        signTreasuresPayload(provider, leg, payload)
-      )
-    );
-    signedLegs.push({ quote_index: leg.quote_index, signed_payloads: signedPayloads });
-  }
-  progress(json, `Signed ${signedLegs.length} leg${signedLegs.length === 1 ? "" : "s"}, submitting`);
-
-  // 4) Submit atomically. The server is idempotent on (quote_id, quote_index),
-  // so a network retry of /trade/submit won't double-broadcast. If the quote's
-  // snapshot expired between issue and submit we get 410 quote_stale — the
-  // user just re-runs the command (we don't retry transparently because the
-  // re-quote may come back with different legs/prices the user should see).
-  const submitRes = await treasuresTradeSubmit({
-    quote_id: quote.quote_id,
-    signed: signedLegs,
-  });
-
-  // 5) Poll status until terminal. /trade/submit returns optimistically once
-  // each leg is broadcast (or queued for broadcast); the on-chain fill lands
-  // asynchronously. Polling is the only way to see the final filled_shares /
-  // filled_usdc and any per-leg failures.
-  progress(json, `Polling ${quote.quote_id} for fill`);
-  const finalStatus = await pollTreasuresStatus(quote.quote_id, json);
-
-  outputResult(json, {
-    quote_id: quote.quote_id,
-    side: isBuy ? "buy" : "sell",
-    ticker,
-    aggregate_status: finalStatus.aggregate_status,
-    submit: submitRes,
-    legs: finalStatus.legs,
-  });
-
-  // `completed` is the only success; pollTreasuresStatus only returns terminal
-  // states, so anything else here is `partial_failed`/`all_failed`. The per-leg
-  // detail was just printed above — flip the exit code (rather than throw and
-  // re-print via the error path) so scripts can branch on a non-zero exit.
-  if (finalStatus.aggregate_status !== "completed") {
-    process.exitCode = 1;
-    progress(
-      json,
-      `Treasures quote ${quote.quote_id} ended ${finalStatus.aggregate_status}`
-    );
-  }
-}
-
-async function signTreasuresPayload(
-  provider: IEvmProviderAdapter,
-  leg: TreasuresQuoteLeg,
-  payload: TreasuresQuoteLeg["signable_payloads"][number]
-): Promise<TreasuresSignedPayload> {
-  if (payload.type === "evm_eip712_typed_data") {
-    const signature = await provider.signTypedData(
-      Number(payload.typed_data.domain.chainId),
-      payload.typed_data
-    );
-    return { type: "evm_eip712_signature", signature };
-  }
-  // Sol path: we'd need to deserialize the VersionedTransaction, Ed25519-sign
-  // the message bytes with the agent's Sol keypair, splice the signature into
-  // the tx, and re-serialize as base64. The CLI keystore is EVM-only today,
-  // so refuse rather than half-submit.
-  throw new CliError(
-    `Treasures returned a ${payload.type} leg (chain=${leg.chain}); ` +
-      "the CLI keystore can't sign Solana payloads yet.",
-    "VALIDATION_ERROR",
-    "Filter to EVM-only with `--chain eth`, or sign and submit Sol legs out-of-band."
-  );
-}
-
-async function pollTreasuresStatus(
-  quoteId: string,
-  json: boolean
-): Promise<TreasuresQuoteStatusResponse> {
-  const deadline = Date.now() + TREASURES_POLL_TIMEOUT_MS;
-  let lastAgg: string | undefined;
-  for (;;) {
-    const s = await treasuresQuoteStatus(quoteId);
-    if (s.aggregate_status !== "in_progress") return s;
-    if (s.aggregate_status !== lastAgg) {
-      progress(json, `  status=${s.aggregate_status} (cached=${s.is_cached})`);
-      lastAgg = s.aggregate_status;
-    }
-    // Stop only *after* a fresh check, so a fill that lands during the final
-    // sleep is still observed rather than misreported as a TIMEOUT.
-    if (Date.now() >= deadline) break;
-    await sleep(TREASURES_POLL_MS);
-  }
-  throw new CliError(
-    `Treasures quote ${quoteId} did not reach a terminal status within ${TREASURES_POLL_TIMEOUT_MS / 1000}s.`,
-    "TIMEOUT",
-    `Re-check later via GET /quote/${quoteId}/status (no auth required).`
-  );
+  const result = await runTradeLoop(apiUrl, token, provider, plan, json);
+  outputResult(json, result);
 }
 
 // Guard the bps before it hits JSON.stringify — an un-validated Number() turns
