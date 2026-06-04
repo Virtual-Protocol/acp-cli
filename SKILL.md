@@ -155,6 +155,7 @@ Pay for the agent's own LLM-inference workloads from a USDC-funded compute accou
 |---|---|---|
 | `acp compute status --json` | Show the compute account balance, usage, and limit | `{limit, limitRemaining, usage, ...}` |
 | `acp compute top-up --amount <usdc 1–1000> [--chain-id <id>] --json` | Transfer USDC (+ a processing fee) from the agent's wallet to the ACP fee wallet to credit the compute account | `{amount, totalAmount, chainId, feeWallet, txnHash}` |
+| `acp compute apply [--github <username>] [--email <email>] [--name <name>] [--linkedin <url>] [--referral <referral_code>] [--motivation <text>]` | Apply for Venice developer compute credits ($200 approved) | `{success, recommendation, score, reasoning, ...}` |
 
 The credited balance updates shortly after the transfer confirms — re-probe with `compute status`.
 
@@ -523,7 +524,7 @@ src/
     chain.ts                Chain info
     email.ts                Agent email
     card.ts                 Agent virtual cards
-    compute.ts              Agent compute account (status, top-up)
+    compute.ts              Agent compute account (status, top-up, apply)
     skill.ts                Inspect/verify the bundled SKILL.md (path, print, check)
   lib/
     config.ts               Load/save config.json at ~/.config/acp/ (override with ACP_CONFIG_DIR)
