@@ -1304,50 +1304,6 @@ export class AgentApi {
       return null;
     }
   }
-
-  /**
-   * Generates a temporary Privy authorization URL for the developer to authenticate their LinkedIn.
-   */
-  async getLinkedInVerifyUrl(
-    agentId: string
-  ): Promise<{ verifyUrl: string; requestId: string }> {
-    const baseUrl = this.getCampaignBaseUrl();
-    const url = new URL(`/developer-campaign/agents/${agentId}/linkedin-verify-url`, baseUrl);
-    const res = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...this.client["authHeaders"](),
-      },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-    if (res.status === 204) return { verifyUrl: "", requestId: "" };
-    const body = await res.json();
-    return body.data;
-  }
-
-  /**
-   * Polls the API to check if the developer has completed the LinkedIn handshake.
-   */
-  async checkLinkedInStatus(
-    agentId: string,
-    requestId: string
-  ): Promise<{ verified: boolean; url?: string }> {
-    const baseUrl = this.getCampaignBaseUrl();
-    const url = new URL(`/developer-campaign/agents/${agentId}/linkedin-status`, baseUrl);
-    url.searchParams.set("requestId", requestId);
-    const res = await fetch(url.toString(), {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...this.client["authHeaders"](),
-      },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-    if (res.status === 204) return { verified: true };
-    const body = await res.json();
-    return body.data;
-  }
 }
 
 export interface PrepareLaunchResponse {

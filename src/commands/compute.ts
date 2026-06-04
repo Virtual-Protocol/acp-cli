@@ -11,7 +11,7 @@ import { getActiveAgentId } from "../lib/activeAgent";
 import { createProviderAdapter, getWalletAddress } from "../lib/agentFactory";
 import { formatChainId, formatChainIds } from "../lib/chains";
 import { CliError } from "../lib/errors";
-import { openBrowser } from "../lib/browser";
+import { isValidLinkedInProfileUrl } from "../lib/validation";
 
 // ── Registration ────────────────────────────────────────────────────
 
@@ -232,43 +232,30 @@ export function registerComputeCommands(program: Command): void {
           name = await askQuestion("  [1/6] Full Name", name);
           email = await askQuestion("  [2/6] Developer Email", email);
           github = await askQuestion("  [3/6] GitHub Username", github);
-          console.log(`\n  [4/6] ${c.bold("LinkedIn Authentication (Security Verification)")}`);
-          console.log(`        To protect credit pools, we use cryptographically verified LinkedIn profiles.`);
-          
-          try {
-            const { verifyUrl, requestId } = await agentApi.getLinkedInVerifyUrl(agentId);
-            
-            console.log(`\n  ${c.cyan("👉 Please authenticate and authorize at this link:")}`);
-            console.log(`     ${c.underline(verifyUrl)}\n`);
-            
-            // Open default system browser dynamically
-            openBrowser(verifyUrl);
-            
-            console.log(`  ${c.yellow("⌛ Waiting for LinkedIn verification... (3-minute timeout)")}`);
-            
-            let verifiedUrl: string | undefined;
-            const timeout = 180000; // 3 minutes
-            const startTime = Date.now();
-            
-            while (Date.now() - startTime < timeout) {
-              const status = await agentApi.checkLinkedInStatus(agentId, requestId);
-              if (status.verified && status.url) {
-                verifiedUrl = status.url;
-                break;
-              }
-              await new Promise((r) => setTimeout(r, 4000)); // Poll every 4 seconds
+          console.log(`\n  [4/6] ${c.bold("LinkedIn Profile")}`);
+          // LinkedIn Privy auth was removed; take a profile URL directly and validate its format.
+          while (true) {
+            const answer = await askQuestion(
+              "        Profile URL (https://www.linkedin.com/in/… — 'q' to cancel)",
+              linkedin
+            );
+            const normalized = answer.toLowerCase();
+            if (
+              normalized === "q" ||
+              normalized === "quit" ||
+              normalized === "cancel" ||
+              normalized === "skip"
+            ) {
+              console.log(`\n${c.dim("Application cancelled.")}`);
+              return;
             }
-            
-            if (!verifiedUrl) {
-              throw new Error("Verification timed out or was cancelled by user.");
+            if (isValidLinkedInProfileUrl(answer)) {
+              linkedin = answer;
+              break;
             }
-            
-            linkedin = verifiedUrl;
-            console.log(`  ✅ ${c.green("Successfully Verified LinkedIn!")} Profile: ${linkedin}`);
-            
-          } catch (err: any) {
-            console.log(`  ❌ ${c.red(`LinkedIn Auth Fallback: ${err.message}`)}`);
-            linkedin = await askQuestion("     Enter LinkedIn Profile URL (Manual Entry Fallback)", linkedin);
+            console.log(
+              `  ${c.red("✗ Not a valid LinkedIn profile URL.")} ${c.dim("Expected e.g. https://www.linkedin.com/in/your-handle")}`
+            );
           }
           referral = await askQuestion("  [5/6] Referral Code (Optional)", referral);
           motivation = await askQuestion("  [6/6] Motivation (What will you build? / Optional)", motivation);
@@ -287,6 +274,14 @@ export function registerComputeCommands(program: Command): void {
             "Missing LinkedIn URL",
             "VALIDATION_ERROR",
             "Please provide a LinkedIn profile URL using --linkedin."
+          );
+        }
+
+        if (!isValidLinkedInProfileUrl(linkedin)) {
+          throw new CliError(
+            "Invalid LinkedIn URL",
+            "VALIDATION_ERROR",
+            "Provide a valid LinkedIn profile URL like https://www.linkedin.com/in/your-handle."
           );
         }
 
