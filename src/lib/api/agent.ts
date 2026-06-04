@@ -1284,6 +1284,33 @@ export class AgentApi {
       return null;
     }
   }
+
+  /**
+   * Generates a temporary Privy authorization URL for the developer to authenticate their LinkedIn.
+   */
+  async getLinkedInVerifyUrl(
+    agentId: string
+  ): Promise<{ verifyUrl: string; requestId: string }> {
+    const res = await this.client.get<{
+      data: { verifyUrl: string; requestId: string };
+    }>(`/developer-campaign/agents/${agentId}/linkedin-verify-url`);
+    return res.data;
+  }
+
+  /**
+   * Polls the API to check if the developer has completed the LinkedIn handshake.
+   */
+  async checkLinkedInStatus(
+    agentId: string,
+    requestId: string
+  ): Promise<{ verified: boolean; url?: string }> {
+    const res = await this.client.get<{
+      data: { verified: boolean; url?: string };
+    }>(`/developer-campaign/agents/${agentId}/linkedin-status`, {
+      requestId,
+    });
+    return res.data;
+  }
 }
 
 export interface PrepareLaunchResponse {
