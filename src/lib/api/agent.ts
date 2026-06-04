@@ -1051,15 +1051,32 @@ export class AgentApi {
 
   // ── Developer campaign methods ───────────────────────────────────
 
+  private getCampaignBaseUrl(): string {
+    const base = this.client["baseUrl"];
+    const isTestnet = base.includes("api-dev") || base.includes("testnet") || base.includes("dev") || base.includes("acp-dev");
+    return isTestnet ? "https://api-dev.virtuals.io/acp" : "https://api.virtuals.io/acp";
+  }
+
   async evaluateDeveloperCampaign(
     githubLogin: string,
     githubToken?: string
   ): Promise<any> {
-    const headers = githubToken ? { "x-github-token": githubToken } : {};
-    return this.client.post<any>(
-      "/developer-campaign/github/evaluate",
-      { githubLogin }
-    );
+    const baseUrl = this.getCampaignBaseUrl();
+    const url = new URL("/developer-campaign/github/evaluate", baseUrl);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.client["authHeaders"](),
+    };
+    if (githubToken) {
+      headers["x-github-token"] = githubToken;
+    }
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ githubLogin }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    return res.json();
   }
 
   async linkDeveloperCampaignGithub(
@@ -1068,8 +1085,8 @@ export class AgentApi {
     githubToken: string,
     repositoryName?: string
   ): Promise<any> {
-    // Custom post because of headers override
-    const url = new URL(`/developer-campaign/agents/${agentId}/github-link`, this.client["baseUrl"]);
+    const baseUrl = this.getCampaignBaseUrl();
+    const url = new URL(`/developer-campaign/agents/${agentId}/github-link`, baseUrl);
     const res = await fetch(url.toString(), {
       method: "POST",
       headers: {
@@ -1080,6 +1097,7 @@ export class AgentApi {
       body: JSON.stringify({ githubLogin, repositoryName }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (res.status === 204) return { status: "success" };
     return res.json();
   }
 
@@ -1089,7 +1107,8 @@ export class AgentApi {
     githubToken: string,
     repositoryName?: string
   ): Promise<any> {
-    const url = new URL("/developer-campaign/enroll", this.client["baseUrl"]);
+    const baseUrl = this.getCampaignBaseUrl();
+    const url = new URL("/developer-campaign/enroll", baseUrl);
     const res = await fetch(url.toString(), {
       method: "POST",
       headers: {
@@ -1100,6 +1119,7 @@ export class AgentApi {
       body: JSON.stringify({ agentId, githubLogin, repositoryName }),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (res.status === 204) return { status: "success" };
     return res.json();
   }
 
@@ -1291,10 +1311,19 @@ export class AgentApi {
   async getLinkedInVerifyUrl(
     agentId: string
   ): Promise<{ verifyUrl: string; requestId: string }> {
-    const res = await this.client.get<{
-      data: { verifyUrl: string; requestId: string };
-    }>(`/developer-campaign/agents/${agentId}/linkedin-verify-url`);
-    return res.data;
+    const baseUrl = this.getCampaignBaseUrl();
+    const url = new URL(`/developer-campaign/agents/${agentId}/linkedin-verify-url`, baseUrl);
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...this.client["authHeaders"](),
+      },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (res.status === 204) return { verifyUrl: "", requestId: "" };
+    const body = await res.json();
+    return body.data;
   }
 
   /**
@@ -1304,12 +1333,20 @@ export class AgentApi {
     agentId: string,
     requestId: string
   ): Promise<{ verified: boolean; url?: string }> {
-    const res = await this.client.get<{
-      data: { verified: boolean; url?: string };
-    }>(`/developer-campaign/agents/${agentId}/linkedin-status`, {
-      requestId,
+    const baseUrl = this.getCampaignBaseUrl();
+    const url = new URL(`/developer-campaign/agents/${agentId}/linkedin-status`, baseUrl);
+    url.searchParams.set("requestId", requestId);
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        ...this.client["authHeaders"](),
+      },
     });
-    return res.data;
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    if (res.status === 204) return { verified: true };
+    const body = await res.json();
+    return body.data;
   }
 }
 
