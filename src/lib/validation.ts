@@ -20,22 +20,3 @@ export function validateJsonSchema(input: string): Record<string, unknown> {
   }
   return parsed;
 }
-
-/**
- * Returns true if `input` is an http(s) LinkedIn personal-profile URL of the
- * form `linkedin.com/in/<slug>` (country subdomains like `sg.linkedin.com`,
- * optional `www.`, and a trailing slash are allowed; query/hash are ignored).
- * Company pages, the bare domain, and non-LinkedIn URLs are rejected.
- */
-export function isValidLinkedInProfileUrl(input: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(input.trim());
-  } catch {
-    return false;
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-  const host = url.hostname.toLowerCase();
-  if (host !== "linkedin.com" && !host.endsWith(".linkedin.com")) return false;
-  return /^\/in\/[^/\s]+\/?$/.test(url.pathname);
-}

@@ -1,6 +1,4 @@
 import type { Command } from "commander";
-import { execSync } from "child_process";
-import * as readline from "readline";
 import { encodeFunctionData, erc20Abi, isAddress, parseUnits } from "viem";
 import { USDC_ADDRESSES, USDC_DECIMALS } from "@virtuals-protocol/acp-node-v2";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
@@ -11,7 +9,7 @@ import { getActiveAgentId } from "../lib/activeAgent";
 import { createProviderAdapter, getWalletAddress } from "../lib/agentFactory";
 import { formatChainId, formatChainIds } from "../lib/chains";
 import { CliError } from "../lib/errors";
-import { isValidLinkedInProfileUrl } from "../lib/validation";
+import { openBrowser } from "../lib/browser";
 
 // ── Registration ────────────────────────────────────────────────────
 
@@ -164,168 +162,57 @@ export function registerComputeCommands(program: Command): void {
       }
     });
 
-  // Helper functions for apply
-  function execCommand(cmd: string): string {
-    try {
-      return execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-    } catch {
-      return "";
-    }
-  }
-
-  function askQuestion(query: string, defaultValue: string): Promise<string> {
-    const displayQuery = defaultValue ? `${query} [${defaultValue}]: ` : `${query}: `;
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-    return new Promise((resolve) => {
-      rl.question(displayQuery, (ans) => {
-        rl.close();
-        resolve(ans.trim() || defaultValue);
-      });
-    });
-  }
-
   compute
     .command("apply")
     .description("Apply for Venice developer compute credits ($200 approved)")
-    .option("--github <handle>", "GitHub handle (auto-harvested if omitted)")
-    .option("--email <email>", "Developer Email address (auto-harvested if omitted)")
-    .option("--name <name>", "Full Name (auto-harvested if omitted)")
-    .option("--linkedin <url>", "LinkedIn Profile URL")
-    .option("--referral <code-or-referral>", "Referral code (Optional)")
-    .option("--motivation <text>", "What will you build? (Optional)")
-    .action(async (opts, cmd) => {
+    .action(async (_opts, cmd) => {
       const json = isJson(cmd);
-      const tty = isTTY() && !json;
-
       try {
         const { agentApi } = await getClient();
         const agentId = getActiveAgentId(json);
         if (!agentId) return;
 
-        // Auto-harvest
-        const harvestedName = opts.name || execCommand("git config --global user.name") || "Developer";
-        const harvestedEmail = opts.email || execCommand("git config --global user.email") || "";
-        let harvestedGithub = opts.github || execCommand("git config --global github.user") || execCommand("git config --global credential.username");
-        if (!harvestedGithub) {
-          try {
-            harvestedGithub = execCommand("gh api user -q .login");
-          } catch {}
-        }
-
-        // Get GitHub token
-        const githubToken = process.env.GITHUB_TOKEN || execCommand("gh auth token");
-
-        let name = harvestedName;
-        let email = harvestedEmail;
-        let github = harvestedGithub;
-        let linkedin = opts.linkedin || "";
-        let referral = opts.referral || "";
-        let motivation = opts.motivation || "";
-
-        if (tty) {
-          console.log(`\n🚀 ${c.cyan("Venice-Virtuals Developer Inference Credit Campaign ($200 approved)")}`);
-          console.log(`${c.dim("----------------------------------------------------------------------")}`);
-          
-          name = await askQuestion("  [1/6] Full Name", name);
-          email = await askQuestion("  [2/6] Developer Email", email);
-          github = await askQuestion("  [3/6] GitHub Username", github);
-          console.log(`\n  [4/6] ${c.bold("LinkedIn Profile")}`);
-          // LinkedIn Privy auth was removed; take a profile URL directly and validate its format.
-          while (true) {
-            const answer = await askQuestion(
-              "        Profile URL (https://www.linkedin.com/in/… — 'q' to cancel)",
-              linkedin
-            );
-            const normalized = answer.toLowerCase();
-            if (
-              normalized === "q" ||
-              normalized === "quit" ||
-              normalized === "cancel" ||
-              normalized === "skip"
-            ) {
-              console.log(`\n${c.dim("Application cancelled.")}`);
-              return;
-            }
-            if (isValidLinkedInProfileUrl(answer)) {
-              linkedin = answer;
-              break;
-            }
-            console.log(
-              `  ${c.red("✗ Not a valid LinkedIn profile URL.")} ${c.dim("Expected e.g. https://www.linkedin.com/in/your-handle")}`
-            );
-          }
-          referral = await askQuestion("  [5/6] Referral Code (Optional)", referral);
-          motivation = await askQuestion("  [6/6] Motivation (What will you build? / Optional)", motivation);
-        }
-
-        if (!github) {
-          throw new CliError(
-            "Missing GitHub Handle",
-            "VALIDATION_ERROR",
-            "Please provide a GitHub handle using --github or configure your Git globally."
-          );
-        }
-
-        if (!linkedin) {
-          throw new CliError(
-            "Missing LinkedIn URL",
-            "VALIDATION_ERROR",
-            "Please provide a LinkedIn profile URL using --linkedin."
-          );
-        }
-
-        if (!isValidLinkedInProfileUrl(linkedin)) {
-          throw new CliError(
-            "Invalid LinkedIn URL",
-            "VALIDATION_ERROR",
-            "Provide a valid LinkedIn profile URL like https://www.linkedin.com/in/your-handle."
-          );
-        }
-
-        if (!githubToken && tty) {
-          console.log(`\n⚠️  ${c.yellow("No active GitHub token detected.")}`);
-          console.log(`   Please run ${c.bold("gh auth login")} or set the ${c.bold("GITHUB_TOKEN")} environment variable.`);
-          console.log(`   We will attempt a public linking, but authenticated claims are recommended.\n`);
-        }
-
-        if (tty) {
-          console.log(`\n⌛ ${c.dim("Submitting your application to the Venice-Virtuals Audit Engine...")}`);
-        }
-
-        // First we link GitHub
-        await agentApi.linkDeveloperCampaignGithub(agentId, github, githubToken, undefined);
-        
-        // Then we enroll
-        const enrollRes = await agentApi.enrollDeveloperCampaign(agentId, github, githubToken, undefined);
+        // GitHub linking + enrollment for this campaign run on the web app's
+        // Privy-authenticated session, which the CLI can't reproduce. So the CLI
+        // just sends the user to the agent's compute page, where the GitHub-linking
+        // UI lives, and they complete the connect + claim there.
+        const webUrl = agentApi.getDeveloperCampaignWebUrl(agentId);
 
         if (json) {
-          outputResult(json, {
-            status: "success",
-            github,
-            email,
-            enrollment: enrollRes,
-          });
+          outputResult(json, { status: "redirect", url: webUrl, agentId });
           return;
         }
 
-        console.log(`\n${c.green("✅ Application Submitted & Processed Successfully!")}`);
-        console.log(`\n${c.bold("📊 Venice-Virtuals Credit Claim Summary:")}`);
-        printTable([
-          ["Candidate Name", name],
-          ["Developer Email", email],
-          ["GitHub Handle", `@${github}`],
-          ["LinkedIn Profile", linkedin],
-          ["Referral Code", referral || "None"],
-          ["Evaluation Status", c.green(enrollRes?.status || "active")],
-          ["Weekly Credit Grant", `$${enrollRes?.weeklyCreditUsd || "200"}.00`],
-        ]);
+        console.log(
+          `\n🚀 ${c.cyan(
+            "Venice-Virtuals Developer Inference Credit Campaign ($200 approved)"
+          )}`
+        );
+        console.log(
+          `${c.dim(
+            "----------------------------------------------------------------------"
+          )}`
+        );
+        console.log(`\nApply by connecting your GitHub on this agent's compute page:`);
+        console.log(`\n  ${c.underline(webUrl)}\n`);
+        console.log(`  ${c.dim("1.")} Log in if prompted`);
+        console.log(`  ${c.dim("2.")} Connect GitHub — verifies your eligible repositories`);
+        console.log(`  ${c.dim("3.")} Claim your $200 weekly compute credit`);
 
-        console.log(`\nℹ️  ${c.dim("Your Venice compute credit has been fully linked and provisioned.")}`);
-        console.log(`   Open ${c.bold("app.virtuals.io")} on your browser to see your updated Compute Dashboard!`);
-
+        if (isTTY()) {
+          openBrowser(webUrl);
+          console.log(
+            `\nℹ️  ${c.dim("Opened in your browser. Run")} ${c.bold(
+              "acp compute status"
+            )} ${c.dim("afterward to see your credit.")}`
+          );
+        } else {
+          console.log(
+            `\nℹ️  ${c.dim("Open the link above, then run")} ${c.bold(
+              "acp compute status"
+            )} ${c.dim("to see your credit.")}`
+          );
+        }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }

@@ -155,7 +155,7 @@ Pay for the agent's own LLM-inference workloads from a USDC-funded compute accou
 |---|---|---|
 | `acp compute status --json` | Show the compute account balance, usage, and limit | `{limit, limitRemaining, usage, ...}` |
 | `acp compute top-up --amount <usdc 1–1000> [--chain-id <id>] --json` | Transfer USDC (+ a processing fee) from the agent's wallet to the ACP fee wallet to credit the compute account | `{amount, totalAmount, chainId, feeWallet, txnHash}` |
-| `acp compute apply [--github <username>] [--email <email>] [--name <name>] [--linkedin <url>] [--referral <referral_code>] [--motivation <text>]` | Apply for Venice developer compute credits ($200 approved) | `{success, recommendation, score, reasoning, ...}` |
+| `acp compute apply` | Opens the agent's web compute page (`app.virtuals.io/acp/agents/<id>?tab=compute&action=link-github`) where the developer connects GitHub (Privy OAuth) and claims the credit — the CLI can't auth to the campaign backend | `--json` returns `{status:"redirect", url, agentId}` |
 
 The credited balance updates shortly after the transfer confirms — re-probe with `compute status`.
 

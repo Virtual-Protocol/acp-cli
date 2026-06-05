@@ -1051,76 +1051,19 @@ export class AgentApi {
 
   // ── Developer campaign methods ───────────────────────────────────
 
-  private getCampaignBaseUrl(): string {
+  private getWebBaseUrl(): string {
     const base = this.client["baseUrl"];
     const isTestnet = base.includes("api-dev") || base.includes("testnet") || base.includes("dev") || base.includes("acp-dev");
-    return isTestnet ? "https://api-dev.virtuals.io/acp" : "https://api.virtuals.io/acp";
+    return isTestnet ? "https://app-dev.virtuals.io" : "https://app.virtuals.io";
   }
 
-  async evaluateDeveloperCampaign(
-    githubLogin: string,
-    githubToken?: string
-  ): Promise<any> {
-    const baseUrl = this.getCampaignBaseUrl();
-    const url = new URL("/developer-campaign/github/evaluate", baseUrl);
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      ...this.client["authHeaders"](),
-    };
-    if (githubToken) {
-      headers["x-github-token"] = githubToken;
-    }
-    const res = await fetch(url.toString(), {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ githubLogin }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-    return res.json();
-  }
-
-  async linkDeveloperCampaignGithub(
-    agentId: string,
-    githubLogin: string,
-    githubToken: string,
-    repositoryName?: string
-  ): Promise<any> {
-    const baseUrl = this.getCampaignBaseUrl();
-    const url = new URL(`/developer-campaign/agents/${agentId}/github-link`, baseUrl);
-    const res = await fetch(url.toString(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...this.client["authHeaders"](),
-        "x-github-token": githubToken,
-      },
-      body: JSON.stringify({ githubLogin, repositoryName }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-    if (res.status === 204) return { status: "success" };
-    return res.json();
-  }
-
-  async enrollDeveloperCampaign(
-    agentId: string,
-    githubLogin: string,
-    githubToken: string,
-    repositoryName?: string
-  ): Promise<any> {
-    const baseUrl = this.getCampaignBaseUrl();
-    const url = new URL("/developer-campaign/enroll", baseUrl);
-    const res = await fetch(url.toString(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...this.client["authHeaders"](),
-        "x-github-token": githubToken,
-      },
-      body: JSON.stringify({ agentId, githubLogin, repositoryName }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-    if (res.status === 204) return { status: "success" };
-    return res.json();
+  /**
+   * Web URL of an agent's compute / developer-campaign page, where the user can
+   * connect GitHub via the app's Privy OAuth flow (used as the headless-CLI
+   * fallback when no local GitHub token is available).
+   */
+  getDeveloperCampaignWebUrl(agentId: string): string {
+    return `${this.getWebBaseUrl()}/acp/agents/${agentId}?tab=compute&action=link-github`;
   }
 
   async getAgentAssets(
