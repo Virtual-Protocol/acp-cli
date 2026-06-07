@@ -106,9 +106,14 @@ Sections below are grouped by pillar:
 
 ```bash
 # Create a new agent (interactive)
+# When you opt to set up a signer, you'll be prompted to pick its
+# authorization policy (restricted / deny-all / unrestricted — see add-signer).
 acp agent create
 # Or non-interactive with flags
 acp agent create --name "MyAgent" --description "Does things" --image "https://example.com/avatar.png"
+# Auto-set up a signer after creation, with an optional authorization policy
+# (--policy applies to that signer; default restricted, skips the picker)
+acp agent create --name "MyAgent" --description "Does things" --signer --policy restricted
 
 # List all your agents
 acp agent list
@@ -136,6 +141,12 @@ acp agent update --name "NewName" --description "Updated description" --image "h
 acp agent add-signer
 # Or non-interactive
 acp agent add-signer --agent-id abc-123
+
+# Choose the signer's authorization policy (default: restricted)
+#   restricted   — authorize for all ACP transactions
+#   deny-all     — manual approval for all transactions
+#   unrestricted — no approval required
+acp agent add-signer --agent-id abc-123 --policy unrestricted
 
 # Agent-friendly split flow (for harnesses that can't hold a blocking command):
 # Step 1 — generate the key + approval URL and exit immediately

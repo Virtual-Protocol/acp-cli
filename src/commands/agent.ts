@@ -16,6 +16,8 @@ import {
   LegacyAgent,
   Erc8004RegisterTx,
   Erc8004RegisterPayload,
+  type SignerPolicy,
+  SIGNER_POLICIES,
 } from "../lib/api/agent";
 import { getClient } from "../lib/api/client";
 import {
@@ -55,7 +57,9 @@ import { formatChainId } from "../lib/chains";
 // guarantees the approval link reaches the human even if the agent never
 // relays the JSON. Does not affect the stdout JSON contract.
 function emitSignerUrlToStderr(url: string): void {
-  process.stderr.write(`\n>>> Open this URL to approve the signer:\n\n    ${url}\n\n`);
+  process.stderr.write(
+    `\n>>> Open this URL to approve the signer:\n\n    ${url}\n\n`
+  );
 }
 
 function parseLegacyId(raw: string, json: boolean): number | null {
@@ -115,6 +119,12 @@ async function resolveAgent(
 const SIGNER_POLL_INTERVAL_MS = 5_000;
 const SIGNER_TIMEOUT_MS = 5 * 60 * 1_000;
 
+const SIGNER_POLICY_DESCRIPTIONS: Record<SignerPolicy, string> = {
+  restricted: "authorize for all ACP transactions",
+  "deny-all": "manual approval for all transactions",
+  unrestricted: "no approval required",
+};
+
 // Step 1 of the signer flow: generate a local P-256 keypair (private key stays
 // in the native keystore) and obtain the browser approval URL + requestId.
 // Returns null on failure (error already emitted).
@@ -122,7 +132,8 @@ async function startAddSignerFlow(
   api: AgentApi,
   json: boolean,
   agent: Agent,
-  open: boolean
+  open: boolean,
+  policy: SignerPolicy = "restricted"
 ): Promise<{ publicKey: string; signerUrl: string; requestId: string } | null> {
   let publicKey: string;
   try {
@@ -141,7 +152,7 @@ async function startAddSignerFlow(
   let signerUrl: string;
   let requestId: string;
   try {
-    const res = await api.addSignerWithUrl(agent.id);
+    const res = await api.addSignerWithUrl(agent.id, policy);
     signerUrl = `${res.data.url}&publicKey=${publicKey}`;
     requestId = res.data.requestId;
   } catch (err) {
@@ -239,9 +250,10 @@ async function completeAddSignerFlow(
 async function runAddSignerFlow(
   api: AgentApi,
   json: boolean,
-  agent: Agent
+  agent: Agent,
+  policy: SignerPolicy = "restricted"
 ): Promise<boolean> {
-  const started = await startAddSignerFlow(api, json, agent, !json);
+  const started = await startAddSignerFlow(api, json, agent, !json, policy);
   if (!started) return false;
   const { publicKey, signerUrl, requestId } = started;
 
@@ -383,9 +395,31 @@ export function registerAgentCommands(program: Command): void {
     .option("--description <text>", "Agent description")
     .option("--image <url>", "Agent image URL")
     .option("--signer", "Automatically set up a signer after creation")
+    .option(
+      "--policy <policy>",
+      `Authorization policy for the signer set up after creation (${SIGNER_POLICIES.join(
+        ", "
+      )})`,
+      "restricted"
+    )
     .action(async (opts, cmd) => {
-      const { agentApi } = await getClient();
       const json = isJson(cmd);
+
+      let policy = String(opts.policy) as SignerPolicy;
+      const policyFromCli = cmd.getOptionValueSource("policy") === "cli";
+      if (!SIGNER_POLICIES.includes(policy)) {
+        outputError(
+          json,
+          new CliError(
+            `Invalid policy "${opts.policy}".`,
+            "VALIDATION_ERROR",
+            `Use one of: ${SIGNER_POLICIES.join(", ")}.`
+          )
+        );
+        return;
+      }
+
+      const { agentApi } = await getClient();
 
       let name: string = opts.name?.trim() ?? "";
       let description: string = opts.description?.trim() ?? "";
@@ -407,7 +441,7 @@ export function registerAgentCommands(program: Command): void {
             new CliError(
               "Agent name is required",
               "VALIDATION_ERROR",
-              "Pass --name in non-interactive mode, e.g. acp agent create --name \"My Agent\" --description \"...\" --json"
+              'Pass --name in non-interactive mode, e.g. acp agent create --name "My Agent" --description "..." --json'
             )
           );
           return;
@@ -418,7 +452,7 @@ export function registerAgentCommands(program: Command): void {
             new CliError(
               "Agent description is required",
               "VALIDATION_ERROR",
-              "Pass --description in non-interactive mode. --image is OPTIONAL: omit it (or pass --image \"\") to create the agent without one."
+              'Pass --description in non-interactive mode. --image is OPTIONAL: omit it (or pass --image "") to create the agent without one.'
             )
           );
           return;
@@ -551,7 +585,15 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      const signerOk = await runAddSignerFlow(agentApi, json, created);
+      if (!policyFromCli && isTTY()) {
+        policy = await selectOption(
+          "\nSelect the signer's policy:",
+          SIGNER_POLICIES,
+          (p) => `${p} — ${SIGNER_POLICY_DESCRIPTIONS[p]}`
+        );
+      }
+
+      const signerOk = await runAddSignerFlow(agentApi, json, created, policy);
       if (!signerOk) return;
 
       try {
@@ -699,12 +741,31 @@ export function registerAgentCommands(program: Command): void {
     .description("Add a new signer to an agent")
     .option("--agent-id <id>", "Agent ID")
     .option(
+      "--policy <policy>",
+      `Authorization policy for the signer (${SIGNER_POLICIES.join(", ")})`,
+      "restricted"
+    )
+    .option(
       "--no-wait",
       "Agent-friendly: generate the key, print {signerUrl, requestId, publicKey} and exit immediately instead of blocking. Finish with `acp agent signer-status`."
     )
     .action(async (opts, cmd) => {
-      const { agentApi } = await getClient();
       const json = isJson(cmd);
+
+      const policy = String(opts.policy) as SignerPolicy;
+      if (!SIGNER_POLICIES.includes(policy)) {
+        outputError(
+          json,
+          new CliError(
+            `Invalid policy "${opts.policy}".`,
+            "VALIDATION_ERROR",
+            `Use one of: ${SIGNER_POLICIES.join(", ")}.`
+          )
+        );
+        return;
+      }
+
+      const { agentApi } = await getClient();
 
       let selected = await resolveAgent(agentApi, opts, json);
 
@@ -757,7 +818,8 @@ export function registerAgentCommands(program: Command): void {
           agentApi,
           json,
           selected,
-          false
+          false,
+          policy
         );
         if (!started) return;
         outputResult(json, {
@@ -771,7 +833,7 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      await runAddSignerFlow(agentApi, json, selected);
+      await runAddSignerFlow(agentApi, json, selected, policy);
     });
 
   agent
@@ -851,7 +913,7 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("generate-signer-key")
     .description(
-      "Generate a P-256 signer keypair locally. The private key stays in the keystore; the public key is printed for partner-side agent provisioning.",
+      "Generate a P-256 signer keypair locally. The private key stays in the keystore; the public key is printed for partner-side agent provisioning."
     )
     .action((_opts, cmd) => {
       const json = isJson(cmd);
@@ -862,7 +924,7 @@ export function registerAgentCommands(program: Command): void {
         } else {
           console.log(`\nPublic Key: ${publicKey}\n`);
           console.log(
-            "Send this public key to your partner provisioning API. Keep using this CLI on the same machine to retain access to the private key.",
+            "Send this public key to your partner provisioning API. Keep using this CLI on the same machine to retain access to the private key."
           );
         }
       } catch (err) {
@@ -870,7 +932,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to generate key pair: ${
             err instanceof Error ? err.message : String(err)
-          }`,
+          }`
         );
       }
     });
@@ -878,22 +940,22 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("link")
     .description(
-      "Link an existing local signer keypair to an agent that was provisioned externally (e.g. by a partner backend).",
+      "Link an existing local signer keypair to an agent that was provisioned externally (e.g. by a partner backend)."
     )
     .requiredOption("--agent-id <id>", "Agent ID returned by the partner")
     .requiredOption(
       "--wallet <address>",
-      "Agent's wallet address returned by the partner",
+      "Agent's wallet address returned by the partner"
     )
     .requiredOption(
       "--signer-public-key <key>",
-      "Public key previously emitted by `acp agent generate-signer-key`",
+      "Public key previously emitted by `acp agent generate-signer-key`"
     )
     .option("--wallet-id <id>", "Privy wallet ID (optional)")
     .option(
       "--make-active",
       "Also set this agent as the currently active one",
-      false,
+      false
     )
     .action((opts, cmd) => {
       const json = isJson(cmd);
@@ -914,7 +976,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to link agent: ${
             err instanceof Error ? err.message : String(err)
-          }`,
+          }`
         );
       }
     });
