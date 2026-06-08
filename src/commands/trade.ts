@@ -130,18 +130,30 @@ export function registerTradeCommands(program: Command): void {
   const trade = program
     .command("trade")
     .description(
-      "Trade value: same/cross-chain swaps, and — via Hyperliquid (chain 1337) — " +
+      "Buy, sell, swap tokens or trade perps — across any chain. " +
+      "Cross-chain is always supported: your funds can be on Ethereum, Arbitrum, or Base " +
+      "and the CLI will bridge them automatically. " +
+      "Hyperliquid (chain 1337) — " +
         "deposits, spot orders, withdrawals, and perps. Routes by the chains/params " +
         "you pass. See `acp trade --help`."
     )
     .addHelpText(
       "after",
-      "\nHyperliquid is chain 1337. The chains decide the venue:\n" +
-        "  --chain-in <evm>  --chain-out <evm>   → DEX swap (same/cross-chain)\n" +
+      "\nSupported chain IDs:\n" +
+        "  1       Ethereum\n" +
+        "  42161   Arbitrum\n" +
+        "  8453    Base (default)\n" +
+        "  1337    Hyperliquid\n" +
+        "\nYour funds can be on any supported chain — cross-chain bridging is handled automatically.\n" +
+        "\nHow chains map to venues:\n" +
+        "  --chain-in <evm>  --chain-out <evm>   → DEX swap (bridges cross-chain if needed)\n" +
         "  --chain-in <evm>  --chain-out 1337    → deposit USDC into Hyperliquid\n" +
         "  --chain-in 1337   --chain-out 1337    → Hyperliquid spot order\n" +
         "  --chain-in 1337   --chain-out <evm>   → withdraw USDC from Hyperliquid\n" +
-        "  --token <sym> --side long|short       → Hyperliquid perp (leveraged; crypto, stocks, FX, commodities)\n" +
+        "\nNote: --amount-in is what you spend, not what you receive.\n" +
+        "  e.g. --amount-in 10 spends $10 USDC — the output amount depends on the current price.\n" +
+        "  --token <sym> --side long|short --size <n> --leverage <n>  → Hyperliquid perp\n" +
+        "    --size is in token units (not USD). --leverage reduces margin required.\n" +
         "  --token <sym> --amount-usdc|-shares   → Treasures tokenized stock (spot buy/sell, USDC on Ethereum)\n" +
         "  --token <sym> --token-in/-chain-in/-amount-in (no --token-out) → Treasures buy funded from any chain\n" +
         "  (no flags, in a terminal)             → interactive picker\n" +
@@ -160,10 +172,10 @@ export function registerTradeCommands(program: Command): void {
     )
     // -- Swap / deposit / HL spot / HL withdraw (token-pair shape) --------
     .option("--token-in <token>", "Input token (address or symbol)")
-    .option("--chain-in <id>", "Input chain ID (1337 = Hyperliquid)")
+    .option("--chain-in <id>", "Input chain ID — 1 (Ethereum), 42161 (Arbitrum), 8453 (Base), 1337 (Hyperliquid). Cross-chain bridging is automatic.")
     .option("--amount-in <amount>", "Input amount in human units (USDC for an HL spot buy)")
     .option("--token-out <token>", "Output token (address or symbol)")
-    .option("--chain-out <id>", "Output chain ID (1337 = Hyperliquid)")
+    .option("--chain-out <id>", "Output chain ID — 1 (Ethereum), 42161 (Arbitrum), 8453 (Base), 1337 (Hyperliquid).")
     .option("--recipient <addr>", "Output recipient (default: active wallet)")
     .option("--slippage-bps <bps>", "Swap/bridge slippage in basis points")
     .option("--deadline-secs <secs>", "BondingV5 deadline in seconds")
@@ -540,9 +552,9 @@ async function runHlSpot(opts: Record<string, unknown>, json: boolean): Promise<
   const outUsdc = isUsdcSymbol(tokenOut);
   if (inUsdc === outUsdc) {
     throw new CliError(
-      "HL spot pairs are USDC-quoted: exactly one of --token-in / --token-out must be USDC.",
+      "One side of a spot order must be USDC.",
       "VALIDATION_ERROR",
-      "Buy: `--token-in usdc --token-out PURR`. Sell: `--token-in PURR --token-out usdc`."
+      "To buy: --token-in usdc --token-out PURR. To sell: --token-in PURR --token-out usdc."
     );
   }
   // Buy when the output is the token (spending USDC); sell when the input is the token.
@@ -581,7 +593,7 @@ async function runHlSpot(opts: Record<string, unknown>, json: boolean): Promise<
 
   progress(
     json,
-    `${isMarket ? "Market" : "Limit"} ${isBuy ? "buy" : "sell"} ${size} ${asset.name} @ ${orderPrice}`
+    `${isBuy ? "Buying" : "Selling"} ${size} ${asset.name} at ${isMarket ? `market (~$${orderPrice})` : `limit $${orderPrice}`}`
   );
 
   await placeHlOrder(
@@ -617,7 +629,11 @@ async function runPerp(opts: Record<string, unknown>, json: boolean): Promise<vo
     );
   }
   if (opts.size === undefined) {
-    throw new CliError("--size is required for a perp.", "VALIDATION_ERROR");
+    throw new CliError(
+      "--size is required for a perp (token units).",
+      "VALIDATION_ERROR",
+      "e.g. `--token BTC --side long --size 0.01 --leverage 5`. Size is in token units, not USD."
+    );
   }
   const isBuy = parsePerpSide(String(opts.side));
   const { info, exchange, address } = await createHlClients();
@@ -650,6 +666,7 @@ async function runPerp(opts: Record<string, unknown>, json: boolean): Promise<vo
   // fees). Skip for reduce-only (closing frees margin, never needs more). When
   // leverage isn't given we don't know the account default, so assume 1x — a
   // conservative over-estimate that just moves more idle USDC into perp.
+  // TIP: if you hit insufficient margin, pass --leverage <n> to reduce the margin requirement.
   if (!opts.reduceOnly) {
     const notional = Number(size) * Number(price);
     const lev = opts.leverage !== undefined ? Number(opts.leverage) : 1;
@@ -659,7 +676,7 @@ async function runPerp(opts: Record<string, unknown>, json: boolean): Promise<vo
 
   progress(
     json,
-    `${isMarket ? "Market" : "Limit"} ${opts.side} ${size} ${asset.name} @ ${price}`
+    `Opening ${opts.side} ${size} ${asset.name} at ${isMarket ? `market (~$${price})` : `limit $${price}`}`
   );
 
   await placeHlOrder(
@@ -937,8 +954,9 @@ async function ensureHlFunds(
   if (move <= 0) {
     progress(
       json,
-      `${target} wallet has $${have.toFixed(2)}, order needs ~$${needUsd.toFixed(2)}, ` +
-        `and no ${source} funds to cover it — letting HL size/limit the order`
+      `Not enough ${target} margin ($${have.toFixed(2)} available, ~$${needUsd.toFixed(2)} needed). ` +
+        `Deposit more USDC with: acp trade --amount-in <amount> --chain-in <id> --chain-out 1337. ` +
+        `Or reduce your order size / increase leverage.`
     );
     return;
   }
