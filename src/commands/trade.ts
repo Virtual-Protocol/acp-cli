@@ -49,9 +49,8 @@ import {
   getWalletAddress,
 } from "../lib/agentFactory";
 import type { IEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
-// HL trading now runs entirely through the backend `/trade/plan` loop; only the
-// read-only account status still talks to Hyperliquid directly (InfoClient).
-import { createHlInfoClient, isTestnet } from "../lib/hl/client";
+// Hyperliquid is entirely backend-driven now — including read-only `status` via
+// /trade/hl-status — so the CLI has no @nktkas/hyperliquid dependency at all.
 
 // ---------- Wire types (mirror trading-agent/src/services/trade/types.ts) ----------
 
@@ -392,35 +391,16 @@ export async function runTradeLoop(
 // ---------- Hyperliquid account ----------
 
 async function runStatus(json: boolean): Promise<void> {
-  // Read-only: needs the wallet address, not the signer.
-  const info = createHlInfoClient();
-  const address = getWalletAddress() as Address;
-  const [perp, spot] = await Promise.all([
-    info.clearinghouseState({ user: address }),
-    info.spotClearinghouseState({ user: address }),
-  ]);
-
-  const positions = perp.assetPositions.map((p) => ({
-    token: p.position.coin,
-    size: p.position.szi,
-    entryPx: p.position.entryPx,
-    unrealizedPnl: p.position.unrealizedPnl,
-    leverage: p.position.leverage,
-  }));
-  const balances = spot.balances.map((b) => ({
-    token: b.coin,
-    total: b.total,
-    hold: b.hold,
-  }));
-
-  outputResult(json, {
-    address,
-    network: isTestnet() ? "testnet" : "mainnet",
-    accountValue: perp.marginSummary.accountValue,
-    withdrawable: perp.withdrawable,
-    positions,
-    spotBalances: balances,
-  });
+  // Read-only account view, served by the backend (no HL SDK in the CLI).
+  const { apiUrl, token } = await getApiContext();
+  const owner = getWalletAddress() as Address;
+  const status = await post<Record<string, unknown>>(
+    apiUrl,
+    token,
+    "/trade/hl-status",
+    { walletAddress: owner }
+  );
+  outputResult(json, status);
 }
 
 // ---------- HTTP + shared helpers ----------
