@@ -11,10 +11,12 @@
 //   --token <sym> --amount-usdc|--amount-shares → Treasures TOKENIZED STOCK (spot)
 //   --chain-in 1337  --chain-out 1337         → Hyperliquid SPOT (order book)
 //   --chain-in <evm> --chain-out 1337         → DEPOSIT USDC into Hyperliquid
+//   --chain-in 1337  --chain-out 42161        → WITHDRAW to Arbitrum (alias of withdraw-from-hl)
 //   --chain-in <evm> --chain-out <evm>        → SWAP (DEX: BondingV5 / LiFi)
 //   (no flags, in a terminal)                 → interactive picker (humans only)
-// Moving USDC OFF Hyperliquid is its own command: `acp trade withdraw-from-hl
-// --amount <usdc>` (HL's withdraw3 always settles to Arbitrum — not a chain choice).
+// Canonical way to move USDC OFF Hyperliquid: `acp trade withdraw-from-hl
+// --amount <usdc>`. HL's withdraw3 always settles to Arbitrum — so the only
+// chain-out it accepts is 42161 (any other is rejected, not silently re-routed).
 //
 // One asset flag everywhere: --token names the symbol (BTC, AAPL, …); the
 // companion flag picks the venue — --side → leveraged HL perp, --amount-usdc/
@@ -63,6 +65,10 @@ import {
 // LiFi's chain id for Hyperliquid Core (the perps/spot collateral ledger).
 // Any leg whose chain is this is "on Hyperliquid".
 const HL_CHAIN_ID = 1337;
+// Hyperliquid's withdraw3 always settles USDC on Arbitrum — the only chain a
+// withdraw can land on, and the one the `--chain-in 1337 --chain-out 42161`
+// compat form is allowed to target.
+const HL_WITHDRAW_CHAIN_ID = 42161;
 // Default source chain for a deposit's USDC.
 const DEFAULT_FROM_CHAIN = 8453; // Base
 // Minimum deposit. Bridge fees are ~flat (~$1.2), so small deposits lose a
@@ -167,7 +173,7 @@ export function registerTradeCommands(program: Command): void {
         "  --chain-in <evm>  --chain-out <evm>   → DEX swap (bridges cross-chain if needed)\n" +
         "  --chain-in <evm>  --chain-out 1337    → deposit USDC into Hyperliquid\n" +
         "  --chain-in 1337   --chain-out 1337    → Hyperliquid spot order\n" +
-        "  (to move USDC off Hyperliquid)        → acp trade withdraw-from-hl --amount <usdc>  (settles to Arbitrum)\n" +
+        "  --chain-in 1337   --chain-out 42161   → withdraw USDC from Hyperliquid to Arbitrum (alias of `withdraw-from-hl`)\n" +
         "\nNote: --amount-in is what you spend, not what you receive.\n" +
         "  e.g. --amount-in 10 spends $10 USDC — the output amount depends on the current price.\n" +
         "  --token <sym> --side long|short --size <n> --leverage <n>  → Hyperliquid perp\n" +
@@ -243,6 +249,17 @@ export function registerTradeCommands(program: Command): void {
           case "swap":
             await runSwap(opts, json);
             return;
+          case "withdraw":
+            // Compat form: `--chain-in 1337 --chain-out 42161 --amount-in <n>`.
+            // detectIntent already verified the destination is Arbitrum, so
+            // this is the same withdrawal as `trade withdraw-from-hl`.
+            await runWithdraw(
+              String(opts.amountIn),
+              opts.recipient as string | undefined,
+              json,
+              opts.dryRun === true
+            );
+            return;
           case "interactive":
             await runInteractive(json);
             return;
@@ -297,6 +314,7 @@ type Intent =
   | "perp"
   | "spot"
   | "deposit"
+  | "withdraw"
   | "swap"
   | "interactive";
 
@@ -366,13 +384,23 @@ export function detectIntent(opts: Record<string, unknown>, json: boolean): Inte
     const outHL = opts.chainOut !== undefined && Number(opts.chainOut) === HL_CHAIN_ID;
     if (inHL && outHL) return "spot";
     if (inHL) {
-      // chain-in 1337 only makes sense for a spot order now. Moving USDC OFF
-      // Hyperliquid is its own command — it isn't a chain choice (HL always
-      // settles to Arbitrum), so we don't overload chain-out to mean "withdraw".
+      // chain-in 1337 with an EVM chain-out is a withdraw off Hyperliquid.
+      // `withdraw-from-hl` is the canonical command, but we keep this combo
+      // working for existing callers. HL's withdraw3 only ever settles to
+      // Arbitrum, so honor 42161 and refuse any other destination rather than
+      // silently sending somewhere HL can't reach.
+      if (
+        opts.chainOut !== undefined &&
+        Number(opts.chainOut) === HL_WITHDRAW_CHAIN_ID
+      ) {
+        return "withdraw";
+      }
       throw new CliError(
-        "--chain-in 1337 is only for Hyperliquid spot orders (add --chain-out 1337).",
+        opts.chainOut === undefined
+          ? "--chain-in 1337 needs --chain-out: 1337 for a spot order, or 42161 to withdraw to Arbitrum."
+          : `Hyperliquid withdrawals settle to Arbitrum (${HL_WITHDRAW_CHAIN_ID}); --chain-out ${Number(opts.chainOut)} isn't supported.`,
         "VALIDATION_ERROR",
-        "To move USDC off Hyperliquid, use `acp trade withdraw-from-hl --amount <usdc>` (settles to Arbitrum)."
+        "Spot: add --chain-out 1337. Withdraw: `acp trade withdraw-from-hl --amount <usdc>` (or --chain-out 42161)."
       );
     }
     if (outHL) return "deposit";
