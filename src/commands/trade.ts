@@ -46,6 +46,7 @@ import {
 } from "../lib/agentFactory";
 import type { IEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
 import { prompt, selectOption } from "../lib/prompt";
+import { parseChainArg } from "../lib/chains";
 import {
   createHlClients,
   createHlInfoClient,
@@ -106,7 +107,21 @@ interface ErrorAction {
   retryable: boolean;
   partialResult?: Record<string, unknown>;
 }
-type Action = SendAction | SignAction | WaitAction | DoneAction | ErrorAction;
+// Returned by /trade/plan only for a dry run (dryRun: true) — nothing is signed
+// or submitted. Mirrors trading-agent's PreviewAction.
+interface PreviewAction {
+  kind: "preview";
+  label: string;
+  summary: string;
+  legs?: unknown[];
+}
+type Action =
+  | SendAction
+  | SignAction
+  | WaitAction
+  | DoneAction
+  | ErrorAction
+  | PreviewAction;
 
 interface PlanResponse {
   tradeId: string;
@@ -139,11 +154,11 @@ export function registerTradeCommands(program: Command): void {
     )
     .addHelpText(
       "after",
-      "\nSupported chain IDs:\n" +
-        "  1       Ethereum\n" +
-        "  42161   Arbitrum\n" +
-        "  8453    Base (default)\n" +
-        "  1337    Hyperliquid\n" +
+      "\nSupported chains (pass the id or the name — names are case-insensitive):\n" +
+        "  1       Ethereum     (eth, ethereum, mainnet)\n" +
+        "  42161   Arbitrum     (arb, arbitrum)\n" +
+        "  8453    Base         (base) (default)\n" +
+        "  1337    Hyperliquid  (hl, hyperliquid)\n" +
         "\nYour funds can be on any supported chain — cross-chain bridging is handled automatically.\n" +
         "\nHow chains map to venues:\n" +
         "  --chain-in <evm>  --chain-out <evm>   → DEX swap (bridges cross-chain if needed)\n" +
@@ -153,7 +168,8 @@ export function registerTradeCommands(program: Command): void {
         "\nNote: --amount-in is what you spend, not what you receive.\n" +
         "  e.g. --amount-in 10 spends $10 USDC — the output amount depends on the current price.\n" +
         "  --token <sym> --side long|short --size <n> --leverage <n>  → Hyperliquid perp\n" +
-        "    --size is in token units (not USD). --leverage reduces margin required.\n" +
+        "    --size is in TOKEN UNITS, not USD (e.g. --size 0.01 = 0.01 BTC). --leverage reduces margin required.\n" +
+        "\nAdd --dry-run to any trade to preview the route, size, margin, and fees without signing or submitting.\n" +
         "  --token <sym> --amount-usdc|-shares   → Treasures tokenized stock (spot buy/sell, USDC on Ethereum)\n" +
         "  --token <sym> --token-in/-chain-in/-amount-in (no --token-out) → Treasures buy funded from any chain\n" +
         "  (no flags, in a terminal)             → interactive picker\n" +
@@ -165,6 +181,8 @@ export function registerTradeCommands(program: Command): void {
         "  acp trade --token-in PURR --chain-in 1337 --amount-in 50 --token-out usdc --chain-out 1337   # spot sell\n" +
         "  acp trade --token-in usdc --chain-in 1337 --amount-in 25 --token-out usdc --chain-out 42161  # withdraw\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5\n" +
+        "  acp trade --side long --token BTC --size 0.01 --leverage 5 --dry-run   # preview only\n" +
+        "  acp trade --amount-in 25 --chain-out hyperliquid                       # deposit (alias)\n" +
         "  acp trade --token AAPL --amount-usdc 50                          # buy tokenized AAPL with USDC on Ethereum\n" +
         "  acp trade --token AAPL --token-in eth --chain-in 8453 --amount-in 0.02  # buy AAPL, funded by ETH on Base\n" +
         "  acp trade --token AAPL --amount-shares 0.1                       # sell 0.1 tokenized AAPL shares (Treasures)\n" +
@@ -199,9 +217,15 @@ export function registerTradeCommands(program: Command): void {
     .option("--leverage <n>", "Set leverage for this token before a perp order")
     .option("--isolated", "Use isolated margin when setting leverage", false)
     .option("--reduce-only", "Only reduce an existing perp position", false)
+    .option("--dry-run", "Preview the trade (route, size, margin, fees) without signing or submitting anything", false)
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
+        // Normalize chain aliases (e.g. "hyperliquid", "arb") to numeric ids up
+        // front, so intent routing and the chain comparisons below all see a
+        // number — and the backend receives a clean id too.
+        if (opts.chainIn !== undefined) opts.chainIn = parseChainArg(opts.chainIn as string | number);
+        if (opts.chainOut !== undefined) opts.chainOut = parseChainArg(opts.chainOut as string | number);
         const intent = detectIntent(opts, json);
         switch (intent) {
           case "treasures-stock":
@@ -222,7 +246,8 @@ export function registerTradeCommands(program: Command): void {
               String(opts.amountIn),
               opts.recipient as string | undefined,
               json,
-              opts.chainOut !== undefined ? Number(opts.chainOut) : undefined
+              opts.chainOut !== undefined ? Number(opts.chainOut) : undefined,
+              opts.dryRun === true
             );
             return;
           case "interactive":
@@ -430,6 +455,7 @@ async function runSwap(opts: Record<string, unknown>, json: boolean): Promise<vo
     deadlineSecs: opts.deadlineSecs !== undefined ? Number(opts.deadlineSecs) : undefined,
     recipient: (opts.recipient as string | undefined) ?? (isDeposit ? owner : undefined),
     walletAddress: owner,
+    ...(opts.dryRun ? { dryRun: true } : {}),
   };
 
   const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", planBody);
@@ -447,7 +473,7 @@ async function runSwap(opts: Record<string, unknown>, json: boolean): Promise<vo
     );
   }
   const result = await runTradeLoop(apiUrl, token, provider, plan, json);
-  outputResult(json, result);
+  outputTradeResult(json, result);
 }
 
 export async function runTradeLoop(
@@ -462,6 +488,14 @@ export async function runTradeLoop(
 
   while (true) {
     if (action.kind === "done") return action.result;
+    if (action.kind === "preview") {
+      // Dry run: server resolved + sized the trade but signed/submitted nothing.
+      return {
+        dryRun: true,
+        summary: action.summary,
+        ...(action.legs ? { legs: action.legs } : {}),
+      };
+    }
     if (action.kind === "error") {
       if (action.partialResult && !json && isTTY()) {
         process.stderr.write(
@@ -585,6 +619,17 @@ async function runHlSpot(opts: Record<string, unknown>, json: boolean): Promise<
   const sizeNum = isBuy ? amountIn / Number(orderPrice) : amountIn;
   const size = formatSize(sizeNum, asset.szDecimals);
 
+  if (opts.dryRun) {
+    const summary =
+      `Would ${isBuy ? "buy" : "sell"} ${size} ${asset.name} at ` +
+      `${isMarket ? `market (~$${orderPrice})` : `limit $${orderPrice}`}` +
+      (isBuy ? ` (spending ~$${amountIn} USDC)` : "") +
+      "\nDry run — no funds moved, no order placed.";
+    outputTradeResult(json, { dryRun: true, summary });
+    exitAfterOrder();
+    return;
+  }
+
   // A spot buy spends USDC from the spot wallet — top it up from perp if short.
   // (A sell needs the token itself, which no USDC transfer can provide.)
   if (isBuy) {
@@ -639,7 +684,7 @@ async function runPerp(opts: Record<string, unknown>, json: boolean): Promise<vo
   const { info, exchange, address } = await createHlClients();
   const asset = await resolvePerpAsset(info, String(opts.token));
 
-  if (opts.leverage !== undefined) {
+  if (opts.leverage !== undefined && !opts.dryRun) {
     await exchange.updateLeverage({
       asset: asset.assetIndex,
       isCross: !opts.isolated,
@@ -660,6 +705,37 @@ async function runPerp(opts: Record<string, unknown>, json: boolean): Promise<vo
         parseSlippage(String(opts.slippage ?? "5"))
       )
     : formatPrice(Number(opts.price), asset.szDecimals, false);
+
+  // Dry run: report exactly what would happen — size, notional, and the margin
+  // the order needs — without setting leverage, moving funds, or placing it.
+  if (opts.dryRun) {
+    const lev = opts.leverage !== undefined ? Number(opts.leverage) : 1;
+    const lines: string[] = [];
+    if (opts.leverage !== undefined) {
+      lines.push(
+        `Would set ${asset.name} leverage to ${opts.leverage}x${opts.isolated ? " (isolated)" : ""}`,
+      );
+    }
+    if (opts.reduceOnly) {
+      lines.push(
+        `Would ${opts.side} ${size} ${asset.name} (reduce-only) at ${isMarket ? `market (~$${price})` : `limit $${price}`}`,
+      );
+    } else {
+      const notional = Number(size) * Number(price);
+      const needMargin = (notional / Math.max(lev, 1)) * 1.05;
+      lines.push(
+        `Would open ${opts.side} ${size} ${asset.name} at ${isMarket ? `market (~$${price})` : `limit $${price}`} (~$${notional.toFixed(2)} notional)`,
+      );
+      lines.push(
+        `Margin required: ~$${needMargin.toFixed(2)} at ${lev}x leverage` +
+          (opts.leverage === undefined ? " (no --leverage given; assuming 1x)" : ""),
+      );
+    }
+    lines.push("Dry run — no leverage set, no funds moved, no order placed.");
+    outputTradeResult(json, { dryRun: true, summary: lines.join("\n") });
+    exitAfterOrder();
+    return;
+  }
 
   // Opening/adding to a position consumes perp margin — top it up from the spot
   // wallet if short. Required initial margin ≈ notional / leverage (×1.05 for
@@ -740,7 +816,8 @@ async function runWithdraw(
   amount: string,
   destination: string | undefined,
   json: boolean,
-  chainOut?: number
+  chainOut?: number,
+  dryRun = false
 ): Promise<void> {
   if (amount === undefined || amount === "undefined" || amount === "") {
     throw new CliError(
@@ -761,6 +838,18 @@ async function runWithdraw(
   }
   const { exchange, address } = await createHlClients();
   const dest = (destination ?? address) as Address;
+  if (dryRun) {
+    const summary =
+      `Would withdraw ${amount} USDC from Hyperliquid → ${dest} (settles on Arbitrum).` +
+      "\nDry run — no withdrawal submitted.";
+    outputTradeResult(json, {
+      dryRun: true,
+      summary,
+      destination: dest,
+      amount: String(amount),
+    });
+    return;
+  }
   progress(json, `Withdrawing ${amount} USDC → ${dest}`);
   const res = await exchange.withdraw3({ destination: dest, amount: String(amount) });
   outputResult(json, { status: res.status, destination: dest, amount: String(amount) });
@@ -874,6 +963,7 @@ async function runTreasuresStock(
   const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", {
     walletAddress: owner,
     treasures,
+    ...(opts.dryRun ? { dryRun: true } : {}),
   });
   progress(
     json,
@@ -881,7 +971,7 @@ async function runTreasuresStock(
       (plan.route ? ` (${plan.route})` : "")
   );
   const result = await runTradeLoop(apiUrl, token, provider, plan, json);
-  outputResult(json, result);
+  outputTradeResult(json, result);
 }
 
 // Guard the bps before it hits JSON.stringify — an un-validated Number() turns
@@ -1154,6 +1244,17 @@ function isKnownCode(s: string): s is ErrorCode {
 function progress(json: boolean, msg: string): void {
   if (json || !isTTY()) return;
   process.stderr.write(`${msg}\n`);
+}
+
+// Render a trade outcome. A dry-run result carries a ready-to-read `summary`, so
+// in human mode we print just that (multi-line) string; otherwise (and always
+// in --json) we fall back to the structured key/value output.
+function outputTradeResult(json: boolean, result: Record<string, unknown>): void {
+  if (!json && result.dryRun === true && typeof result.summary === "string") {
+    console.log(result.summary);
+    return;
+  }
+  outputResult(json, result);
 }
 
 // @nktkas/hyperliquid's `exchange.order()` leaves a transport handle open, so
