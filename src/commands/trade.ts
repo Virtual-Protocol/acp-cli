@@ -13,7 +13,6 @@
 //   --chain-in <evm> --chain-out 1337         → DEPOSIT USDC into Hyperliquid
 //   --chain-in 1337  --chain-out <evm>        → WITHDRAW off Hyperliquid (Arbitrum direct; others bridge onward)
 //   --chain-in <evm> --chain-out <evm>        → SWAP (DEX: BondingV5 / LiFi)
-//   (no flags, in a terminal)                 → interactive picker (humans only)
 // Canonical way to move USDC OFF Hyperliquid: `acp trade withdraw-from-hl
 // --amount <usdc> [--to-chain <id>]`. HL's withdraw3 always settles to Arbitrum;
 // a non-Arbitrum target withdraws to Arbitrum first, then bridges onward.
@@ -42,7 +41,6 @@
 import type { Command } from "commander";
 import type { Address } from "viem";
 import { erc20Abi, formatUnits } from "viem";
-import * as readline from "readline";
 import { isJson, isTTY, outputError, outputResult } from "../lib/output";
 import { CliError, type ErrorCode } from "../lib/errors";
 import { getApiContext } from "../lib/api/client";
@@ -51,7 +49,6 @@ import {
   getWalletAddress,
 } from "../lib/agentFactory";
 import type { IEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
-import { prompt, selectOption } from "../lib/prompt";
 import { parseChainArg } from "../lib/chains";
 import {
   createHlClients,
@@ -182,7 +179,6 @@ export function registerTradeCommands(program: Command): void {
         "\nAdd --dry-run to any trade to preview the route, size, margin, and fees without signing or submitting.\n" +
         "  --token <sym> --amount-usdc|-shares   → Treasures tokenized stock (spot buy/sell, USDC on Ethereum)\n" +
         "  --token <sym> --token-in/-chain-in/-amount-in (no --token-out) → Treasures buy funded from any chain\n" +
-        "  (no flags, in a terminal)             → interactive picker\n" +
         "\nExamples:\n" +
         "  acp trade --token-in usdc --chain-in 8453 --amount-in 50 --token-out virtual --chain-out 8453\n" +
         "  acp trade --token-in usdc --chain-in 1 --amount-in 100 --token-out usdc --chain-out 8453\n" +
@@ -264,9 +260,6 @@ export function registerTradeCommands(program: Command): void {
                 : HL_WITHDRAW_CHAIN_ID
             );
             return;
-          case "interactive":
-            await runInteractive(json);
-            return;
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
@@ -323,8 +316,7 @@ type Intent =
   | "spot"
   | "deposit"
   | "withdraw"
-  | "swap"
-  | "interactive";
+  | "swap";
 
 // --side selects the perp venue and takes ONLY `long` or `short`. It's a perps
 // directional flag, so we deliberately do NOT accept buy/sell — those are spot
@@ -416,8 +408,6 @@ export function detectIntent(opts: Record<string, unknown>, json: boolean): Inte
   // Bare --token with no pair params (an incomplete perp) → perp path, which
   // surfaces a clear "--side is required" error.
   if (opts.token !== undefined) return "perp";
-
-  if (!json && isTTY()) return "interactive";
 
   throw new CliError(
     "No trade intent in the flags provided.",
@@ -1165,96 +1155,6 @@ async function ensureHlFunds(
   const amount = move.toFixed(2);
   progress(json, `Auto-transfer $${amount} ${source}→${target} to fund the order`);
   await exchange.usdClassTransfer({ amount, toPerp: target === "perp" });
-}
-
-// ---------- Interactive picker (humans only) ----------
-
-interface PickerAction {
-  key: "swap" | "deposit" | "spot" | "perp" | "status" | "withdraw";
-  label: string;
-}
-
-async function runInteractive(json: boolean): Promise<void> {
-  const actions: PickerAction[] = [
-    { key: "swap", label: "Swap tokens (same-chain or cross-chain)" },
-    { key: "deposit", label: "Deposit USDC into Hyperliquid" },
-    { key: "spot", label: "Hyperliquid spot order" },
-    { key: "perp", label: "Hyperliquid perp (long/short)" },
-    { key: "status", label: "Check Hyperliquid account status" },
-    { key: "withdraw", label: "Withdraw USDC from Hyperliquid" },
-  ];
-  const choice = await selectOption("What would you like to do?", actions, (a) => a.label);
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  try {
-    switch (choice.key) {
-      case "status":
-        await runStatus(json);
-        return;
-      case "withdraw": {
-        const amountIn = await ask(rl, "USDC amount to withdraw: ");
-        const recipient = await ask(rl, "Destination (blank = your wallet): ");
-        await runWithdraw(amountIn, recipient || undefined, json);
-        return;
-      }
-      case "perp": {
-        const token = await ask(rl, "Token (e.g. BTC): ");
-        const side = await ask(rl, "Side (long/short): ");
-        const size = await ask(rl, "Size (token units): ");
-        const price = await ask(rl, "Limit price (blank = market): ");
-        const leverage = await ask(rl, "Leverage (blank = leave as-is): ");
-        await runPerp(
-          { token, side, size, price: price || undefined, leverage: leverage || undefined },
-          json
-        );
-        return;
-      }
-      case "spot": {
-        const dir = await ask(rl, "Buy or sell? ");
-        const token = await ask(rl, "Token (e.g. PURR): ");
-        const buying = dir.trim().toLowerCase().startsWith("b");
-        const amountIn = await ask(
-          rl,
-          buying ? "USDC to spend: " : `${token} amount to sell: `
-        );
-        const price = await ask(rl, "Limit price (blank = market): ");
-        await runHlSpot(
-          {
-            tokenIn: buying ? "usdc" : token,
-            tokenOut: buying ? token : "usdc",
-            amountIn,
-            price: price || undefined,
-          },
-          json
-        );
-        return;
-      }
-      case "deposit": {
-        const amountIn = await ask(rl, `USDC amount to deposit (min ${MIN_DEPOSIT_USDC}): `);
-        const chainIn = await ask(rl, `Source chain ID (blank = ${DEFAULT_FROM_CHAIN}): `);
-        await runSwap(
-          { amountIn, chainIn: chainIn || undefined, chainOut: HL_CHAIN_ID },
-          json
-        );
-        return;
-      }
-      case "swap": {
-        const tokenIn = await ask(rl, "Token in (symbol or address): ");
-        const chainIn = await ask(rl, "Chain in (ID): ");
-        const amountIn = await ask(rl, "Amount in (human units): ");
-        const tokenOut = await ask(rl, "Token out (symbol or address): ");
-        const chainOut = await ask(rl, "Chain out (ID): ");
-        await runSwap({ tokenIn, chainIn, amountIn, tokenOut, chainOut }, json);
-        return;
-      }
-    }
-  } finally {
-    rl.close();
-  }
-}
-
-function ask(rl: readline.Interface, q: string): Promise<string> {
-  return prompt(rl, q).then((s) => s.trim());
 }
 
 // ---------- HTTP + shared helpers ----------
