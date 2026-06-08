@@ -11,12 +11,12 @@
 //   --token <sym> --amount-usdc|--amount-shares → Treasures TOKENIZED STOCK (spot)
 //   --chain-in 1337  --chain-out 1337         → Hyperliquid SPOT (order book)
 //   --chain-in <evm> --chain-out 1337         → DEPOSIT USDC into Hyperliquid
-//   --chain-in 1337  --chain-out 42161        → WITHDRAW to Arbitrum (alias of withdraw-from-hl)
+//   --chain-in 1337  --chain-out <evm>        → WITHDRAW off Hyperliquid (Arbitrum direct; others bridge onward)
 //   --chain-in <evm> --chain-out <evm>        → SWAP (DEX: BondingV5 / LiFi)
 //   (no flags, in a terminal)                 → interactive picker (humans only)
 // Canonical way to move USDC OFF Hyperliquid: `acp trade withdraw-from-hl
-// --amount <usdc>`. HL's withdraw3 always settles to Arbitrum — so the only
-// chain-out it accepts is 42161 (any other is rejected, not silently re-routed).
+// --amount <usdc> [--to-chain <id>]`. HL's withdraw3 always settles to Arbitrum;
+// a non-Arbitrum target withdraws to Arbitrum first, then bridges onward.
 //
 // One asset flag everywhere: --token names the symbol (BTC, AAPL, …); the
 // companion flag picks the venue — --side → leveraged HL perp, --amount-usdc/
@@ -41,6 +41,7 @@
 
 import type { Command } from "commander";
 import type { Address } from "viem";
+import { erc20Abi, formatUnits } from "viem";
 import * as readline from "readline";
 import { isJson, isTTY, outputError, outputResult } from "../lib/output";
 import { CliError, type ErrorCode } from "../lib/errors";
@@ -173,7 +174,7 @@ export function registerTradeCommands(program: Command): void {
         "  --chain-in <evm>  --chain-out <evm>   → DEX swap (bridges cross-chain if needed)\n" +
         "  --chain-in <evm>  --chain-out 1337    → deposit USDC into Hyperliquid\n" +
         "  --chain-in 1337   --chain-out 1337    → Hyperliquid spot order\n" +
-        "  --chain-in 1337   --chain-out 42161   → withdraw USDC from Hyperliquid to Arbitrum (alias of `withdraw-from-hl`)\n" +
+        "  --chain-in 1337   --chain-out <evm>   → withdraw USDC off Hyperliquid (Arbitrum direct; other chains bridge onward)\n" +
         "\nNote: --amount-in is what you spend, not what you receive.\n" +
         "  e.g. --amount-in 10 spends $10 USDC — the output amount depends on the current price.\n" +
         "  --token <sym> --side long|short --size <n> --leverage <n>  → Hyperliquid perp\n" +
@@ -250,14 +251,17 @@ export function registerTradeCommands(program: Command): void {
             await runSwap(opts, json);
             return;
           case "withdraw":
-            // Compat form: `--chain-in 1337 --chain-out 42161 --amount-in <n>`.
-            // detectIntent already verified the destination is Arbitrum, so
-            // this is the same withdrawal as `trade withdraw-from-hl`.
+            // Compat form: `--chain-in 1337 --chain-out <id> --amount-in <n>`.
+            // --chain-out 42161 (or omitted) withdraws straight to Arbitrum;
+            // any other chain withdraws to Arbitrum then bridges onward.
             await runWithdraw(
               String(opts.amountIn),
               opts.recipient as string | undefined,
               json,
-              opts.dryRun === true
+              opts.dryRun === true,
+              opts.chainOut !== undefined
+                ? Number(opts.chainOut)
+                : HL_WITHDRAW_CHAIN_ID
             );
             return;
           case "interactive":
@@ -288,9 +292,10 @@ export function registerTradeCommands(program: Command): void {
   // HL's withdraw3 always settles USDC on Arbitrum, full stop.
   trade
     .command("withdraw-from-hl")
-    .description("Withdraw USDC from Hyperliquid to Arbitrum (signed action)")
+    .description("Withdraw USDC from Hyperliquid (settles to Arbitrum; --to-chain bridges onward)")
     .requiredOption("--amount <usdc>", "USDC amount to withdraw")
     .option("--destination <addr>", "Destination address (default: active wallet)")
+    .option("--to-chain <id>", "Final chain (default: Arbitrum). Others withdraw to Arbitrum, then bridge.")
     .option("--dry-run", "Preview the withdrawal without submitting it", false)
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -299,7 +304,10 @@ export function registerTradeCommands(program: Command): void {
           String(opts.amount),
           opts.destination,
           json,
-          opts.dryRun === true
+          opts.dryRun === true,
+          opts.toChain !== undefined
+            ? parseChainArg(opts.toChain as string | number)
+            : HL_WITHDRAW_CHAIN_ID
         );
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
@@ -384,24 +392,22 @@ export function detectIntent(opts: Record<string, unknown>, json: boolean): Inte
     const outHL = opts.chainOut !== undefined && Number(opts.chainOut) === HL_CHAIN_ID;
     if (inHL && outHL) return "spot";
     if (inHL) {
-      // chain-in 1337 with an EVM chain-out is a withdraw off Hyperliquid.
-      // `withdraw-from-hl` is the canonical command, but we keep this combo
-      // working for existing callers. HL's withdraw3 only ever settles to
-      // Arbitrum, so honor 42161 and refuse any other destination rather than
-      // silently sending somewhere HL can't reach.
-      if (
-        opts.chainOut !== undefined &&
-        Number(opts.chainOut) === HL_WITHDRAW_CHAIN_ID
-      ) {
-        return "withdraw";
+      // A non-USDC token-out is clearly a spot order that just forgot
+      // `--chain-out 1337` — don't silently treat it as a withdraw and move
+      // funds off Hyperliquid.
+      const tOut = opts.tokenOut !== undefined ? String(opts.tokenOut) : undefined;
+      if (tOut && !isUsdcSymbol(tOut)) {
+        throw new CliError(
+          "A Hyperliquid spot order needs --chain-out 1337.",
+          "VALIDATION_ERROR",
+          `e.g. --token-in usdc --chain-in 1337 --amount-in 100 --token-out ${tOut} --chain-out 1337.`
+        );
       }
-      throw new CliError(
-        opts.chainOut === undefined
-          ? "--chain-in 1337 needs --chain-out: 1337 for a spot order, or 42161 to withdraw to Arbitrum."
-          : `Hyperliquid withdrawals settle to Arbitrum (${HL_WITHDRAW_CHAIN_ID}); --chain-out ${Number(opts.chainOut)} isn't supported.`,
-        "VALIDATION_ERROR",
-        "Spot: add --chain-out 1337. Withdraw: `acp trade withdraw-from-hl --amount <usdc>` (or --chain-out 42161)."
-      );
+      // Otherwise chain-in 1337 is a withdraw off Hyperliquid. Destination
+      // defaults to Arbitrum (where HL settles); any other --chain-out withdraws
+      // to Arbitrum first, then bridges onward. `withdraw-from-hl` is the
+      // canonical command; this combo is kept working for existing callers.
+      return "withdraw";
     }
     if (outHL) return "deposit";
     return "swap";
@@ -831,11 +837,22 @@ async function runStatus(json: boolean): Promise<void> {
   });
 }
 
+// Canonical USDC on Arbitrum (6 decimals) — the only place HL withdrawals land.
+const ARBITRUM_USDC = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as const;
+const USDC_DECIMALS = 6;
+// HL's withdraw3 deducts a flat $1 USDC network fee from the amount that lands.
+const HL_WITHDRAW_FEE_USDC = 1;
+// HL finalizes withdrawals in batches; funds usually reach Arbitrum within a few
+// minutes. Poll the Arbitrum USDC balance until it rises, then bridge onward.
+const WITHDRAW_SETTLE_TIMEOUT_MS = 15 * 60 * 1000;
+const WITHDRAW_POLL_MS = 15_000;
+
 async function runWithdraw(
   amount: string,
   destination: string | undefined,
   json: boolean,
-  dryRun = false
+  dryRun = false,
+  destChain: number = HL_WITHDRAW_CHAIN_ID
 ): Promise<void> {
   if (amount === undefined || amount === "undefined" || amount === "") {
     throw new CliError(
@@ -844,6 +861,14 @@ async function runWithdraw(
       "e.g. `acp trade withdraw-from-hl --amount 25`."
     );
   }
+
+  // HL's withdraw3 only ever settles to Arbitrum. A non-Arbitrum destination is
+  // therefore withdraw-to-Arbitrum, then bridge Arbitrum → destChain.
+  if (destChain !== HL_WITHDRAW_CHAIN_ID) {
+    await withdrawThenBridge(amount, destination, destChain, json, dryRun);
+    return;
+  }
+
   const { exchange, address } = await createHlClients();
   const dest = (destination ?? address) as Address;
   if (dryRun) {
@@ -861,6 +886,92 @@ async function runWithdraw(
   progress(json, `Withdrawing ${amount} USDC → ${dest}`);
   const res = await exchange.withdraw3({ destination: dest, amount: String(amount) });
   outputResult(json, { status: res.status, destination: dest, amount: String(amount) });
+}
+
+// Withdraw USDC off Hyperliquid (always to Arbitrum), wait for it to land, then
+// bridge it onward to `destChain`. The withdrawal must go to our own Arbitrum
+// wallet so we can bridge from it; `destination` (if given) is the final
+// recipient on destChain.
+async function withdrawThenBridge(
+  amount: string,
+  destination: string | undefined,
+  destChain: number,
+  json: boolean,
+  dryRun: boolean
+): Promise<void> {
+  if (dryRun) {
+    const summary =
+      `Would withdraw ${amount} USDC from Hyperliquid to Arbitrum ` +
+      `(~$${HL_WITHDRAW_FEE_USDC} HL fee), then bridge the proceeds ` +
+      `Arbitrum → chain ${destChain}${destination ? ` → ${destination}` : ""}.` +
+      "\nDry run — nothing withdrawn or bridged.";
+    outputTradeResult(json, { dryRun: true, summary });
+    return;
+  }
+
+  const provider = await createProviderAdapter();
+  const owner = getWalletAddress() as Address;
+  const before = await readArbUsdc(provider, owner);
+
+  const { exchange } = await createHlClients();
+  progress(json, `Withdrawing ${amount} USDC from Hyperliquid to Arbitrum…`);
+  await exchange.withdraw3({ destination: owner, amount: String(amount) });
+
+  // Wait for the funds to land on Arbitrum before bridging — LiFi needs them to
+  // actually exist on the source chain.
+  progress(
+    json,
+    "Waiting for the withdrawal to settle on Arbitrum (usually a few minutes)…"
+  );
+  const deadline = Date.now() + WITHDRAW_SETTLE_TIMEOUT_MS;
+  let arrived = 0n;
+  while (Date.now() < deadline) {
+    await sleep(WITHDRAW_POLL_MS);
+    const now = await readArbUsdc(provider, owner);
+    if (now > before) {
+      arrived = now - before;
+      break;
+    }
+  }
+  if (arrived === 0n) {
+    // Funds are safe on Arbitrum once HL finalizes — just hand back the exact
+    // command to finish the bridge so nothing is stranded without a next step.
+    throw new CliError(
+      "Withdrawal to Arbitrum hasn't settled in time.",
+      "TIMEOUT",
+      `Your USDC will arrive on Arbitrum shortly; it is not lost. Then bridge it with: ` +
+        `acp trade --token-in usdc --chain-in 42161 --amount-in <amount> --token-out usdc --chain-out ${destChain}.`
+    );
+  }
+
+  const arrivedHuman = formatUnits(arrived, USDC_DECIMALS);
+  progress(
+    json,
+    `Received ${arrivedHuman} USDC on Arbitrum — bridging to chain ${destChain}…`
+  );
+  await runSwap(
+    {
+      tokenIn: "usdc",
+      chainIn: HL_WITHDRAW_CHAIN_ID,
+      amountIn: arrivedHuman,
+      tokenOut: "usdc",
+      chainOut: destChain,
+      recipient: destination,
+    },
+    json
+  );
+}
+
+async function readArbUsdc(
+  provider: IEvmProviderAdapter,
+  owner: Address
+): Promise<bigint> {
+  return (await provider.readContract(HL_WITHDRAW_CHAIN_ID, {
+    abi: erc20Abi,
+    address: ARBITRUM_USDC,
+    functionName: "balanceOf",
+    args: [owner],
+  })) as bigint;
 }
 
 // ---------- Treasures tokenized stock (USDC ↔ stock token swap) ----------
