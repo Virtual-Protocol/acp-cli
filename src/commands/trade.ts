@@ -40,7 +40,6 @@
 
 import type { Command } from "commander";
 import type { Address } from "viem";
-import { erc20Abi, formatUnits } from "viem";
 import { isJson, isTTY, outputError, outputResult } from "../lib/output";
 import { CliError, type ErrorCode } from "../lib/errors";
 import { getApiContext } from "../lib/api/client";
@@ -50,16 +49,9 @@ import {
 } from "../lib/agentFactory";
 import type { IEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
 import { parseChainArg } from "../lib/chains";
-import {
-  createHlClients,
-  createHlInfoClient,
-  formatSize,
-  formatPrice,
-  isTestnet,
-  marketPrice,
-  resolvePerpAsset,
-  resolveSpotAsset,
-} from "../lib/hl/client";
+// HL trading now runs entirely through the backend `/trade/plan` loop; only the
+// read-only account status still talks to Hyperliquid directly (InfoClient).
+import { createHlInfoClient, isTestnet } from "../lib/hl/client";
 // LiFi's chain id for Hyperliquid Core (the perps/spot collateral ledger).
 // Any leg whose chain is this is "on Hyperliquid".
 const HL_CHAIN_ID = 1337;
@@ -611,72 +603,36 @@ async function runHlSpot(opts: Record<string, unknown>, json: boolean): Promise<
     );
   }
   // Buy when the output is the token (spending USDC); sell when the input is the token.
-  const isBuy = !outUsdc ? true : false;
-  const token = isBuy ? tokenOut : tokenIn;
+  const isBuy = !outUsdc;
+  const coin = isBuy ? tokenOut : tokenIn;
 
-  const { info, exchange, address } = await createHlClients();
-  const asset = await resolveSpotAsset(info, token);
+  // The backend builds + sizes the order and hands back an EIP-712 `sign` action.
+  const hlSpot: Record<string, unknown> = {
+    coin,
+    side: isBuy ? "buy" : "sell",
+    // A buy spends amount-in USDC; a sell sells amount-in token units.
+    ...(isBuy ? { amountUsdc: String(opts.amountIn) } : { size: String(opts.amountIn) }),
+    ...(opts.price !== undefined ? { price: String(opts.price) } : {}),
+    ...(opts.postOnly ? { postOnly: true } : {}),
+    ...(opts.slippage !== undefined
+      ? { slippageBps: slippageBpsFromPct(String(opts.slippage)) }
+      : {}),
+  };
 
-  const isMarket = opts.price === undefined;
-  const orderPrice = isMarket
-    ? await marketPrice(
-        info,
-        asset.midKey,
-        isBuy,
-        asset.szDecimals,
-        true,
-        parseSlippage(String(opts.slippage ?? "5"))
-      )
-    : formatPrice(Number(opts.price), asset.szDecimals, true);
-
-  // Size: a sell spends token units directly; a buy spends USDC, so size is the
-  // USDC amount divided by the order price (so the order never overspends).
-  const amountIn = Number(opts.amountIn);
-  if (!Number.isFinite(amountIn) || amountIn <= 0) {
-    throw new CliError(`Invalid --amount-in: ${opts.amountIn}`, "VALIDATION_ERROR");
-  }
-  const sizeNum = isBuy ? amountIn / Number(orderPrice) : amountIn;
-  const size = formatSize(sizeNum, asset.szDecimals);
-
-  if (opts.dryRun) {
-    const summary =
-      `Would ${isBuy ? "buy" : "sell"} ${size} ${asset.name} at ` +
-      `${isMarket ? `market (~$${orderPrice})` : `limit $${orderPrice}`}` +
-      (isBuy ? ` (spending ~$${amountIn} USDC)` : "") +
-      "\nDry run — no funds moved, no order placed.";
-    outputTradeResult(json, { dryRun: true, summary });
-    exitAfterOrder();
-    return;
-  }
-
-  // A spot buy spends USDC from the spot wallet — top it up from perp if short.
-  // (A sell needs the token itself, which no USDC transfer can provide.)
-  if (isBuy) {
-    await ensureHlFunds(info, exchange, address, "spot", amountIn, json);
-  }
-
+  const { apiUrl, token } = await getApiContext();
+  const owner = getWalletAddress() as Address;
+  const provider = await createProviderAdapter();
+  const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", {
+    walletAddress: owner,
+    hlSpot,
+    ...(opts.dryRun ? { dryRun: true } : {}),
+  });
   progress(
     json,
-    `${isBuy ? "Buying" : "Selling"} ${size} ${asset.name} at ${isMarket ? `market (~$${orderPrice})` : `limit $${orderPrice}`}`
+    `HL spot ${plan.tradeId.slice(0, 8)} — ${isBuy ? "buy" : "sell"} ${coin}`
   );
-
-  await placeHlOrder(
-    exchange,
-    {
-      orders: [
-        {
-          a: asset.assetIndex,
-          b: isBuy,
-          p: orderPrice,
-          s: size,
-          r: false,
-          t: { limit: { tif: isMarket ? "Ioc" : opts.postOnly ? "Alo" : "Gtc" } },
-        },
-      ],
-      grouping: "na",
-    },
-    json
-  );
+  const result = await runTradeLoop(apiUrl, token, provider, plan, json);
+  outputTradeResult(json, result);
 }
 
 // ---------- Hyperliquid perp (position shape) ----------
@@ -699,98 +655,36 @@ async function runPerp(opts: Record<string, unknown>, json: boolean): Promise<vo
       "e.g. `--token BTC --side long --size 0.01 --leverage 5`. Size is in token units, not USD."
     );
   }
-  const isBuy = parsePerpSide(String(opts.side));
-  const { info, exchange, address } = await createHlClients();
-  const asset = await resolvePerpAsset(info, String(opts.token));
+  // The backend sizes the order, pins/adopts leverage, auto-balances spot→perp,
+  // and returns an EIP-712 `sign` action; the CLI just signs the loop.
+  const hl: Record<string, unknown> = {
+    coin: String(opts.token),
+    side: String(opts.side).toLowerCase(), // long | short (validated in detectIntent)
+    size: String(opts.size),
+    ...(opts.leverage !== undefined ? { leverage: Number(opts.leverage) } : {}),
+    ...(opts.slippage !== undefined
+      ? { slippageBps: slippageBpsFromPct(String(opts.slippage)) }
+      : {}),
+    ...(opts.price !== undefined ? { price: String(opts.price) } : {}),
+    ...(opts.postOnly ? { postOnly: true } : {}),
+    ...(opts.reduceOnly ? { reduceOnly: true } : {}),
+    ...(opts.isolated ? { isolated: true } : {}),
+  };
 
-  if (opts.leverage !== undefined && !opts.dryRun) {
-    await exchange.updateLeverage({
-      asset: asset.assetIndex,
-      isCross: !opts.isolated,
-      leverage: Number(opts.leverage),
-    });
-    progress(json, `Set ${asset.name} leverage to ${opts.leverage}x`);
-  }
-
-  const size = formatSize(Number(opts.size), asset.szDecimals);
-  const isMarket = opts.price === undefined;
-  const price = isMarket
-    ? await marketPrice(
-        info,
-        asset.midKey,
-        isBuy,
-        asset.szDecimals,
-        false,
-        parseSlippage(String(opts.slippage ?? "5"))
-      )
-    : formatPrice(Number(opts.price), asset.szDecimals, false);
-
-  // Dry run: report exactly what would happen — size, notional, and the margin
-  // the order needs — without setting leverage, moving funds, or placing it.
-  if (opts.dryRun) {
-    const lev = opts.leverage !== undefined ? Number(opts.leverage) : 1;
-    const lines: string[] = [];
-    if (opts.leverage !== undefined) {
-      lines.push(
-        `Would set ${asset.name} leverage to ${opts.leverage}x${opts.isolated ? " (isolated)" : ""}`,
-      );
-    }
-    if (opts.reduceOnly) {
-      lines.push(
-        `Would ${opts.side} ${size} ${asset.name} (reduce-only) at ${isMarket ? `market (~$${price})` : `limit $${price}`}`,
-      );
-    } else {
-      const notional = Number(size) * Number(price);
-      const needMargin = (notional / Math.max(lev, 1)) * 1.05;
-      lines.push(
-        `Would open ${opts.side} ${size} ${asset.name} at ${isMarket ? `market (~$${price})` : `limit $${price}`} (~$${notional.toFixed(2)} notional)`,
-      );
-      lines.push(
-        `Margin required: ~$${needMargin.toFixed(2)} at ${lev}x leverage` +
-          (opts.leverage === undefined ? " (no --leverage given; assuming 1x)" : ""),
-      );
-    }
-    lines.push("Dry run — no leverage set, no funds moved, no order placed.");
-    outputTradeResult(json, { dryRun: true, summary: lines.join("\n") });
-    exitAfterOrder();
-    return;
-  }
-
-  // Opening/adding to a position consumes perp margin — top it up from the spot
-  // wallet if short. Required initial margin ≈ notional / leverage (×1.05 for
-  // fees). Skip for reduce-only (closing frees margin, never needs more). When
-  // leverage isn't given we don't know the account default, so assume 1x — a
-  // conservative over-estimate that just moves more idle USDC into perp.
-  // TIP: if you hit insufficient margin, pass --leverage <n> to reduce the margin requirement.
-  if (!opts.reduceOnly) {
-    const notional = Number(size) * Number(price);
-    const lev = opts.leverage !== undefined ? Number(opts.leverage) : 1;
-    const needMargin = (notional / Math.max(lev, 1)) * 1.05;
-    await ensureHlFunds(info, exchange, address, "perp", needMargin, json);
-  }
-
+  const { apiUrl, token } = await getApiContext();
+  const owner = getWalletAddress() as Address;
+  const provider = await createProviderAdapter();
+  const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", {
+    walletAddress: owner,
+    hl,
+    ...(opts.dryRun ? { dryRun: true } : {}),
+  });
   progress(
     json,
-    `Opening ${opts.side} ${size} ${asset.name} at ${isMarket ? `market (~$${price})` : `limit $${price}`}`
+    `HL perp ${plan.tradeId.slice(0, 8)} — ${String(opts.side)} ${String(opts.token)}`
   );
-
-  await placeHlOrder(
-    exchange,
-    {
-      orders: [
-        {
-          a: asset.assetIndex,
-          b: isBuy,
-          p: price,
-          s: size,
-          r: Boolean(opts.reduceOnly),
-          t: { limit: { tif: isMarket ? "Ioc" : opts.postOnly ? "Alo" : "Gtc" } },
-        },
-      ],
-      grouping: "na",
-    },
-    json
-  );
+  const result = await runTradeLoop(apiUrl, token, provider, plan, json);
+  outputTradeResult(json, result);
 }
 
 // ---------- Hyperliquid account ----------
@@ -827,16 +721,10 @@ async function runStatus(json: boolean): Promise<void> {
   });
 }
 
-// Canonical USDC on Arbitrum (6 decimals) — the only place HL withdrawals land.
-const ARBITRUM_USDC = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as const;
-const USDC_DECIMALS = 6;
-// HL's withdraw3 deducts a flat $1 USDC network fee from the amount that lands.
-const HL_WITHDRAW_FEE_USDC = 1;
-// HL finalizes withdrawals in batches; funds usually reach Arbitrum within a few
-// minutes. Poll the Arbitrum USDC balance until it rises, then bridge onward.
-const WITHDRAW_SETTLE_TIMEOUT_MS = 15 * 60 * 1000;
-const WITHDRAW_POLL_MS = 15_000;
-
+// Withdraw USDC off Hyperliquid via the backend planner. HL's withdraw3 always
+// settles to Arbitrum; a non-Arbitrum destChain tells the backend to withdraw to
+// Arbitrum, wait for settlement, then bridge onward (it drives the wait+bridge
+// through the same /trade/next loop). The CLI just signs.
 async function runWithdraw(
   amount: string,
   destination: string | undefined,
@@ -851,117 +739,26 @@ async function runWithdraw(
       "e.g. `acp trade withdraw-from-hl --amount 25`."
     );
   }
+  const hlWithdraw: Record<string, unknown> = {
+    amount: String(amount),
+    ...(destination ? { destination } : {}),
+    ...(destChain !== HL_WITHDRAW_CHAIN_ID ? { toChain: destChain } : {}),
+  };
 
-  // HL's withdraw3 only ever settles to Arbitrum. A non-Arbitrum destination is
-  // therefore withdraw-to-Arbitrum, then bridge Arbitrum → destChain.
-  if (destChain !== HL_WITHDRAW_CHAIN_ID) {
-    await withdrawThenBridge(amount, destination, destChain, json, dryRun);
-    return;
-  }
-
-  const { exchange, address } = await createHlClients();
-  const dest = (destination ?? address) as Address;
-  if (dryRun) {
-    const summary =
-      `Would withdraw ${amount} USDC from Hyperliquid → ${dest} (settles on Arbitrum).` +
-      "\nDry run — no withdrawal submitted.";
-    outputTradeResult(json, {
-      dryRun: true,
-      summary,
-      destination: dest,
-      amount: String(amount),
-    });
-    return;
-  }
-  progress(json, `Withdrawing ${amount} USDC → ${dest}`);
-  const res = await exchange.withdraw3({ destination: dest, amount: String(amount) });
-  outputResult(json, { status: res.status, destination: dest, amount: String(amount) });
-}
-
-// Withdraw USDC off Hyperliquid (always to Arbitrum), wait for it to land, then
-// bridge it onward to `destChain`. The withdrawal must go to our own Arbitrum
-// wallet so we can bridge from it; `destination` (if given) is the final
-// recipient on destChain.
-async function withdrawThenBridge(
-  amount: string,
-  destination: string | undefined,
-  destChain: number,
-  json: boolean,
-  dryRun: boolean
-): Promise<void> {
-  if (dryRun) {
-    const summary =
-      `Would withdraw ${amount} USDC from Hyperliquid to Arbitrum ` +
-      `(~$${HL_WITHDRAW_FEE_USDC} HL fee), then bridge the proceeds ` +
-      `Arbitrum → chain ${destChain}${destination ? ` → ${destination}` : ""}.` +
-      "\nDry run — nothing withdrawn or bridged.";
-    outputTradeResult(json, { dryRun: true, summary });
-    return;
-  }
-
-  const provider = await createProviderAdapter();
+  const { apiUrl, token } = await getApiContext();
   const owner = getWalletAddress() as Address;
-  const before = await readArbUsdc(provider, owner);
-
-  const { exchange } = await createHlClients();
-  progress(json, `Withdrawing ${amount} USDC from Hyperliquid to Arbitrum…`);
-  await exchange.withdraw3({ destination: owner, amount: String(amount) });
-
-  // Wait for the funds to land on Arbitrum before bridging — LiFi needs them to
-  // actually exist on the source chain.
+  const provider = await createProviderAdapter();
+  const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", {
+    walletAddress: owner,
+    hlWithdraw,
+    ...(dryRun ? { dryRun: true } : {}),
+  });
   progress(
     json,
-    "Waiting for the withdrawal to settle on Arbitrum (usually a few minutes)…"
+    `HL withdraw ${plan.tradeId.slice(0, 8)} — ${amount} USDC → chain ${destChain}`
   );
-  const deadline = Date.now() + WITHDRAW_SETTLE_TIMEOUT_MS;
-  let arrived = 0n;
-  while (Date.now() < deadline) {
-    await sleep(WITHDRAW_POLL_MS);
-    const now = await readArbUsdc(provider, owner);
-    if (now > before) {
-      arrived = now - before;
-      break;
-    }
-  }
-  if (arrived === 0n) {
-    // Funds are safe on Arbitrum once HL finalizes — just hand back the exact
-    // command to finish the bridge so nothing is stranded without a next step.
-    throw new CliError(
-      "Withdrawal to Arbitrum hasn't settled in time.",
-      "TIMEOUT",
-      `Your USDC will arrive on Arbitrum shortly; it is not lost. Then bridge it with: ` +
-        `acp trade --token-in usdc --chain-in 42161 --amount-in <amount> --token-out usdc --chain-out ${destChain}.`
-    );
-  }
-
-  const arrivedHuman = formatUnits(arrived, USDC_DECIMALS);
-  progress(
-    json,
-    `Received ${arrivedHuman} USDC on Arbitrum — bridging to chain ${destChain}…`
-  );
-  await runSwap(
-    {
-      tokenIn: "usdc",
-      chainIn: HL_WITHDRAW_CHAIN_ID,
-      amountIn: arrivedHuman,
-      tokenOut: "usdc",
-      chainOut: destChain,
-      recipient: destination,
-    },
-    json
-  );
-}
-
-async function readArbUsdc(
-  provider: IEvmProviderAdapter,
-  owner: Address
-): Promise<bigint> {
-  return (await provider.readContract(HL_WITHDRAW_CHAIN_ID, {
-    abi: erc20Abi,
-    address: ARBITRUM_USDC,
-    functionName: "balanceOf",
-    args: [owner],
-  })) as bigint;
+  const result = await runTradeLoop(apiUrl, token, provider, plan, json);
+  outputTradeResult(json, result);
 }
 
 // ---------- Treasures tokenized stock (USDC ↔ stock token swap) ----------
@@ -1111,52 +908,6 @@ function validateTreasuresChain(s: string): "sol" | "eth" {
   );
 }
 
-// Auto-balance the HL sub-wallets. HL keeps perp (collateral) and spot USDC in
-// separate wallets; deposits land in perp. Before an order, if the wallet that
-// must fund it is short, move the shortfall over from the other wallet so an
-// agent never has to think about which sub-wallet holds the money.
-//   target "spot" → fund a spot buy from the perp wallet
-//   target "perp" → fund a perp order from the spot wallet
-// `needUsd` is the USDC the order requires in `target`. Over-transferring is
-// harmless (it's an instant, free L1 move), so we only ever move the shortfall.
-type HlExchange = Awaited<ReturnType<typeof createHlClients>>["exchange"];
-type HlInfo = Awaited<ReturnType<typeof createHlClients>>["info"];
-
-async function ensureHlFunds(
-  info: HlInfo,
-  exchange: HlExchange,
-  address: Address,
-  target: "spot" | "perp",
-  needUsd: number,
-  json: boolean
-): Promise<void> {
-  if (!Number.isFinite(needUsd) || needUsd <= 0) return;
-  const [perp, spot] = await Promise.all([
-    info.clearinghouseState({ user: address }),
-    info.spotClearinghouseState({ user: address }),
-  ]);
-  const spotUsdc = Number(spot.balances.find((b) => b.coin === "USDC")?.total ?? "0");
-  const perpFree = Number(perp.withdrawable ?? "0");
-  const have = target === "spot" ? spotUsdc : perpFree;
-  if (have >= needUsd) return;
-
-  const sourceAvail = target === "spot" ? perpFree : spotUsdc;
-  const move = Math.min(needUsd - have, sourceAvail);
-  const source = target === "spot" ? "perp" : "spot";
-  if (move <= 0) {
-    progress(
-      json,
-      `Not enough ${target} margin ($${have.toFixed(2)} available, ~$${needUsd.toFixed(2)} needed). ` +
-        `Deposit more USDC with: acp trade --amount-in <amount> --chain-in <id> --chain-out 1337. ` +
-        `Or reduce your order size / increase leverage.`
-    );
-    return;
-  }
-  const amount = move.toFixed(2);
-  progress(json, `Auto-transfer $${amount} ${source}→${target} to fund the order`);
-  await exchange.usdClassTransfer({ amount, toPerp: target === "perp" });
-}
-
 // ---------- HTTP + shared helpers ----------
 
 async function post<T>(
@@ -1206,17 +957,6 @@ async function post<T>(
   return (await res.json()) as T;
 }
 
-function parsePerpSide(side: string): boolean {
-  const s = side.trim().toLowerCase();
-  if (s === "long") return true;
-  if (s === "short") return false;
-  throw new CliError(
-    `Invalid --side: ${side || "(empty)"}`,
-    "VALIDATION_ERROR",
-    "Use long or short for a perp."
-  );
-}
-
 function parseSlippage(pct: string): number {
   const n = Number(pct);
   if (!Number.isFinite(n) || n < 0 || n >= 100) {
@@ -1227,13 +967,6 @@ function parseSlippage(pct: string): number {
     );
   }
   return n / 100;
-}
-
-function summarizeOrder(res: {
-  response: { data: { statuses: unknown[] } };
-}): Record<string, unknown> {
-  const statuses = res.response?.data?.statuses ?? [];
-  return { status: "ok", statuses };
 }
 
 const KNOWN_CODES = new Set<string>([
@@ -1267,48 +1000,6 @@ function outputTradeResult(json: boolean, result: Record<string, unknown>): void
     return;
   }
   outputResult(json, result);
-}
-
-// @nktkas/hyperliquid's `exchange.order()` leaves a transport handle open, so
-// the process won't exit on its own after a perp/spot order (swap, deposit,
-// withdraw, and status all exit fine — only order() is affected). The result
-// has already been printed; give stdout a tick to flush, then exit explicitly.
-// The timer is unref'd so it never blocks a natural exit.
-function exitAfterOrder(): void {
-  setTimeout(() => process.exit(process.exitCode ?? 0), 100).unref();
-}
-
-// Place an HL order with a hard timeout and a guaranteed exit. Two SDK quirks
-// are handled here: (1) a successful order() leaves a transport handle open
-// (see exitAfterOrder); (2) a rejected/invalid order() can hang forever without
-// resolving — so we race it against a timeout. Either way the process exits.
-async function placeHlOrder(
-  exchange: HlExchange,
-  order: Parameters<HlExchange["order"]>[0],
-  json: boolean
-): Promise<void> {
-  try {
-    const res = await Promise.race([
-      exchange.order(order),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new CliError(
-                "Hyperliquid did not respond to the order in time — run `acp trade status` to check whether it placed.",
-                "TIMEOUT"
-              )
-            ),
-          20_000
-        ).unref()
-      ),
-    ]);
-    outputResult(json, summarizeOrder(res));
-  } catch (err) {
-    outputError(json, err instanceof Error ? err : String(err));
-  } finally {
-    exitAfterOrder();
-  }
 }
 
 function sleep(ms: number): Promise<void> {
