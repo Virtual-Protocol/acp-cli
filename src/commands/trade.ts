@@ -1,17 +1,20 @@
 // `acp trade` — one command for moving and trading value. The chains you pass
-// decide the venue: Hyperliquid is chain 1337, so swaps, HL deposits, HL spot,
-// and HL withdrawals all share the same --token-in/--chain-in/--amount-in/
-// --token-out/--chain-out shape. Only perps are different (a leveraged position,
-// not a token conversion), so they use --side long|short.
+// decide the venue: Hyperliquid is chain 1337, so swaps, HL deposits, and HL
+// spot all share the same --token-in/--chain-in/--amount-in/--token-out/
+// --chain-out shape. Perps are different (a leveraged position, not a token
+// conversion), so they use --side long|short. Withdrawing USDC off Hyperliquid
+// is its own subcommand (`withdraw-from-hl`) — it always settles to Arbitrum,
+// so it isn't a chain choice and doesn't fit the token-pair shape.
 //
 // ── Intent routing (for LLM agents and humans) ──────────────────────────────
 //   --token <sym> --side long|short           → Hyperliquid PERP (leveraged)
 //   --token <sym> --amount-usdc|--amount-shares → Treasures TOKENIZED STOCK (spot)
 //   --chain-in 1337  --chain-out 1337         → Hyperliquid SPOT (order book)
 //   --chain-in <evm> --chain-out 1337         → DEPOSIT USDC into Hyperliquid
-//   --chain-in 1337  --chain-out <evm>        → WITHDRAW USDC from Hyperliquid
 //   --chain-in <evm> --chain-out <evm>        → SWAP (DEX: BondingV5 / LiFi)
 //   (no flags, in a terminal)                 → interactive picker (humans only)
+// Moving USDC OFF Hyperliquid is its own command: `acp trade withdraw-from-hl
+// --amount <usdc>` (HL's withdraw3 always settles to Arbitrum — not a chain choice).
 //
 // One asset flag everywhere: --token names the symbol (BTC, AAPL, …); the
 // companion flag picks the venue — --side → leveraged HL perp, --amount-usdc/
@@ -164,7 +167,7 @@ export function registerTradeCommands(program: Command): void {
         "  --chain-in <evm>  --chain-out <evm>   → DEX swap (bridges cross-chain if needed)\n" +
         "  --chain-in <evm>  --chain-out 1337    → deposit USDC into Hyperliquid\n" +
         "  --chain-in 1337   --chain-out 1337    → Hyperliquid spot order\n" +
-        "  --chain-in 1337   --chain-out <evm>   → withdraw USDC from Hyperliquid\n" +
+        "  (to move USDC off Hyperliquid)        → acp trade withdraw-from-hl --amount <usdc>  (settles to Arbitrum)\n" +
         "\nNote: --amount-in is what you spend, not what you receive.\n" +
         "  e.g. --amount-in 10 spends $10 USDC — the output amount depends on the current price.\n" +
         "  --token <sym> --side long|short --size <n> --leverage <n>  → Hyperliquid perp\n" +
@@ -179,7 +182,7 @@ export function registerTradeCommands(program: Command): void {
         "  acp trade --token-in usdc --chain-in 8453 --amount-in 25 --token-out usdc --chain-out 1337   # deposit\n" +
         "  acp trade --token-in usdc --chain-in 1337 --amount-in 100 --token-out PURR --chain-out 1337  # spot buy\n" +
         "  acp trade --token-in PURR --chain-in 1337 --amount-in 50 --token-out usdc --chain-out 1337   # spot sell\n" +
-        "  acp trade --token-in usdc --chain-in 1337 --amount-in 25 --token-out usdc --chain-out 42161  # withdraw\n" +
+        "  acp trade withdraw-from-hl --amount 25                                                       # withdraw to Arbitrum\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5 --dry-run   # preview only\n" +
         "  acp trade --amount-in 25 --chain-out hyperliquid                       # deposit (alias)\n" +
@@ -195,11 +198,10 @@ export function registerTradeCommands(program: Command): void {
     .option("--token-out <token>", "Output token (address or symbol)")
     .option("--chain-out <id>", "Output chain ID — 1 (Ethereum), 42161 (Arbitrum), 8453 (Base), 1337 (Hyperliquid).")
     .option("--recipient <addr>", "Output recipient (default: active wallet)")
-    .option("--slippage-bps <bps>", "Swap/bridge slippage in basis points")
     .option("--deadline-secs <secs>", "BondingV5 deadline in seconds")
     .option("--price <price>", "HL spot limit price (omit for a market order)")
     .option("--post-only", "HL post-only (Alo) limit order; rejects if it crosses", false)
-    .option("--slippage <pct>", "HL market-order slippage as a percent (default 5)", "5")
+    .option("--slippage <pct>", "Max slippage as a percent, e.g. 5 = 5% (HL orders default to 5%; swaps/Treasures use the server default if omitted)")
     // -- Treasures tokenized stock (USDC ↔ stock token swap) -------------
     // The asset is named with --token (below); these flags pick buy vs sell.
     .option("--amount-usdc <amount>", "USDC to spend on a Treasures tokenized-stock buy (with --token)")
@@ -241,15 +243,6 @@ export function registerTradeCommands(program: Command): void {
           case "swap":
             await runSwap(opts, json);
             return;
-          case "withdraw":
-            await runWithdraw(
-              String(opts.amountIn),
-              opts.recipient as string | undefined,
-              json,
-              opts.chainOut !== undefined ? Number(opts.chainOut) : undefined,
-              opts.dryRun === true
-            );
-            return;
           case "interactive":
             await runInteractive(json);
             return;
@@ -272,18 +265,25 @@ export function registerTradeCommands(program: Command): void {
       }
     });
 
-  // ── withdraw ──────────────────────────────────────────────────────────────
-  // Convenience form. (Equivalent to: --token-in usdc --chain-in 1337
-  // --amount-in <n> --token-out usdc --chain-out <evm>.)
+  // ── withdraw-from-hl ────────────────────────────────────────────────────────
+  // The ONLY way to move USDC off Hyperliquid. It's its own command (not a
+  // chain-in/chain-out combo) because it isn't a swap or a chain choice:
+  // HL's withdraw3 always settles USDC on Arbitrum, full stop.
   trade
-    .command("withdraw")
-    .description("Withdraw USDC from Hyperliquid L1 to Arbitrum (signed action)")
+    .command("withdraw-from-hl")
+    .description("Withdraw USDC from Hyperliquid to Arbitrum (signed action)")
     .requiredOption("--amount <usdc>", "USDC amount to withdraw")
     .option("--destination <addr>", "Destination address (default: active wallet)")
+    .option("--dry-run", "Preview the withdrawal without submitting it", false)
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        await runWithdraw(String(opts.amount), opts.destination, json);
+        await runWithdraw(
+          String(opts.amount),
+          opts.destination,
+          json,
+          opts.dryRun === true
+        );
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
@@ -297,7 +297,6 @@ type Intent =
   | "perp"
   | "spot"
   | "deposit"
-  | "withdraw"
   | "swap"
   | "interactive";
 
@@ -367,18 +366,14 @@ export function detectIntent(opts: Record<string, unknown>, json: boolean): Inte
     const outHL = opts.chainOut !== undefined && Number(opts.chainOut) === HL_CHAIN_ID;
     if (inHL && outHL) return "spot";
     if (inHL) {
-      // chain-in 1337 with no chain-out is ambiguous: it's almost always a spot
-      // order missing `--chain-out 1337`, not a withdraw. Withdraw requires an
-      // explicit EVM destination, so demand chain-out rather than silently
-      // moving funds off Hyperliquid.
-      if (!outHL && opts.chainOut === undefined) {
-        throw new CliError(
-          "--chain-in 1337 needs an explicit --chain-out.",
-          "VALIDATION_ERROR",
-          "Use `--chain-out 1337` for an HL spot order, or an EVM chain id (e.g. `--chain-out 8453`) to withdraw from Hyperliquid."
-        );
-      }
-      return "withdraw";
+      // chain-in 1337 only makes sense for a spot order now. Moving USDC OFF
+      // Hyperliquid is its own command — it isn't a chain choice (HL always
+      // settles to Arbitrum), so we don't overload chain-out to mean "withdraw".
+      throw new CliError(
+        "--chain-in 1337 is only for Hyperliquid spot orders (add --chain-out 1337).",
+        "VALIDATION_ERROR",
+        "To move USDC off Hyperliquid, use `acp trade withdraw-from-hl --amount <usdc>` (settles to Arbitrum)."
+      );
     }
     if (outHL) return "deposit";
     return "swap";
@@ -451,7 +446,7 @@ async function runSwap(opts: Record<string, unknown>, json: boolean): Promise<vo
     amountIn: String(opts.amountIn),
     tokenOut,
     chainOut,
-    slippageBps: opts.slippageBps !== undefined ? Number(opts.slippageBps) : undefined,
+    slippageBps: opts.slippage !== undefined ? slippageBpsFromPct(String(opts.slippage)) : undefined,
     deadlineSecs: opts.deadlineSecs !== undefined ? Number(opts.deadlineSecs) : undefined,
     recipient: (opts.recipient as string | undefined) ?? (isDeposit ? owner : undefined),
     walletAddress: owner,
@@ -808,32 +803,17 @@ async function runStatus(json: boolean): Promise<void> {
   });
 }
 
-// Hyperliquid's withdraw3 always settles USDC on Arbitrum — there is no
-// choice of destination chain.
-const HL_WITHDRAW_CHAIN_ID = 42161;
-
 async function runWithdraw(
   amount: string,
   destination: string | undefined,
   json: boolean,
-  chainOut?: number,
   dryRun = false
 ): Promise<void> {
   if (amount === undefined || amount === "undefined" || amount === "") {
     throw new CliError(
-      "--amount-in is required to withdraw from Hyperliquid.",
+      "--amount is required to withdraw from Hyperliquid.",
       "VALIDATION_ERROR",
-      "e.g. `acp trade --token-in usdc --chain-in 1337 --amount-in 25 --token-out usdc --chain-out 42161`."
-    );
-  }
-  // detectIntent requires an explicit --chain-out for a withdraw; honor it by
-  // rejecting any non-Arbitrum target rather than silently settling on
-  // Arbitrum when the user asked for a different chain.
-  if (chainOut !== undefined && chainOut !== HL_WITHDRAW_CHAIN_ID) {
-    throw new CliError(
-      `Hyperliquid withdrawals settle on Arbitrum (${HL_WITHDRAW_CHAIN_ID}); --chain-out ${chainOut} is not supported.`,
-      "VALIDATION_ERROR",
-      "Use `--chain-out 42161` to withdraw from Hyperliquid."
+      "e.g. `acp trade withdraw-from-hl --amount 25`."
     );
   }
   const { exchange, address } = await createHlClients();
@@ -889,8 +869,8 @@ async function runTreasuresStock(
     opts.amountIn !== undefined;
 
   const slippageBps =
-    opts.slippageBps !== undefined
-      ? parseTreasuresSlippageBps(opts.slippageBps)
+    opts.slippage !== undefined
+      ? slippageBpsFromPct(String(opts.slippage))
       : undefined;
   const protocol =
     opts.protocol !== undefined
@@ -974,19 +954,12 @@ async function runTreasuresStock(
   outputTradeResult(json, result);
 }
 
-// Guard the bps before it hits JSON.stringify — an un-validated Number() turns
-// garbage into NaN, which serializes as `max_slippage_bps: null` and quietly
-// drops the cap server-side. Require a non-negative whole number of bps.
-function parseTreasuresSlippageBps(raw: unknown): number {
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0) {
-    throw new CliError(
-      `Invalid --slippage-bps: ${String(raw)}`,
-      "VALIDATION_ERROR",
-      "Pass a non-negative whole number of basis points, e.g. 300 (=3%)."
-    );
-  }
-  return n;
+// Convert a --slippage percent (e.g. "5" = 5%) to basis points for the
+// swap/Treasures wire calls. Reuses parseSlippage's validation (which returns a
+// 0..1 fraction), so the single --slippage flag covers every route and can't
+// serialize to NaN.
+function slippageBpsFromPct(raw: string): number {
+  return Math.round(parseSlippage(raw) * 10_000);
 }
 
 function validateTreasuresProtocol(s: string): "ondo" | "xstocks" {
