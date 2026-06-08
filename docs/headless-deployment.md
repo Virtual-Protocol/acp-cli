@@ -140,13 +140,15 @@ That's it — no browser opens, no human input required on the machine itself.
 
 ### Full bootstrap script
 
-If you're injecting this into a first-boot script, the whole thing fits in one bash file. The script generates the keypair, asks **your** backend to provision the agent (your backend collects the user's signature and forwards the call to Virtuals), and wires the CLI up:
+If you're injecting this into a first-boot script, the whole thing fits in one bash file. The script generates the keypair, asks **your** backend to collect the user's consent signature for that key, asks your backend to provision the agent (forwarding the signature and `issuedAt` so your backend can relay them to Virtuals), and wires the CLI up:
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
 # Values you inject from your provisioning system (secrets manager, env, etc.):
+#   $PARTNER_CONSENT_URL        — your backend endpoint that collects the end
+#                                 user's EIP-712 consent signature
 #   $PARTNER_AGENT_CREATE_URL   — your backend endpoint that provisions an agent
 #   $PARTNER_API_TOKEN          — credential the machine uses to call your backend
 #   $END_USER_WALLET_ADDRESS    — the end user's EVM wallet address
@@ -154,26 +156,39 @@ set -euo pipefail
 # 1. Generate the keypair locally; private half stays on the machine.
 PUBLIC_KEY=$(acp agent generate-signer-key --json | jq -r .publicKey)
 
-# 2. Ask your backend to provision the agent. Your backend collects the
-#    end-user's EIP-712 consent signature (e.g. via a wallet prompt in your
-#    own UI), then forwards everything to Virtuals.
-PROVISION=$(curl --fail -sS -X POST "$PARTNER_AGENT_CREATE_URL" \
+# 2. Ask your backend to collect the end user's EIP-712 consent over this
+#    public key (e.g. a wallet prompt in your own UI). The consent signs over
+#    the public key, so this can only happen AFTER step 1 — and Virtuals
+#    only accepts the signature within ±10 minutes of issuedAt, so it can't
+#    be collected ahead of time either. Your backend must return both the
+#    signature and the exact issuedAt that was signed.
+CONSENT=$(curl --fail -sS -X POST "$PARTNER_CONSENT_URL" \
   -H "Authorization: Bearer $PARTNER_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"walletAddress\":\"$END_USER_WALLET_ADDRESS\",\"signerPublicKey\":\"$PUBLIC_KEY\"}")
+
+OWNER_SIGNATURE=$(jq -r .ownerSignature <<<"$CONSENT")
+ISSUED_AT=$(jq       -r .issuedAt       <<<"$CONSENT")
+
+# 3. Ask your backend to provision the agent, forwarding the consent proof.
+#    Your backend relays this (plus the agent's name/description) to Virtuals.
+PROVISION=$(curl --fail -sS -X POST "$PARTNER_AGENT_CREATE_URL" \
+  -H "Authorization: Bearer $PARTNER_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"walletAddress\":\"$END_USER_WALLET_ADDRESS\",\"signerPublicKey\":\"$PUBLIC_KEY\",\"ownerSignature\":\"$OWNER_SIGNATURE\",\"issuedAt\":$ISSUED_AT}")
 
 ACCESS_TOKEN=$(jq  -r .accessToken        <<<"$PROVISION")
 REFRESH_TOKEN=$(jq -r .refreshToken       <<<"$PROVISION")
 AGENT_ID=$(jq      -r .data.id            <<<"$PROVISION")
 AGENT_WALLET=$(jq  -r .data.walletAddress <<<"$PROVISION")
 
-# 3. Persist the tokens against the end user's wallet.
+# 4. Persist the tokens against the end user's wallet.
 acp configure \
   --token         "$ACCESS_TOKEN" \
   --refresh-token "$REFRESH_TOKEN" \
   --wallet        "$END_USER_WALLET_ADDRESS"
 
-# 4. Link the local keypair to the agent and make it active.
+# 5. Link the local keypair to the agent and make it active.
 acp agent link \
   --agent-id          "$AGENT_ID" \
   --wallet            "$AGENT_WALLET" \
@@ -181,7 +196,7 @@ acp agent link \
   --make-active
 ```
 
-The request/response shape between the machine and your backend is yours to design. The example above is the minimum — your backend is responsible for plumbing the consent signature into the call to Virtuals before relaying the response back. Just be careful with the two wallet addresses: `acp configure --wallet` takes the end user's wallet; `acp agent link --wallet` takes the agent's wallet.
+The request/response shape between the machine and your backend is yours to design — the consent collection (step 2) and the provisioning relay (step 3) can be one endpoint or two, as long as the `ownerSignature` + `issuedAt` pair reaches Virtuals together with the `walletAddress` and `signerPublicKey` it signs over (plus the agent's name and description). Just be careful with the two wallet addresses: `acp configure --wallet` takes the end user's wallet; `acp agent link --wallet` takes the agent's wallet.
 
 ### Env-var alternative
 

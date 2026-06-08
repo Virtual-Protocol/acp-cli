@@ -238,12 +238,12 @@ Quick pointers:
 
 | Command | What it does |
 |---|---|
-| `acp agent create --name <n> --description <d> [--image <url>]` | Create a new agent + wallet. **Non-interactively, pass `--name` + `--description` (both required) and `--json`; `--image` is OPTIONAL — just omit it.** Don't run the bare form in an agent harness: with no TTY it can't prompt and will error for missing name/description. |
+| `acp agent create --name <n> --description <d> [--image <url>] [--signer --policy <restricted\|deny-all\|unrestricted>]` | Create a new agent + wallet. **Non-interactively, pass `--name` + `--description` (both required) and `--json`; `--image` is OPTIONAL — just omit it.** Don't run the bare form in an agent harness: with no TTY it can't prompt and will error for missing name/description. `--signer` auto-sets up a signer after creation; `--policy` (default `restricted`) sets that signer's authorization policy. Interactively, the signer step prompts for the policy; passing `--policy` skips that picker. |
 | `acp agent list [--page --page-size]` | List your agents |
 | `acp agent use [--agent-id]` | Switch active agent |
 | `acp agent whoami --json` | Show details of the active agent (per-chain tokenization status, ERC-8004 IDs, offerings, resources) |
 | `acp agent update [--name --description --image]` | Update active agent metadata |
-| `acp agent add-signer [--agent-id] [--no-wait]` | Generate P256 signer, browser-approve, persist to OS keychain. `--no-wait` returns `{signerUrl, requestId, publicKey}` and exits for the split flow |
+| `acp agent add-signer [--agent-id] [--no-wait] [--policy <restricted\|deny-all\|unrestricted>]` | Generate P256 signer, browser-approve, persist to OS keychain. `--policy` (default `restricted`) sets the signer's authorization scope: `restricted` (authorized for all ACP transactions), `deny-all` (manual approval for all transactions), `unrestricted` (authorizes everything). `--no-wait` returns `{signerUrl, requestId, publicKey}` and exits for the split flow |
 | `acp agent signer-status --request-id --public-key [--agent-id --wait --timeout]` | Complete a split `add-signer --no-wait`: check approval, persist signer. `{status:'pending'}` until approved |
 | `acp agent tokenize [--chain-id --symbol --anti-sniper <0\|1\|2> --prebuy --acf --60-days --airdrop-percent --robotics --configure]` | Launch a tradeable token (signer + VIRTUAL launch fee + ETH gas). See [docs/tokenization.md](docs/tokenization.md). |
 | `acp agent register-erc8004 [--agent-id --chain-id]` | Register on the ERC-8004 identity registry (signer required) |

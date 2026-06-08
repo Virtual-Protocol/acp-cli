@@ -7,6 +7,14 @@ export interface AddSignerResponse {
   data: { url: string; requestId: string };
 }
 
+export type SignerPolicy = "restricted" | "deny-all" | "unrestricted";
+
+export const SIGNER_POLICIES: SignerPolicy[] = [
+  "restricted",
+  "deny-all",
+  "unrestricted",
+];
+
 export interface GetSignerStatusResponse {
   message: string;
   data: { status: "completed" | "pending" | null };
@@ -648,8 +656,11 @@ export class AgentApi {
     return this.client.get<AgentBrowseResponse>("/agents/search", params);
   }
 
-  async addSignerWithUrl(agentId: string): Promise<AddSignerResponse> {
-    return this.client.post(`/agents/${agentId}/signer`, {});
+  async addSignerWithUrl(
+    agentId: string,
+    policy: SignerPolicy = "restricted"
+  ): Promise<AddSignerResponse> {
+    return this.client.post(`/agents/${agentId}/signer`, { policy });
   }
 
   async getSignerStatus(
