@@ -21,7 +21,8 @@
 // companion flag picks the venue — --side → leveraged HL perp, --amount-usdc/
 // --amount-shares → Treasures spot tokenized stock.
 //
-// `acp trade status` shows HL positions/margin/balances (read-only).
+// `acp trade hl-status` shows HL ACCOUNT positions/margin/balances (read-only).
+// It is HL-only — for on-chain token balances use `acp wallet balance`.
 //
 // Spot amount semantics mirror a swap: a BUY (--token-in usdc) spends --amount-in
 // USDC (size derived from price, never overspends); a SELL (--token-out usdc)
@@ -34,7 +35,7 @@
 // signs + broadcasts with the keystore signer (no human prompt). HL perp/spot/
 // withdraw included: they're EIP-712 actions the backend builds and the CLI
 // signs. The CLI does zero routing. Private keys never leave the keystore.
-// (Only `acp trade status` is a direct read-only HL query.)
+// (Only `acp trade hl-status` is a direct read-only HL query.)
 //
 // No extra env vars: `acp configure` auth is all that's required. The
 // trading-agent URL + key live only on the backend.
@@ -171,7 +172,7 @@ export function registerTradeCommands(program: Command): void {
         "  acp trade --token AAPL --amount-usdc 50                          # buy tokenized AAPL with USDC on Ethereum\n" +
         "  acp trade --token AAPL --token-in eth --chain-in 8453 --amount-in 0.02  # buy AAPL, funded by ETH on Base\n" +
         "  acp trade --token AAPL --amount-shares 0.1                       # sell 0.1 tokenized AAPL shares (Treasures)\n" +
-        "  acp trade status\n"
+        "  acp trade hl-status                                                  # HL account only; use `acp wallet balance` for on-chain balances\n"
     )
     // -- Swap / deposit / HL spot / HL withdraw (token-pair shape) --------
     .option("--token-in <token>", "Input token (address or symbol)")
@@ -211,10 +212,14 @@ export function registerTradeCommands(program: Command): void {
       }
     });
 
-  // ── status ────────────────────────────────────────────────────────────────
+  // ── hl-status ───────────────────────────────────────────────────────────────
   trade
-    .command("status")
-    .description("Show HL account: perp positions, margin, and spot balances")
+    .command("hl-status")
+    .description(
+      "Show Hyperliquid ACCOUNT status ONLY: HL perp positions, margin, and HL spot balances. " +
+        "This is the one Hyperliquid-specific read — for everything else (on-chain token balances on " +
+        "Ethereum/Arbitrum/Base/etc.), use `acp wallet balance` instead."
+    )
     .action(async (_opts, cmd) => {
       const json = isJson(cmd);
       try {

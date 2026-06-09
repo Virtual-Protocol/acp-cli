@@ -397,9 +397,11 @@ export function registerAgentCommands(program: Command): void {
     .option("--signer", "Automatically set up a signer after creation")
     .option(
       "--policy <policy>",
-      `Authorization policy for the signer set up after creation (${SIGNER_POLICIES.join(
-        ", "
-      )})`,
+      "Authorization policy for the signer set up after creation — set this explicitly when using --signer. " +
+        SIGNER_POLICIES.map(
+          (p) => `${p}: ${SIGNER_POLICY_DESCRIPTIONS[p]}`
+        ).join("; ") +
+        ".",
       "restricted"
     )
     .action(async (opts, cmd) => {
@@ -738,11 +740,21 @@ export function registerAgentCommands(program: Command): void {
 
   agent
     .command("add-signer")
-    .description("Add a new signer to an agent")
+    .description(
+      "Add a signer to an agent. ALWAYS choose an explicit --policy that matches how much you want the " +
+        "signer to be able to do on its own — don't rely on the default. " +
+        `Policies: ${SIGNER_POLICIES.map(
+          (p) => `${p} (${SIGNER_POLICY_DESCRIPTIONS[p]})`
+        ).join("; ")}.`
+    )
     .option("--agent-id <id>", "Agent ID")
     .option(
       "--policy <policy>",
-      `Authorization policy for the signer (${SIGNER_POLICIES.join(", ")})`,
+      "Authorization policy for the signer — set this explicitly, don't depend on the default. " +
+        SIGNER_POLICIES.map(
+          (p) => `${p}: ${SIGNER_POLICY_DESCRIPTIONS[p]}`
+        ).join("; ") +
+        ".",
       "restricted"
     )
     .option(
