@@ -22,7 +22,7 @@
     "prepublishOnly": "npm run typecheck && npm run build"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19.0"
   },
   "publishConfig": {
     "access": "public"

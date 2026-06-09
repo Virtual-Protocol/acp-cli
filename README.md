@@ -589,6 +589,94 @@ acp events drain --file events.jsonl --limit 10
 
 Each event line includes the job ID, chain ID, status, your roles, available actions, and full event details — designed to be piped into an agent orchestration loop.
 
+### Trading (`acp trade`)
+
+`acp trade` is one command for moving and trading value. **Hyperliquid is chain `1337`** — so swaps, HL deposits, HL spot orders, and HL withdrawals all use the same `--token-in/--chain-in/--amount-in/--token-out/--chain-out` shape, and **the chains decide the venue**:
+
+| chain-in    | chain-out   | Intent                                       |
+| ----------- | ----------- | -------------------------------------------- |
+| EVM         | EVM         | **Swap** — same-chain or cross-chain (DEX)   |
+| EVM         | **1337**    | **Deposit** USDC into Hyperliquid            |
+| **1337**    | **1337**    | **Spot** order on the Hyperliquid order book |
+| **1337**    | EVM         | **Withdraw** USDC from Hyperliquid           |
+
+Perps are the one exception — a leveraged position isn't a token conversion, so they use `--side long|short` (with `--token`). Hyperliquid's perp markets span more than crypto: you can take leveraged positions on **stocks/equities, currencies/FX, and commodities** too, all through the same `--side`/`--token` flags. Running `acp trade` bare in a terminal opens an interactive picker (humans only).
+
+**Auto-balancing.** Hyperliquid keeps perp (collateral) and spot USDC in separate wallets, and deposits land in the *perp* wallet. You don't have to manage that: before an HL order the CLI checks the funding wallet and, if it's short, moves the shortfall over automatically (perp→spot for a spot buy, spot→perp for a perp). It's an instant, free L1 transfer — agents never think about sub-wallets.
+
+Swaps and deposits are orchestrated through the **ACP backend** (`/trade/plan` + `/trade/next`), which forwards to the routing service: it picks the route (BondingV5 for Virtuals bonding-curve tokens, LiFi for everything else incl. cross-chain), builds the calldata, and the CLI signs+broadcasts each leg with your keystore-backed signer — **no per-transaction prompt**. HL spot/perp/withdraw are EIP-712 actions signed by the same signer and POSTed to HL's API. Private keys never leave the OS keystore.
+
+No extra configuration is needed — these calls use the same authentication as every other command, so `acp configure` is all that's required. (The routing service URL and key live only on the backend.)
+
+**Swaps (same-chain and cross-chain):**
+
+```bash
+# Same-chain swap on Base: USDC → VIRTUAL
+acp trade --token-in usdc --chain-in 8453 --amount-in 50 --token-out virtual --chain-out 8453
+
+# Cross-chain swap: USDC on Ethereum → USDC on Base
+acp trade --token-in usdc --chain-in 1 --amount-in 100 --token-out usdc --chain-out 8453
+```
+
+Supported chains: **Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), Solana** (+ Base Sepolia testnet). Token symbols `eth`, `weth`, `usdc`, `usdt`, `sol`, `virtual` are resolved automatically; anything else is taken as a token address.
+
+**Hyperliquid — deposit (a cross-chain swap into HL, chain 1337):**
+
+```bash
+# Deposit 25 USDC into Hyperliquid from Base
+acp trade --token-in usdc --chain-in 8453 --amount-in 25 --token-out usdc --chain-out 1337
+```
+
+Bridging USDC to chain `1337` credits your Hyperliquid account (keyed by the same EVM address). Minimum deposit is **5 USDC** (bridge fees are roughly flat, so small deposits lose a large %).
+
+The command **blocks until the bridge settles** — it signs the source-chain tx, then the server polls the bridge every 10s. Typically **~10–30s** (the Relay route into HL is near-instant); the poll cap is **10 minutes** for slower routes. You may see a poll cycle or two even on a fast bridge while LiFi indexes the source tx — that's normal, not a failure.
+
+**Hyperliquid — spot (both chains 1337):**
+
+```bash
+# Spot BUY: spend 100 USDC on PURR (amount-in is the USDC you spend)
+acp trade --token-in usdc --chain-in 1337 --amount-in 100 --token-out PURR --chain-out 1337
+
+# Spot SELL: sell 50 PURR for USDC (amount-in is the token amount)
+acp trade --token-in PURR --chain-in 1337 --amount-in 50 --token-out usdc --chain-out 1337
+
+# Limit spot order (add --price; otherwise it's a market/IOC order)
+acp trade --token-in usdc --chain-in 1337 --amount-in 100 --token-out PURR --chain-out 1337 --price 0.30
+```
+
+HL spot pairs are USDC-quoted, so exactly one side must be `usdc`.
+
+**Hyperliquid — perps:**
+
+Hyperliquid perps aren't limited to crypto — it lists leveraged perp markets across **crypto, equities/stocks, FX/currencies, and commodities**. The command is the same for all of them: pass the Hyperliquid market symbol as `--token`, and `--side`, `--size`, and (optionally) `--leverage` work identically regardless of asset class.
+
+```bash
+# Market long 0.01 BTC with 5x leverage (crypto)
+acp trade --side long --token BTC --size 0.01 --leverage 5
+
+# Limit short 0.5 ETH at 4000, post-only
+acp trade --side short --token ETH --size 0.5 --price 4000 --post-only
+
+# Same shape for an equity, FX, or commodity perp — just change the symbol
+acp trade --side long --token <HL_MARKET_SYMBOL> --size 1 --leverage 3
+
+# Reduce-only (close part of a position)
+acp trade --side short --token BTC --size 0.01 --reduce-only
+```
+
+**Hyperliquid — account & withdraw:**
+
+```bash
+# Show positions, margin, and spot balances
+acp trade status
+
+# Withdraw USDC from HL L1 to Arbitrum (defaults destination to your wallet)
+acp trade withdraw --amount 25
+acp trade withdraw --amount 25 --destination 0xRecipient
+```
+
+> For agents: always pass explicit flags (and `--json`). The interactive picker only runs in a terminal with no flags — agents must never rely on it.
+
 ## Job Lifecycle
 
 State machine:

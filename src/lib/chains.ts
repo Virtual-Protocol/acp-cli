@@ -26,3 +26,54 @@ export function assertSponsoredChainId(chainId: number): void {
     );
   }
 }
+
+// Human-friendly chain aliases → numeric chain id, so a user never has to
+// remember that Hyperliquid is 1337. Mirrors the trading-agent backend's
+// parseChainId; the backend accepts these too, but the CLI also routes by chain
+// internally (e.g. 1337 → Hyperliquid), so we normalize here as well.
+const CHAIN_ALIASES: Record<string, number> = {
+  ethereum: 1,
+  eth: 1,
+  mainnet: 1,
+  base: 8453,
+  "base-sepolia": 84532,
+  basesepolia: 84532,
+  arbitrum: 42161,
+  arb: 42161,
+  optimism: 10,
+  op: 10,
+  blast: 81457,
+  scroll: 534352,
+  linea: 59144,
+  zora: 7777777,
+  hyperliquid: 1337,
+  hl: 1337,
+};
+
+// Resolve a chain reference (numeric id, numeric string, or named alias like
+// "hyperliquid"/"arb") to its numeric id. Case-insensitive; throws on anything
+// unrecognized.
+export function parseChainArg(input: string | number): number {
+  if (typeof input === "number") {
+    if (!Number.isFinite(input)) {
+      throw new CliError(`Invalid chain: ${input}`, "VALIDATION_ERROR");
+    }
+    return input;
+  }
+  const t = String(input).trim();
+  if (t === "") {
+    throw new CliError("Chain is empty.", "VALIDATION_ERROR");
+  }
+  if (/^\d+$/.test(t)) {
+    return Number(t);
+  }
+  const alias = CHAIN_ALIASES[t.toLowerCase()];
+  if (alias === undefined) {
+    throw new CliError(
+      `Unknown chain "${input}".`,
+      "VALIDATION_ERROR",
+      `Use a numeric id or one of: ${Object.keys(CHAIN_ALIASES).join(", ")}.`
+    );
+  }
+  return alias;
+}

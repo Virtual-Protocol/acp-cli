@@ -19,6 +19,7 @@ import { registerEmailCommands } from "../src/commands/email";
 import { registerCardCommands } from "../src/commands/card";
 import { registerComputeCommands } from "../src/commands/compute";
 import { registerSkillCommands } from "../src/commands/skill";
+import { registerTradeCommands } from "../src/commands/trade";
 
 const require = createRequire(import.meta.url);
 
@@ -41,7 +42,10 @@ program
   .option("--json", "Output results as JSON")
   .addHelpText(
     "after",
-    "\nGet started:\n  acp configure → acp agent create → acp agent add-signer → acp browse\n"
+    "\nGet started:\n  acp configure → acp agent create → acp agent add-signer → acp browse\n" +
+      "\nTrading:\n" +
+      "  acp trade  Swaps (cross-chain/spot), Hyperliquid deposits, and HL perps/spot.\n" +
+      "             Routes by the params you pass — see `acp trade --help`.\n"
   );
 
 registerClientCommands(program);
@@ -61,5 +65,6 @@ registerEmailCommands(program);
 registerCardCommands(program);
 registerComputeCommands(program);
 registerSkillCommands(program);
+registerTradeCommands(program);
 
 program.parse();
