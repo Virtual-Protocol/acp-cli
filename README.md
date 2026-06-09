@@ -37,6 +37,8 @@ Discover providers with `acp browse`. The full job lifecycle (`open → budget_s
 
 ## Setup
 
+> **🤖 Driving this CLI from an AI agent (Claude Code, Cowork, etc.)?** Run **`acp skill print`** first and follow it — it ships with the binary and carries the full operating guidance (auth, signing, money flows). The single most important rule: **authenticate with the split flow (`acp configure start` → relay the URL → `acp configure complete`), never bare `acp configure`** — bare `configure` blocks ~5 min and non-streaming runners trap the sign-in URL until it exits. See [Bootstrap](#bootstrap) below.
+
 ### Install
 
 Install globally:
@@ -55,24 +57,36 @@ npx @virtuals-protocol/acp-cli <command>
 
 ### Bootstrap
 
-The bootstrap is two commands:
+Authenticate once, then create the agent:
 
 ```bash
 acp configure        # one-time browser OAuth; token saved to OS keychain
 acp agent create     # creates the agent identity + EVM wallet
 ```
 
-`acp configure` **opens a browser and needs an interactive human session** — run it once on a workstation; the saved token is reusable. It prints the auth URL on stdout immediately, then blocks (up to ~5 min) until sign-in completes.
+`acp configure` authenticates via browser OAuth. **There are two ways to run it — pick by who's driving:**
 
-**Non-interactive / agent harnesses.** If you can't hold a long-running command open, use the split flow instead:
+#### Agents & AI harnesses (Claude Code, Cowork, scripts) — use the split flow
+
+If a command's output is captured by a tool runner rather than streamed live to a human terminal, **always use the split flow.** Do **not** run bare `acp configure` — it blocks for up to ~5 min waiting on sign-in, and non-streaming runners (including Claude Code's Bash tool) only see output *after* a command exits, so the sign-in URL stays trapped the whole time and never reaches the human.
 
 ```bash
-acp configure start --json     # prints {"url":"...","requestId":"..."} and exits immediately
-# relay the url to the human for one-click sign-in, then:
+acp configure start --json     # prints {"url":"...","requestId":"..."} and exits immediately (~1-2s)
+# → STOP and show the human the raw `url` for one-click sign-in, then poll:
 acp configure complete --request-id <requestId> --json   # {"status":"pending"} until done, then {"status":"authenticated","walletAddress":"..."}
 ```
 
-Both paths persist the same token to the OS keychain. Add `--wait [--timeout <seconds>]` to `complete` to block-poll until authenticated instead of checking once.
+`configure start` exits in ~1–2s and prints the URL on **both** stdout (as JSON) and stderr (as a plain line), so the link surfaces no matter which stream your runner forwards. Relay that URL to the human, then call `complete` (add `--wait [--timeout <seconds>]` to block-poll until authenticated instead of checking once).
+
+#### Interactive human at a terminal — bare `configure` is fine
+
+```bash
+acp configure        # opens a browser, prints the URL, then blocks until you sign in (~5 min max)
+```
+
+Run it once on a workstation; the saved token is reusable.
+
+Both paths persist the same token to the OS keychain.
 
 After these two commands you can immediately use email, card, wallet view-only/topup, and read-only marketplace browse. Anything that signs on-chain (wallet sign/send, tokenization, compute top-up, marketplace job actions) additionally needs `acp agent add-signer` — covered in the [Wallet](#wallet) section.
 

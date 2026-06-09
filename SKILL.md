@@ -31,11 +31,13 @@ Every command supports `--json` for machine-readable output. On error, commands 
 
 ## Setup
 
-The bootstrap is two commands:
+The bootstrap is two steps: authenticate, then create the agent. **You are an agent — authenticate with the split flow, never bare `acp configure`** (see the CRITICAL note just below for why):
 
 ```bash
-acp configure        # one-time browser OAuth; token saved to OS keychain
-acp agent create     # creates the agent identity + EVM wallet
+acp configure start --json                              # prints {"url","requestId"} and exits in ~1-2s
+# → STOP, post the raw url to the human, then:
+acp configure complete --request-id <requestId> --json  # poll until {"status":"authenticated",...}
+acp agent create                                        # creates the agent identity + EVM wallet
 ```
 
 ### Authenticating from an agent (don't punt this to the human)
