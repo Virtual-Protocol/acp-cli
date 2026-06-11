@@ -390,7 +390,17 @@ export async function runTradeLoop(
       );
     }
 
-    const next: NextResponse = await post(url, token, "/trade/next", nextBody);
+    // Pure polls ({tradeId, step} — no txHash/signature) are idempotent, so a
+    // transient gateway failure mid-wait must not abort a trade whose legs are
+    // already executing. Observed live: one 502 out of ~40 settlement polls
+    // reported an already-completed deposit as failed.
+    const next: NextResponse = await post(
+      url,
+      token,
+      "/trade/next",
+      nextBody,
+      action.kind === "wait"
+    );
     action = next.action;
     step = next.step;
   }
@@ -413,11 +423,19 @@ async function runStatus(json: boolean): Promise<void> {
 
 // ---------- HTTP + shared helpers ----------
 
+// Gateway blips (502/503/504, dropped connections) on an idempotent poll are
+// retried with backoff rather than aborting the trade. Retry is OPT-IN: send
+// and sign result posts are never replayed here, because the CLI cannot know
+// whether the server consumed the original before the connection died.
+const TRANSIENT_STATUS = new Set([502, 503, 504]);
+const TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
+
 async function post<T>(
   baseUrl: string,
   token: string,
   path: string,
-  body: unknown
+  body: unknown,
+  retryTransient = false
 ): Promise<T> {
   const base = baseUrl.replace(/\/$/, "");
   // Calldata to sign flows back over this connection, so refuse plaintext: a
@@ -429,35 +447,52 @@ async function post<T>(
       "The ACP API base URL must be https://."
     );
   }
-  const res = await fetch(base + path, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    // Read the body once as text, then try to parse it. Calling res.json()
-    // first consumes the stream, so a non-JSON error body would make a
-    // follow-up res.text() throw "body already used" and mask the real error.
-    const raw = await res.text();
-    let parsed: { error?: string; code?: string; recovery?: string } | string;
+  for (let attempt = 0; ; attempt++) {
+    const canRetry = retryTransient && attempt < TRANSIENT_RETRY_DELAYS_MS.length;
+    let res: Response;
     try {
-      parsed = JSON.parse(raw) as { error?: string; code?: string; recovery?: string };
-    } catch {
-      parsed = raw;
+      res = await fetch(base + path, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      // Network-level failure (connection reset/refused) — same class as a 502.
+      if (canRetry) {
+        await sleep(TRANSIENT_RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      throw err;
     }
-    const message =
-      typeof parsed === "string"
-        ? `${res.status} ${res.statusText}: ${parsed}`
-        : `${res.status} ${res.statusText}: ${parsed.error ?? "unknown"}`;
-    const code =
-      typeof parsed === "object" && parsed.code ? parsed.code : `HTTP_${res.status}`;
-    const recovery = typeof parsed === "object" ? parsed.recovery : undefined;
-    throw new CliError(message, isKnownCode(code) ? code : "API_ERROR", recovery);
+    if (!res.ok) {
+      if (canRetry && TRANSIENT_STATUS.has(res.status)) {
+        await sleep(TRANSIENT_RETRY_DELAYS_MS[attempt]);
+        continue;
+      }
+      // Read the body once as text, then try to parse it. Calling res.json()
+      // first consumes the stream, so a non-JSON error body would make a
+      // follow-up res.text() throw "body already used" and mask the real error.
+      const raw = await res.text();
+      let parsed: { error?: string; code?: string; recovery?: string } | string;
+      try {
+        parsed = JSON.parse(raw) as { error?: string; code?: string; recovery?: string };
+      } catch {
+        parsed = raw;
+      }
+      const message =
+        typeof parsed === "string"
+          ? `${res.status} ${res.statusText}: ${parsed}`
+          : `${res.status} ${res.statusText}: ${parsed.error ?? "unknown"}`;
+      const code =
+        typeof parsed === "object" && parsed.code ? parsed.code : `HTTP_${res.status}`;
+      const recovery = typeof parsed === "object" ? parsed.recovery : undefined;
+      throw new CliError(message, isKnownCode(code) ? code : "API_ERROR", recovery);
+    }
+    return (await res.json()) as T;
   }
-  return (await res.json()) as T;
 }
 
 const KNOWN_CODES = new Set<string>([
