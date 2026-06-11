@@ -249,7 +249,10 @@ export function registerTradeCommands(program: Command): void {
             chainOut: opts.toChain ?? 42161,
             amountIn: opts.amount,
             recipient: opts.destination,
-            dryRun: opts.dryRun,
+            // The parent `trade` command also declares --dry-run, and commander
+            // assigns the flag to the parent even when it appears after the
+            // subcommand — read the merged view or the preview silently runs live.
+            dryRun: cmd.optsWithGlobals().dryRun,
           },
           json
         );
