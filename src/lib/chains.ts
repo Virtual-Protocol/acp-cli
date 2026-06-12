@@ -1,8 +1,29 @@
 import {
   ERC20_SPONSORED_CHAINS,
   getEvmChainByChainId,
+  SOLANA_DEVNET_CHAIN_ID,
+  SOLANA_MAINNET_CHAIN_ID,
 } from "@virtuals-protocol/acp-node-v2";
 import { CliError } from "./errors";
+
+// Resolve the Solana chainId for the `wallet sol` commands. The cluster is
+// implied by the environment (testnet → devnet, mainnet → mainnet), with an
+// optional explicit override. The user never passes a numeric chain id.
+export function solanaChainId(cluster?: string): number {
+  if (cluster) {
+    const c = cluster.toLowerCase();
+    if (c === "devnet") return SOLANA_DEVNET_CHAIN_ID;
+    if (c === "mainnet" || c === "mainnet-beta") return SOLANA_MAINNET_CHAIN_ID;
+    throw new CliError(
+      `Unknown Solana cluster "${cluster}".`,
+      "VALIDATION_ERROR",
+      "Use --cluster devnet or --cluster mainnet."
+    );
+  }
+  return process.env.IS_TESTNET === "true"
+    ? SOLANA_DEVNET_CHAIN_ID
+    : SOLANA_MAINNET_CHAIN_ID;
+}
 
 export const SPONSORED_CHAIN_IDS = ERC20_SPONSORED_CHAINS.map(
   (chain) => chain.id

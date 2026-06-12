@@ -1,18 +1,44 @@
 import type { Command } from "commander";
 import * as readline from "readline";
-import { formatUnits, isAddress, isHex } from "viem";
+import { formatUnits, parseUnits, isAddress, isHex } from "viem";
+import {
+  buildSolTransferIx,
+  buildSplTransferInstructions,
+  getSplTokenBalance,
+  AccountRole,
+  type SolanaInstructionLike,
+} from "@virtuals-protocol/acp-node-v2";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
-import { getWalletAddress } from "../lib/agentFactory";
+import { getWalletAddress, getSolanaWalletAddress } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { getAgentId, getActiveWallet } from "../lib/config";
 import { CHAIN_NETWORK_MAP } from "../lib/api/agent";
 import { CliError } from "../lib/errors";
-import { assertSponsoredChainId } from "../lib/chains";
+import { assertSponsoredChainId, solanaChainId } from "../lib/chains";
 import { c } from "../lib/color";
 import { openBrowser } from "../lib/browser";
 import { selectOption, prompt } from "../lib/prompt";
-import { withApprovalGate } from "../lib/walletGate";
+import { withApprovalGate, withSolanaWallet } from "../lib/walletGate";
 import qrcode from "qrcode-terminal";
+
+// Address type accepted by the SDK Solana helpers (branded), derived without a
+// direct @solana/kit import.
+type SolAddr = Parameters<typeof buildSolTransferIx>[0];
+
+const ACCOUNT_ROLE_BY_NAME: Record<string, AccountRole> = {
+  writable_signer: AccountRole.WRITABLE_SIGNER,
+  writable: AccountRole.WRITABLE,
+  readonly_signer: AccountRole.READONLY_SIGNER,
+  readonly: AccountRole.READONLY,
+};
+
+// Instruction data accepts hex (0x…) or base64.
+function decodeIxData(data: string): Uint8Array {
+  const buf = data.startsWith("0x")
+    ? Buffer.from(data.slice(2), "hex")
+    : Buffer.from(data, "base64");
+  return Uint8Array.from(buf);
+}
 
 // In --json mode the funding URL goes to stdout as JSON for machine parsing,
 // but many agent harnesses buffer or suppress stdout while passing stderr
@@ -410,6 +436,171 @@ export function registerWalletCommands(program: Command): void {
             "Use --method coinbase, --method card, or --method qr"
           );
         }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  // -----------------------------------------------------------------------
+  // Solana wallet (`wallet sol …`). The cluster is implied by IS_TESTNET
+  // (devnet on testnet, mainnet otherwise); `--cluster` overrides. No chain-id.
+  // -----------------------------------------------------------------------
+  const sol = wallet.command("sol").description("Solana wallet commands");
+
+  sol
+    .command("address")
+    .description("Show the active agent's Solana address")
+    .action(async (_opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const address = await getSolanaWalletAddress();
+        outputResult(json, { address });
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  sol
+    .command("balance")
+    .description("Show SOL + SPL token balances")
+    .option("--cluster <name>", "devnet | mainnet (default from env)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const chainId = solanaChainId(opts.cluster);
+        const network = CHAIN_NETWORK_MAP[chainId]!;
+        const activeWallet = getActiveWallet();
+        const agentId = activeWallet ? getAgentId(activeWallet) : undefined;
+        if (!agentId) {
+          throw new CliError(
+            "Agent ID not found for active wallet.",
+            "NO_ACTIVE_AGENT",
+            "Run `acp agent list` or `acp agent use` to set an active agent."
+          );
+        }
+        const address = await getSolanaWalletAddress();
+        const { agentApi } = await getClient();
+        const assets = await agentApi.getAgentAssets(agentId, [network]);
+        const tokens = assets.data.tokens;
+
+        if (json) {
+          outputResult(json, { chainId, network, address, tokens });
+          return;
+        }
+
+        console.log(`\n${c.bold(`Solana balance on ${network}`)}\n`);
+        console.log(`  ${c.bold("Address:")}  ${c.dim(address)}\n`);
+        if (tokens.length === 0) {
+          console.log("  No tokens found.\n");
+        } else {
+          for (const t of tokens) {
+            const isNative = t.tokenAddress === null;
+            const symbol = t.tokenMetadata.symbol ?? (isNative ? "SOL" : "???");
+            const decimals = t.tokenMetadata.decimals ?? (isNative ? 9 : 0);
+            const balance = formatUnits(BigInt(t.tokenBalance), decimals);
+            console.log(`  ${c.cyan(symbol.padEnd(10))}${balance}`);
+          }
+          console.log("");
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  sol
+    .command("sign-message")
+    .description("Sign a plaintext message with the Solana wallet")
+    .requiredOption("--message <text>", "Message to sign")
+    .option("--cluster <name>", "devnet | mainnet (default from env)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const chainId = solanaChainId(opts.cluster);
+        const signature = await withSolanaWallet(chainId, (p) =>
+          p.signMessage(opts.message)
+        );
+        outputResult(json, { signature });
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  sol
+    .command("transfer")
+    .description("Send SOL, or an SPL token with --token")
+    .requiredOption("--to <address>", "Recipient address")
+    .requiredOption("--amount <amount>", "Amount in human units (e.g. 0.001)")
+    .option("--token <mint>", "SPL mint address (omit for native SOL)")
+    .option("--cluster <name>", "devnet | mainnet (default from env)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const chainId = solanaChainId(opts.cluster);
+        const signature = await withSolanaWallet(chainId, async (provider) => {
+          const me = (await provider.getAddress()) as SolAddr;
+          const to = opts.to as SolAddr;
+          if (opts.token) {
+            const mint = opts.token as SolAddr;
+            const { decimals } = await getSplTokenBalance(
+              provider.getRpc(),
+              me,
+              mint
+            );
+            const amount = parseUnits(opts.amount, decimals);
+            const ixs = await buildSplTransferInstructions({
+              owner: me,
+              recipient: to,
+              mint,
+              amount,
+              payer: me,
+            });
+            return provider.sendInstructions(ixs);
+          }
+          const lamports = parseUnits(opts.amount, 9);
+          return provider.sendInstructions([buildSolTransferIx(me, to, lamports)]);
+        });
+        outputResult(json, { signature });
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  sol
+    .command("send-instructions")
+    .description("Send a raw Solana instruction set (advanced)")
+    .requiredOption(
+      "--instructions <json>",
+      'JSON array: [{ programAddress, accounts: [{ address, role }], data }]'
+    )
+    .option("--cluster <name>", "devnet | mainnet (default from env)")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const chainId = solanaChainId(opts.cluster);
+        const parsed = JSON.parse(opts.instructions) as Array<{
+          programAddress: string;
+          accounts: { address: string; role: string }[];
+          data: string;
+        }>;
+        const ixs: SolanaInstructionLike[] = parsed.map((ix) => ({
+          programAddress: ix.programAddress as SolAddr,
+          accounts: ix.accounts.map((a) => {
+            const role = ACCOUNT_ROLE_BY_NAME[a.role.toLowerCase()];
+            if (role === undefined) {
+              throw new CliError(
+                `Unknown account role "${a.role}".`,
+                "VALIDATION_ERROR",
+                "Use writable_signer | writable | readonly_signer | readonly."
+              );
+            }
+            return { address: a.address as SolAddr, role };
+          }),
+          data: decodeIxData(ix.data),
+        }));
+        const signature = await withSolanaWallet(chainId, (p) =>
+          p.sendInstructions(ixs)
+        );
+        outputResult(json, { signature });
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }

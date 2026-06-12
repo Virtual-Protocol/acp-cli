@@ -575,6 +575,8 @@ export const CHAIN_NETWORK_MAP: Record<number, string> = {
   137: "polygon-mainnet",
   10: "opt-mainnet",
   143: "monad-mainnet",
+  500: "solana-devnet",
+  501: "solana-mainnet",
 };
 
 export interface UpdateAgentBody {

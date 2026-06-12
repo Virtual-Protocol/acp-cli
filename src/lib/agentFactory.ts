@@ -10,9 +10,11 @@ import {
   TESTNET_PRIVY_APP_ID,
   SseTransport,
   AcpApiClient,
+  PrivySolanaProviderAdapter,
 } from "@virtuals-protocol/acp-node-v2";
 import type {
   IEvmProviderAdapter,
+  ISolanaProviderAdapter,
   SupportedStreams,
 } from "@virtuals-protocol/acp-node-v2";
 import {
@@ -226,4 +228,83 @@ export function getWalletAddress(): string {
     );
   }
   return addr;
+}
+
+// ---------------------------------------------------------------------------
+// Solana wallet
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the agent's Solana address + Privy wallet id from the server. The
+ * Privy wallet hosts both the EVM and Solana addresses under the same signer,
+ * so the same P256 signFn authorizes Solana operations too.
+ */
+async function getSolanaWalletInfo(
+  walletAddress: string
+): Promise<{ solWalletAddress: string; walletId: string }> {
+  const { agentApi } = await getClient();
+  const agentList = await agentApi.list();
+  const agent = agentList.data.find((a) => a.walletAddress === walletAddress);
+  if (!agent) {
+    throw new CliError(
+      `Agent not found for wallet address: ${walletAddress}`,
+      "AGENT_NOT_FOUND"
+    );
+  }
+  const solProvider = agent.walletProviders.find(
+    (wp) => wp.chainType === "SOLANA"
+  );
+  if (!agent.solWalletAddress || !solProvider?.metadata.walletId) {
+    throw new CliError(
+      "This agent has no Solana wallet.",
+      "NO_SOLANA_WALLET",
+      "The agent's Privy wallet has no Solana provider configured."
+    );
+  }
+  return {
+    solWalletAddress: agent.solWalletAddress,
+    walletId: solProvider.metadata.walletId,
+  };
+}
+
+/** The active agent's Solana address. */
+export async function getSolanaWalletAddress(): Promise<string> {
+  const { solWalletAddress } = await getSolanaWalletInfo(getWalletAddress());
+  return solWalletAddress;
+}
+
+/**
+ * Build a Solana provider adapter for the active agent, reusing the same
+ * P256 signFn as the EVM provider (RPC + signing are routed through the ACP
+ * server proxy / Privy).
+ */
+export async function createSolanaProviderAdapter(
+  chainId: number
+): Promise<ISolanaProviderAdapter> {
+  const isTestnet = process.env.IS_TESTNET === "true";
+  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
+
+  const walletAddress = getWalletAddress();
+  const publicKey = getPublicKey(walletAddress);
+  if (!publicKey) {
+    throw new CliError(
+      "No signer configured for this agent.",
+      "NO_SIGNER",
+      "Run `acp agent add-signer` to generate and register a signing key."
+    );
+  }
+
+  const { solWalletAddress, walletId } =
+    await getSolanaWalletInfo(walletAddress);
+  const signFn = createSignFn(publicKey);
+
+  return PrivySolanaProviderAdapter.create({
+    walletAddress: solWalletAddress,
+    walletId,
+    signFn,
+    chainId,
+    serverUrl,
+    privyAppId,
+  });
 }

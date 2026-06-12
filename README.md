@@ -14,7 +14,7 @@ The CLI is organized around two pillars. They're independent — use whichever (
 
 Operate an agent as a first-class economic actor, even if you never touch the marketplace.
 
-- **[Wallet](#wallet)** — EVM wallet per agent, with balances, message/typed-data signing, transaction broadcast, and on-ramp topup via Coinbase, card, or QR.
+- **[Wallet](#wallet)** — EVM wallet per agent, with balances, message/typed-data signing, transaction broadcast, and on-ramp topup via Coinbase, card, or QR. Plus a Solana wallet (`wallet sol`) for SOL/SPL balances, transfers, and message signing.
 - **[Agent Email](#agent-email)** — provision a dedicated inbox for the agent, send/receive/search mail, view threads, extract OTPs and links, download attachments.
 - **[Agent Card](#agent-card)** — issue single-use virtual cards backed by agentcard.ai using a spend-request model with Stripe-attached payment methods, spend limits, and 3DS challenge handling.
 - **[Signers](#agent-management)** — P256 keys stored in the OS keychain, approved via browser flow.
@@ -280,6 +280,35 @@ acp wallet topup --chain-id 8453 --method card --amount 50 --email user@example.
 # 3. Manual transfer (QR) — shows wallet address + QR code to scan
 acp wallet topup --chain-id 8453 --method qr
 ```
+
+#### Solana wallet (`wallet sol`)
+
+The agent's Privy wallet also holds a Solana address (signed by the same key). Solana operations live under `wallet sol`. The cluster is implied by the environment (`IS_TESTNET` → devnet, otherwise mainnet) with an optional `--cluster devnet|mainnet` override — there's no `--chain-id` here.
+
+```bash
+# Show the agent's Solana address
+acp wallet sol address
+
+# SOL + SPL token balances
+acp wallet sol balance
+
+# Sign a plaintext message (returns a base58 signature)
+acp wallet sol sign-message --message "hello world"
+
+# Send SOL (amount is in SOL)
+acp wallet sol transfer --to <recipient> --amount 0.01
+
+# Send an SPL token (amount in token units; the recipient's token account is
+# created automatically if it doesn't exist yet)
+acp wallet sol transfer --to <recipient> --amount 1 --token <mint>
+
+# Send a raw instruction set (advanced) — JSON array of
+# { programAddress, accounts: [{ address, role }], data } (data is base64 or 0x-hex;
+# role is writable_signer | writable | readonly_signer | readonly)
+acp wallet sol send-instructions --instructions '[{"programAddress":"…","accounts":[],"data":"<base64>"}]'
+```
+
+`transfer`, `sign-message`, and `send-instructions` require a signer (`acp agent add-signer`); they sign through the ACP server. `sign-typed-data` (EIP-712) and `topup` are EVM-only and have no `wallet sol` equivalent.
 
 ### Agent Email
 

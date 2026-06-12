@@ -2,6 +2,8 @@ export type ErrorCode =
   | "NOT_AUTHENTICATED"
   | "NO_ACTIVE_AGENT"
   | "NO_SIGNER"
+  | "AGENT_NOT_FOUND"
+  | "NO_SOLANA_WALLET"
   | "SESSION_NOT_FOUND"
   | "VALIDATION_ERROR"
   | "API_ERROR"

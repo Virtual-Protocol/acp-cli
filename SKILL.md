@@ -149,6 +149,16 @@ If you're unsure which the human wants, ask before running.
 | `acp wallet sign-typed-data --data <json> --chain-id <id> --json` | Sign EIP-712 (signer required) | `{signature}` |
 | `acp wallet send-transaction --chain-id <id> --to <addr> [--value <wei>] [--data <hex>] --json` | Broadcast (signer + dashboard prerequisites — see callout below) | `{transactionHash}` |
 
+**Solana wallet** (`acp wallet sol …`). Same agent, its Solana address (same signer). No `--chain-id` — the cluster is implied by `IS_TESTNET` (devnet on testnet, else mainnet), override with `--cluster devnet|mainnet`. Amounts are human units (SOL, or token units). `transfer`/`sign-message`/`send-instructions` need a signer; `sign-typed-data`/`topup` are EVM-only.
+
+| Command | What it does | Response shape |
+|---|---|---|
+| `acp wallet sol address --json` | Show the agent's Solana address | `{address}` |
+| `acp wallet sol balance [--cluster <c>] --json` | SOL + SPL balances (server-side) | `{chainId, network, address, tokens:[{tokenAddress, tokenBalance, tokenMetadata:{symbol, name, decimals}}]}` (native SOL has `tokenAddress:null`; `tokenBalance` raw, decimal-shift by `decimals`) |
+| `acp wallet sol sign-message --message <text> [--cluster <c>] --json` | Sign plaintext (signer required) | `{signature}` (base58) |
+| `acp wallet sol transfer --to <addr> --amount <human> [--token <mint>] [--cluster <c>] --json` | Send SOL, or an SPL token with `--token` (auto-creates the recipient's token account) | `{signature}` |
+| `acp wallet sol send-instructions --instructions <json> [--cluster <c>] --json` | Send a raw instruction set (advanced); `<json>` = `[{programAddress, accounts:[{address, role}], data}]`, `data` base64/0x-hex, `role` ∈ writable_signer\|writable\|readonly_signer\|readonly | `{signature}` |
+
 > **CRITICAL — YOU run topup; never tell the human to run it.** When the wallet needs funds, **you (the agent) run the topup command yourself** and relay the resulting link. Do **NOT** print a command like `acp wallet topup --chain-id 8453` and ask the human to run it — that is the single most common failure here. The human's only job is to click the link you give them; they should never touch the CLI.
 >
 > Concretely, when the wallet is empty (or a command fails for lack of funds):
