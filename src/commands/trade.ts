@@ -47,6 +47,8 @@ import { CliError, type ErrorCode } from "../lib/errors";
 import { getApiContext } from "../lib/api/client";
 import {
   createProviderAdapter,
+  createSolanaProviderAdapter,
+  getSolanaWalletAddress,
   getWalletAddress,
 } from "../lib/agentFactory";
 import type { IEvmProviderAdapter } from "@virtuals-protocol/acp-node-v2";
@@ -68,12 +70,59 @@ interface SendAction {
 interface SignAction {
   kind: "sign";
   label: string;
-  sigType: "personal" | "eip712";
+  // solana-message: ed25519 over the UTF-8 bytes of `message`, posted back
+  //   BASE64-encoded (Treasures' ownership-proof contract — not base58).
+  // solana-tx: sign the serialized versioned tx in `txBase64` WITHOUT
+  //   broadcasting; post back the fully-signed tx, base64 (the server or the
+  //   venue broadcasts the signed bytes).
+  sigType: "personal" | "eip712" | "solana-message" | "solana-tx";
   chainId: number;
-  message?: string; // personal_sign
+  message?: string; // personal_sign / solana-message
   typedData?: unknown; // EIP-712
+  txBase64?: string; // solana-tx
   expectedSignKind?: string;
   timeoutMs?: number;
+}
+
+// The methods the trade loop needs from the Privy Solana adapter. They exist
+// at runtime on PrivySolanaProviderAdapter; the published .d.ts lags behind,
+// hence the local shape + cast at the create site.
+type SolanaTradeSigner = {
+  signMessage(message: string): Promise<string>; // base58-encoded signature
+  signTransactionViaPrivy(txBase64: string): Promise<string>; // signed tx, base64
+};
+
+// Solana mainnet Privy chain id. Trade legs are always mainnet — Treasures
+// staging settles against mainnet, and LiFi Solana legs are mainnet-only.
+const SOLANA_MAINNET_PRIVY_CHAIN_ID = 501;
+
+// Backend chain references that mean Solana (the LiFi chain id + aliases).
+function isSolanaChainRef(v: unknown): boolean {
+  if (v === undefined) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === "sol" || s === "solana" || s === "1151111081099710";
+}
+
+// Minimal base58 decode (Solana alphabet) — the adapter returns base58
+// signatures but the trade wire format is base64 of the raw bytes.
+const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+function base58Decode(s: string): Uint8Array {
+  let n = 0n;
+  for (const c of s) {
+    const i = B58_ALPHABET.indexOf(c);
+    if (i < 0) throw new Error(`invalid base58 character: ${c}`);
+    n = n * 58n + BigInt(i);
+  }
+  const bytes: number[] = [];
+  while (n > 0n) {
+    bytes.unshift(Number(n & 0xffn));
+    n >>= 8n;
+  }
+  for (const c of s) {
+    if (c === "1") bytes.unshift(0);
+    else break;
+  }
+  return Uint8Array.from(bytes);
 }
 interface WaitAction {
   kind: "wait";
@@ -296,6 +345,25 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   if (opts.isolated) body.isolated = true;
   if (opts.dryRun) body.dryRun = true;
 
+  // Attach the agent's Solana pubkey whenever the request could route through
+  // Solana: an explicit sol venue/source, or a tokenized-stock BUY with no
+  // venue pinned (--token without --side or --amount-shares) — the backend
+  // then quotes both venues and executes the better one. Sells stay explicit
+  // (the backend can't see which venue holds the shares), so they only get
+  // the wallet when --chain sol is passed.
+  const couldRouteViaSolana =
+    opts.chain === "sol" ||
+    isSolanaChainRef(opts.chainIn) ||
+    (opts.token !== undefined && opts.side === undefined && opts.amountShares === undefined);
+  if (couldRouteViaSolana) {
+    try {
+      body.solWallet = await getSolanaWalletAddress();
+    } catch {
+      // Agent has no Solana wallet — omit it; the backend only errors if the
+      // request explicitly requires Solana.
+    }
+  }
+
   const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
   progress(
     json,
@@ -315,6 +383,9 @@ export async function runTradeLoop(
 ): Promise<Record<string, unknown>> {
   let action = plan.action;
   let step = plan.step;
+  // Created on the first Solana sign action and reused for the trade's
+  // remaining legs (proof + tx legs share one adapter).
+  let solSigner: SolanaTradeSigner | undefined;
 
   while (true) {
     if (action.kind === "done") return action.result;
@@ -361,15 +432,33 @@ export async function runTradeLoop(
       }
     } else if (action.kind === "sign") {
       // The server asks the CLI to produce a signature (NOT broadcast a tx):
-      // an EIP-191 personal_sign or an EIP-712 typed-data signature. We sign
-      // with the keystore-backed signer and post the signature back. Used by
-      // the Treasures flow (ownership proof + Fusion orders the server submits).
+      // EIP-191 personal_sign, EIP-712 typed data, or — for Solana trade legs
+      // — an ed25519 message signature / a signed versioned transaction. We
+      // sign with the keystore/Privy-backed signer and post the result back;
+      // the server submits/broadcasts. Used by the Treasures flow (ownership
+      // proofs + orders) and Solana-source LiFi bridges.
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
-        const signature =
-          action.sigType === "eip712"
-            ? await provider.signTypedData(action.chainId, action.typedData)
-            : await provider.signMessage(action.chainId, action.message ?? "");
+        let signature: string;
+        if (action.sigType === "solana-message" || action.sigType === "solana-tx") {
+          solSigner ??= (await createSolanaProviderAdapter(
+            SOLANA_MAINNET_PRIVY_CHAIN_ID
+          )) as unknown as SolanaTradeSigner;
+          if (action.sigType === "solana-message") {
+            // Privy signs the raw bytes (no envelope); the adapter returns
+            // base58 but the wire contract is base64 of the raw signature.
+            const b58 = await solSigner.signMessage(action.message ?? "");
+            signature = Buffer.from(base58Decode(b58)).toString("base64");
+          } else {
+            // Sign the serialized versioned tx WITHOUT broadcasting — the
+            // server (LiFi legs) or the venue (Treasures) broadcasts it.
+            signature = await solSigner.signTransactionViaPrivy(action.txBase64 ?? "");
+          }
+        } else if (action.sigType === "eip712") {
+          signature = await provider.signTypedData(action.chainId, action.typedData);
+        } else {
+          signature = await provider.signMessage(action.chainId, action.message ?? "");
+        }
         nextBody = { tradeId: plan.tradeId, step, signature };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
