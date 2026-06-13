@@ -381,17 +381,25 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
     opts.side === undefined &&
     opts.amountShares === undefined &&
     opts.chain === undefined;
-  const couldRouteViaSolana =
+  const solanaExplicit =
     isSolanaChainRef(opts.chain) ||
     isSolanaChainRef(opts.chainIn) ||
-    isSolanaChainRef(opts.chainOut) ||
-    isUnpinnedTokenBuy;
+    isSolanaChainRef(opts.chainOut);
+  const couldRouteViaSolana = solanaExplicit || isUnpinnedTokenBuy;
   if (couldRouteViaSolana) {
     try {
       body.solWallet = await getSolanaWalletAddress();
-    } catch {
-      // Agent has no Solana wallet — omit it; the backend only errors if the
-      // request explicitly requires Solana.
+    } catch (err) {
+      // A speculative unpinned buy can proceed without a Solana wallet — the
+      // backend simply won't quote the sol venue. But only the genuine "this
+      // agent has no Solana wallet" signal is safe to swallow: a real failure
+      // (network, auth, agent lookup) must surface rather than masquerade as
+      // "no wallet" and silently drop the pubkey the backend needs. For an
+      // explicit Solana route the wallet is mandatory, so any error — including
+      // no-wallet — propagates instead of planning a route that can't sign.
+      const noSolWallet =
+        err instanceof CliError && err.code === "NO_SOLANA_WALLET";
+      if (solanaExplicit || !noSolWallet) throw err;
     }
   }
 
