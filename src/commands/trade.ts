@@ -359,14 +359,17 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   if (opts.dryRun) body.dryRun = true;
 
   // Attach the agent's Solana pubkey whenever the request could route through
-  // Solana: an explicit sol venue/source, or a tokenized-stock BUY with no
-  // venue pinned (--token without --side or --amount-shares) — the backend
-  // then quotes both venues and executes the better one. Sells stay explicit
-  // (the backend can't see which venue holds the shares), so they only get
-  // the wallet when a Solana --chain/--chain-in is passed (see isSolanaChainRef).
+  // Solana: an explicit sol venue/source/destination, or a tokenized-stock BUY
+  // with no venue pinned (--token without --side or --amount-shares) — the
+  // backend then quotes both venues and executes the better one. A Solana
+  // --chain-out also needs it: the agent's pubkey is the bridge/swap recipient.
+  // Sells stay explicit (the backend can't see which venue holds the shares),
+  // so they only get the wallet when a Solana chain ref is passed (see
+  // isSolanaChainRef).
   const couldRouteViaSolana =
     isSolanaChainRef(opts.chain) ||
     isSolanaChainRef(opts.chainIn) ||
+    isSolanaChainRef(opts.chainOut) ||
     (opts.token !== undefined && opts.side === undefined && opts.amountShares === undefined);
   if (couldRouteViaSolana) {
     try {
