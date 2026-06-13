@@ -90,7 +90,33 @@ interface SignAction {
 type SolanaTradeSigner = {
   signMessage(message: string): Promise<string>; // base58-encoded signature
   signTransactionViaPrivy(txBase64: string): Promise<string>; // signed tx, base64
+  // Build + sponsor + broadcast a Solana instruction set (Alchemy fee payer),
+  // returning the broadcast signature. Lets a zero-SOL wallet bootstrap gas.
+  sendInstructions(instructions: SolTradeInstruction[]): Promise<string | string[]>;
 };
+
+// The instruction shape the Privy adapter's sendInstructions consumes (mirrors
+// `acp wallet sol send-instructions`). Account roles map from the backend's
+// role strings; data is base64.
+type SolTradeInstruction = {
+  programAddress: string;
+  accounts: Array<{ address: string; role: number }>;
+  data: Uint8Array;
+};
+const SOL_ACCOUNT_ROLE: Record<string, number> = {
+  // @solana/kit AccountRole bitflags: bit1=writable, bit0=signer.
+  readonly: 0,
+  writable: 1,
+  readonly_signer: 2,
+  writable_signer: 3,
+};
+function decodeSolIxData(data: string): Uint8Array {
+  return Uint8Array.from(
+    data.startsWith("0x")
+      ? Buffer.from(data.slice(2), "hex")
+      : Buffer.from(data, "base64")
+  );
+}
 
 // Solana mainnet Privy chain id. Trade legs are always mainnet — Treasures
 // staging settles against mainnet, and LiFi Solana legs are mainnet-only.
@@ -124,6 +150,18 @@ function base58Decode(s: string): Uint8Array {
   }
   return Uint8Array.from(bytes);
 }
+interface SolanaInstructionsAction {
+  kind: "solana-instructions";
+  label: string;
+  chainId: number;
+  instructions: Array<{
+    programAddress: string;
+    accounts: Array<{ address: string; role: string }>;
+    data: string; // base64
+  }>;
+  expectedTxKind?: string;
+  timeoutMs?: number;
+}
 interface WaitAction {
   kind: "wait";
   label: string;
@@ -154,6 +192,7 @@ interface PreviewAction {
 type Action =
   | SendAction
   | SignAction
+  | SolanaInstructionsAction
   | WaitAction
   | DoneAction
   | ErrorAction
@@ -459,6 +498,37 @@ export async function runTradeLoop(
         } else {
           signature = await provider.signMessage(action.chainId, action.message ?? "");
         }
+        nextBody = { tradeId: plan.tradeId, step, signature };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        nextBody = {
+          tradeId: plan.tradeId,
+          step,
+          error: { code: "SIGN_FAILED", message },
+        };
+      }
+    } else if (action.kind === "solana-instructions") {
+      // Sponsored Solana instruction set (e.g. the native-SOL gas top-up): the
+      // adapter attaches the Alchemy fee payer and broadcasts, so a zero-SOL
+      // wallet can run it. Post back the broadcast signature.
+      progress(json, `[step ${step + 1}] ${action.label}`);
+      try {
+        solSigner ??= (await createSolanaProviderAdapter(
+          SOLANA_MAINNET_PRIVY_CHAIN_ID
+        )) as unknown as SolanaTradeSigner;
+        const ixs: SolTradeInstruction[] = action.instructions.map((ix) => ({
+          programAddress: ix.programAddress,
+          accounts: ix.accounts.map((a) => {
+            const role = SOL_ACCOUNT_ROLE[a.role];
+            if (role === undefined) {
+              throw new Error(`Unknown Solana account role: ${a.role}`);
+            }
+            return { address: a.address, role };
+          }),
+          data: decodeSolIxData(ix.data),
+        }));
+        const res = await solSigner.sendInstructions(ixs);
+        const signature = Array.isArray(res) ? res[res.length - 1] : res;
         nextBody = { tradeId: plan.tradeId, step, signature };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
