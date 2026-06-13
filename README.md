@@ -643,8 +643,16 @@ Each event line includes the job ID, chain ID, status, your roles, available act
 | EVM         | **1337**    | **Deposit** USDC into Hyperliquid            |
 | **1337**    | **1337**    | **Spot** order on the Hyperliquid order book |
 | **1337**    | EVM         | **Withdraw** USDC from Hyperliquid           |
+| **Solana**  | EVM         | **Swap** out of Solana (USDC@sol → an EVM token) |
 
-Perps are the one exception — a leveraged position isn't a token conversion, so they use `--side long|short` (with `--token`). Hyperliquid's perp markets span more than crypto: you can take leveraged positions on **stocks/equities, currencies/FX, and commodities** too, all through the same `--side`/`--token` flags. Running `acp trade` bare in a terminal opens an interactive picker (humans only).
+Two intents don't use the chain-pair shape:
+
+- **Perps** — `--side long|short` (with `--token`). Leveraged positions on **crypto, stocks/equities, FX/currencies, and commodities**.
+- **Tokenized stocks (spot)** — `--token <TICKER>` plus `--amount-usdc` (buy) or `--amount-shares` (sell), and **no `--side`**. Buys/sells real tokenized equity (you own the share token), distinct from an equity *perp*. The backend auto-picks the venue/chain.
+
+> **Stock vs perp routes by FLAG, not the ticker.** `AAPL` is both a tokenized stock and an HL equity perp — `--amount-usdc`/`--amount-shares` (no `--side`) buys the spot stock; `--side` opens the leveraged perp.
+
+Running `acp trade` bare in a terminal opens an interactive picker (humans only).
 
 **Auto-balancing.** Hyperliquid keeps perp (collateral) and spot USDC in separate wallets, and deposits land in the *perp* wallet. You don't have to manage that: before an HL order the CLI checks the funding wallet and, if it's short, moves the shortfall over automatically (perp→spot for a spot buy, spot→perp for a perp). It's an instant, free L1 transfer — agents never think about sub-wallets.
 
@@ -674,6 +682,21 @@ acp trade --token-in usdc --chain-in 8453 --amount-in 25 --token-out usdc --chai
 Bridging USDC to chain `1337` credits your Hyperliquid account (keyed by the same EVM address). Minimum deposit is **5 USDC** (bridge fees are roughly flat, so small deposits lose a large %).
 
 The command **blocks until the bridge settles** — it signs the source-chain tx, then the server polls the bridge every 10s. Typically **~10–30s** (the Relay route into HL is near-instant); the poll cap is **10 minutes** for slower routes. You may see a poll cycle or two even on a fast bridge while LiFi indexes the source tx — that's normal, not a failure.
+
+**Tokenized stocks (spot buy/sell):**
+
+Buy or sell real tokenized equities. Spot — you receive the share token, no leverage or funding. The backend auto-routes the venue and chain; you never specify one. Buys can spend USDC you already hold or be funded from another chain (it bridges first). Sells need an explicit `--chain eth|sol` (the server can't see which chain holds your shares).
+
+```bash
+# Buy $5 of AAPL with USDC you hold (venue auto-picked)
+acp trade --token AAPL --amount-usdc 5
+
+# Buy funded from another chain — bridges VIRTUAL@Base → USDC, then buys
+acp trade --token AAPL --token-in virtual --chain-in 8453 --amount-in 8
+
+# Sell 0.01 AAPL shares (delivers USDC; --chain required on sells)
+acp trade --token AAPL --amount-shares 0.01 --chain sol
+```
 
 **Hyperliquid — perps:**
 
