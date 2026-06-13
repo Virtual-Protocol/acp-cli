@@ -360,17 +360,25 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
 
   // Attach the agent's Solana pubkey whenever the request could route through
   // Solana: an explicit sol venue/source/destination, or a tokenized-stock BUY
-  // with no venue pinned (--token without --side or --amount-shares) — the
-  // backend then quotes both venues and executes the better one. A Solana
-  // --chain-out also needs it: the agent's pubkey is the bridge/swap recipient.
-  // Sells stay explicit (the backend can't see which venue holds the shares),
-  // so they only get the wallet when a Solana chain ref is passed (see
-  // isSolanaChainRef).
+  // with no venue pinned (--token without --side or --amount-shares, and no
+  // --chain) — the backend then quotes both venues and executes the better one.
+  // A Solana --chain-out also needs it: the agent's pubkey is the bridge/swap
+  // recipient. The unpinned-buy clause requires opts.chain === undefined so a
+  // venue the user pinned (e.g. --chain eth) is honored, not silently overridden
+  // by the backend quoting sol; an explicit --chain sol still routes via the
+  // isSolanaChainRef(opts.chain) clause above. Sells stay explicit (the backend
+  // can't see which venue holds the shares), so they only get the wallet when a
+  // Solana chain ref is passed (see isSolanaChainRef).
+  const isUnpinnedTokenBuy =
+    opts.token !== undefined &&
+    opts.side === undefined &&
+    opts.amountShares === undefined &&
+    opts.chain === undefined;
   const couldRouteViaSolana =
     isSolanaChainRef(opts.chain) ||
     isSolanaChainRef(opts.chainIn) ||
     isSolanaChainRef(opts.chainOut) ||
-    (opts.token !== undefined && opts.side === undefined && opts.amountShares === undefined);
+    isUnpinnedTokenBuy;
   if (couldRouteViaSolana) {
     try {
       body.solWallet = await getSolanaWalletAddress();
