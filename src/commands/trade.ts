@@ -92,15 +92,28 @@ type SolanaTradeSigner = {
   signTransactionViaPrivy(txBase64: string): Promise<string>; // signed tx, base64
 };
 
-// Solana mainnet Privy chain id. Trade legs are always mainnet — Treasures
-// staging settles against mainnet, and LiFi Solana legs are mainnet-only.
+// Solana Privy chain ids. Trade legs are always mainnet — Treasures staging
+// settles against mainnet, and LiFi Solana legs are mainnet-only — but the
+// devnet id is still a valid Solana reference a caller might pass (it's what
+// `wallet sol balance` shows on testnet), so isSolanaChainRef accepts both.
 const SOLANA_MAINNET_PRIVY_CHAIN_ID = 501;
+const SOLANA_DEVNET_PRIVY_CHAIN_ID = 500;
 
-// Backend chain references that mean Solana (the LiFi chain id + aliases).
+// Every chain reference that means Solana, normalized to one check: the name
+// aliases, the LiFi chain id, and the Privy chain ids (500 devnet / 501 mainnet)
+// that `wallet sol` surfaces. Case-insensitive. Used both to detect a Solana
+// source/venue and to decide whether to attach solWallet — keep it the single
+// source of truth so no spelling slips through and silently drops the wallet.
 function isSolanaChainRef(v: unknown): boolean {
   if (v === undefined) return false;
   const s = String(v).trim().toLowerCase();
-  return s === "sol" || s === "solana" || s === "1151111081099710";
+  return (
+    s === "sol" ||
+    s === "solana" ||
+    s === "1151111081099710" ||
+    s === String(SOLANA_MAINNET_PRIVY_CHAIN_ID) ||
+    s === String(SOLANA_DEVNET_PRIVY_CHAIN_ID)
+  );
 }
 
 // Minimal base58 decode (Solana alphabet) — the adapter returns base58
@@ -350,9 +363,9 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   // venue pinned (--token without --side or --amount-shares) — the backend
   // then quotes both venues and executes the better one. Sells stay explicit
   // (the backend can't see which venue holds the shares), so they only get
-  // the wallet when --chain sol is passed.
+  // the wallet when a Solana --chain/--chain-in is passed (see isSolanaChainRef).
   const couldRouteViaSolana =
-    opts.chain === "sol" ||
+    isSolanaChainRef(opts.chain) ||
     isSolanaChainRef(opts.chainIn) ||
     (opts.token !== undefined && opts.side === undefined && opts.amountShares === undefined);
   if (couldRouteViaSolana) {
