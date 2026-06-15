@@ -4,7 +4,6 @@ import {
   SOLANA_DEVNET_CHAIN_ID,
   SOLANA_MAINNET_CHAIN_ID,
 } from "@virtuals-protocol/acp-node-v2";
-import type { Chain } from "viem";
 import { CliError } from "./errors";
 
 // Resolve the Solana chainId for the `wallet sol` commands. The cluster is
@@ -27,13 +26,11 @@ export function solanaChainId(cluster?: string): number {
 }
 
 export const SPONSORED_CHAIN_IDS = ERC20_SPONSORED_CHAINS.map(
-  (chain: Chain) => chain.id
+  (chain) => chain.id
 );
 
 export function formatChainId(id: number): string {
-  const chain =
-    ERC20_SPONSORED_CHAINS.find((chain) => chain.id === id) ??
-    getEvmChainByChainId(id);
+  const chain = getEvmChainByChainId(id);
   return chain ? `${id} (${chain.name})` : String(id);
 }
 

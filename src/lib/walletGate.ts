@@ -1,6 +1,7 @@
-import type {
-  IEvmProviderAdapter,
-  ISolanaProviderAdapter,
+import {
+  STREAMS,
+  type IEvmProviderAdapter,
+  type ISolanaProviderAdapter,
 } from "@virtuals-protocol/acp-node-v2";
 import {
   createProviderAdapter,
@@ -20,7 +21,7 @@ export async function withApprovalGate<T>(
   let transport: Awaited<ReturnType<typeof createSseTransport>> | undefined;
   try {
     const provider = await createProviderAdapter();
-    transport = await createSseTransport(provider);
+    transport = await createSseTransport(provider, [STREAMS.WALLET]);
     return await fn(provider);
   } catch (err) {
     throw normalizeApprovalUrlError(err, opts);
@@ -70,20 +71,6 @@ function extractApprovalUrl(
   value: unknown,
   seen = new Set<unknown>()
 ): string | undefined {
-  if (typeof value === "string") {
-    return isApprovalText(value) ? firstUrl(value) : undefined;
-  }
-
-  if (value instanceof Error) {
-    return (
-      (isApprovalText(value.message) ? firstUrl(value.message) : undefined) ??
-      extractObjectApprovalUrl(
-        value as unknown as Record<string, unknown>,
-        seen
-      )
-    );
-  }
-
   if (value && typeof value === "object") {
     return extractObjectApprovalUrl(value as Record<string, unknown>, seen);
   }
@@ -113,31 +100,11 @@ function extractObjectApprovalUrl(
     if (url) return url;
   }
 
-  for (const key of ["message", "error", "detail", "recovery"]) {
-    const text = value[key];
-    if (isApprovalText(text)) return firstUrl(text);
-  }
-
   return undefined;
 }
 
 function isApprovalPayload(value: Record<string, unknown>): boolean {
-  return (
-    isApprovalText(value.code) ||
-    isApprovalText(value.name) ||
-    isApprovalText(value.message) ||
-    isApprovalText(value.error) ||
-    isApprovalText(value.detail)
-  );
-}
-
-function isApprovalText(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    /(^|[^a-z0-9])(approval|approve|approved|manual[_ -]?review|user[_ -]?confirmation)([^a-z0-9]|$)/i.test(
-      value
-    )
-  );
+  return value.code === "APPROVAL_REQUIRED" || value.name === "ApprovalRequiredError";
 }
 
 function firstUrl(value: unknown): string | undefined {
