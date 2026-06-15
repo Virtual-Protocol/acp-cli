@@ -46,7 +46,7 @@ function normalizeApprovalUrlError(
   err: unknown,
   opts: ApprovalGateOptions
 ): unknown {
-  const url = extractUrl(err);
+  const url = extractApprovalUrl(err);
   if (!url) return err;
 
   if (opts.json) emitApprovalUrlToStderr(url);
@@ -64,44 +64,76 @@ function emitApprovalUrlToStderr(url: string): void {
   );
 }
 
-function extractUrl(
+function extractApprovalUrl(
   value: unknown,
   seen = new Set<unknown>()
 ): string | undefined {
-  if (typeof value === "string") return firstUrl(value);
+  if (typeof value === "string") {
+    return isApprovalText(value) ? firstUrl(value) : undefined;
+  }
 
   if (value instanceof Error) {
     return (
-      firstUrl(value.message) ??
-      extractObjectUrl(value as unknown as Record<string, unknown>, seen)
+      (isApprovalText(value.message) ? firstUrl(value.message) : undefined) ??
+      extractObjectApprovalUrl(
+        value as unknown as Record<string, unknown>,
+        seen
+      )
     );
   }
 
   if (value && typeof value === "object") {
-    return extractObjectUrl(value as Record<string, unknown>, seen);
+    return extractObjectApprovalUrl(value as Record<string, unknown>, seen);
   }
 
   return undefined;
 }
 
-function extractObjectUrl(
+function extractObjectApprovalUrl(
   value: Record<string, unknown>,
   seen: Set<unknown>
 ): string | undefined {
   if (seen.has(value)) return undefined;
   seen.add(value);
 
-  for (const key of ["url", "approvalUrl", "approvalURL", "approval_url"]) {
+  for (const key of ["approvalUrl", "approvalURL", "approval_url"]) {
     const url = firstUrl(value[key]);
     if (url) return url;
   }
 
-  for (const key of ["message", "error", "detail", "recovery", "data"]) {
-    const url = extractUrl(value[key], seen);
+  if (isApprovalPayload(value)) {
+    const url = firstUrl(value.url);
     if (url) return url;
   }
 
+  for (const key of ["data", "details", "cause"]) {
+    const url = extractApprovalUrl(value[key], seen);
+    if (url) return url;
+  }
+
+  for (const key of ["message", "error", "detail", "recovery"]) {
+    const text = value[key];
+    if (isApprovalText(text)) return firstUrl(text);
+  }
+
   return undefined;
+}
+
+function isApprovalPayload(value: Record<string, unknown>): boolean {
+  return (
+    isApprovalText(value.code) ||
+    isApprovalText(value.name) ||
+    isApprovalText(value.message) ||
+    isApprovalText(value.error) ||
+    isApprovalText(value.detail)
+  );
+}
+
+function isApprovalText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /approval|approve|manual[_ -]?review|user[_ -]?confirmation/i.test(value)
+  );
 }
 
 function firstUrl(value: unknown): string | undefined {
