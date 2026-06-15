@@ -132,7 +132,9 @@ function isApprovalPayload(value: Record<string, unknown>): boolean {
 function isApprovalText(value: unknown): value is string {
   return (
     typeof value === "string" &&
-    /approval|approve|manual[_ -]?review|user[_ -]?confirmation/i.test(value)
+    /(^|[^a-z0-9])(approval|approve|approved|manual[_ -]?review|user[_ -]?confirmation)([^a-z0-9]|$)/i.test(
+      value
+    )
   );
 }
 
