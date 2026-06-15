@@ -11,7 +11,8 @@ export type ErrorCode =
   | "ALREADY_TOKENIZED"
   | "TIMEOUT"
   | "SLIPPAGE_TOO_LOW"
-  | "INSUFFICIENT_GAS";
+  | "INSUFFICIENT_GAS"
+  | "APPROVAL_REQUIRED";
 
 export class CliError extends Error {
   code: ErrorCode;

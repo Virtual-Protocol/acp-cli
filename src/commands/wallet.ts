@@ -75,8 +75,9 @@ export function registerWalletCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const signature = await withApprovalGate((provider) =>
-          provider.signMessage(Number(opts.chainId), opts.message)
+        const signature = await withApprovalGate(
+          (provider) => provider.signMessage(Number(opts.chainId), opts.message),
+          { json }
         );
         outputResult(json, { signature });
       } catch (err) {
@@ -118,8 +119,9 @@ export function registerWalletCommands(program: Command): void {
           );
         }
 
-        const signature = await withApprovalGate((provider) =>
-          provider.signTypedData(Number(opts.chainId), typedData)
+        const signature = await withApprovalGate(
+          (provider) => provider.signTypedData(Number(opts.chainId), typedData),
+          { json }
         );
         outputResult(json, { signature });
       } catch (err) {
@@ -177,12 +179,14 @@ export function registerWalletCommands(program: Command): void {
 
         assertSponsoredChainId(chainId);
 
-        const transactionHash = await withApprovalGate((provider) =>
-          provider.sendTransaction(chainId, {
-            to: opts.to,
-            ...(opts.data !== undefined ? { data: opts.data } : {}),
-            ...(value !== undefined ? { value } : {}),
-          })
+        const transactionHash = await withApprovalGate(
+          (provider) =>
+            provider.sendTransaction(chainId, {
+              to: opts.to,
+              ...(opts.data !== undefined ? { data: opts.data } : {}),
+              ...(value !== undefined ? { value } : {}),
+            }),
+          { json }
         );
         outputResult(json, { transactionHash });
       } catch (err) {
@@ -382,8 +386,9 @@ export function registerWalletCommands(program: Command): void {
               process.stdout.write("  Signing wallet verification...");
             }
             const challenge = initResult.data.challenge;
-            signature = await withApprovalGate((p) =>
-              p.signMessage(chainId, challenge)
+            signature = await withApprovalGate(
+              (p) => p.signMessage(chainId, challenge),
+              { json }
             );
             if (!json && isTTY()) {
               console.log(` ${c.green("✓")}`);

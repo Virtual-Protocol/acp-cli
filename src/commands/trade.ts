@@ -436,8 +436,9 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   );
   const result = opts.dryRun
     ? await runTradeLoop(apiUrl, token, await createProviderAdapter(), plan, json)
-    : await withApprovalGate((provider) =>
-        runTradeLoop(apiUrl, token, provider, plan, json)
+    : await withApprovalGate(
+        (provider) => runTradeLoop(apiUrl, token, provider, plan, json),
+        { json }
       );
   outputTradeResult(json, result);
 }
