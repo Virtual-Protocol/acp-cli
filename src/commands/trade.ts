@@ -24,6 +24,10 @@
 // `acp trade hl-status` shows HL ACCOUNT positions/margin/balances (read-only).
 // It is HL-only — for on-chain token balances use `acp wallet balance`.
 //
+// `acp trade stock-list [symbol]` is read-only discovery: with no symbol it
+// lists the spot markets (tokenized stocks + the Hyperliquid spot order book);
+// with a symbol it lists every route for that asset with ready-to-run flags.
+//
 // Spot amount semantics mirror a swap: a BUY (--token-in usdc) spends --amount-in
 // USDC (size derived from price, never overspends); a SELL (--token-out usdc)
 // sells --amount-in token units.
@@ -269,6 +273,27 @@ export function registerTradeCommands(program: Command): void {
       const json = isJson(cmd);
       try {
         await runTrade(opts, json);
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  // ── stock-list (discovery) ────────────────────────────────────────────────────
+  // The read-only counterpart to `acp trade`: what's tradable, and how. With no
+  // symbol it lists the spot markets — tokenized stocks AND the Hyperliquid spot
+  // order book. With a SYMBOL it lists every executable route for that one asset
+  // (perp / HL spot / tokenized stock / token swap), each with ready-to-run flags.
+  trade
+    .command("stock-list [symbol]")
+    .description(
+      "List what's tradable. With no symbol: the spot markets — tokenized stocks " +
+        "plus Hyperliquid spot. With a SYMBOL (e.g. AAPL, BTC): every route for " +
+        "that asset with ready-to-run flags."
+    )
+    .action(async (symbol, _opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        await runInstruments(symbol, json);
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
@@ -534,6 +559,25 @@ export async function runTradeLoop(
   }
 }
 
+// ---------- Discovery ----------
+
+// Read-only: GET /trade/instruments. With a symbol the backend returns the
+// executable routes for that asset; without one, the spot-market catalog
+// (tokenized stocks + Hyperliquid spot). Either way the CLI just prints what it
+// gets back — no routing, no signing.
+async function runInstruments(
+  symbol: string | undefined,
+  json: boolean
+): Promise<void> {
+  const { apiUrl, token } = await getApiContext();
+  const path =
+    symbol && symbol.trim()
+      ? `/trade/instruments?symbol=${encodeURIComponent(symbol.trim())}`
+      : "/trade/instruments";
+  const result = await get<Record<string, unknown>>(apiUrl, token, path);
+  outputResult(json, result);
+}
+
 // ---------- Hyperliquid account ----------
 
 async function runStatus(json: boolean): Promise<void> {
@@ -621,6 +665,42 @@ async function post<T>(
     }
     return (await res.json()) as T;
   }
+}
+
+// Read-only GET (discovery). No body and no retry: a failed read just surfaces,
+// it never half-applies like a send/sign post could. Shares post()'s https
+// guard and error-body parsing so failures read the same to the caller.
+async function get<T>(baseUrl: string, token: string, path: string): Promise<T> {
+  const base = baseUrl.replace(/\/$/, "");
+  if (!/^https:\/\//i.test(base)) {
+    throw new CliError(
+      `Refusing to call a non-https trade endpoint: ${base}`,
+      "VALIDATION_ERROR",
+      "The ACP API base URL must be https://."
+    );
+  }
+  const res = await fetch(base + path, {
+    method: "GET",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const raw = await res.text();
+    let parsed: { error?: string; code?: string; recovery?: string } | string;
+    try {
+      parsed = JSON.parse(raw) as { error?: string; code?: string; recovery?: string };
+    } catch {
+      parsed = raw;
+    }
+    const message =
+      typeof parsed === "string"
+        ? `${res.status} ${res.statusText}: ${parsed}`
+        : `${res.status} ${res.statusText}: ${parsed.error ?? "unknown"}`;
+    const code =
+      typeof parsed === "object" && parsed.code ? parsed.code : `HTTP_${res.status}`;
+    const recovery = typeof parsed === "object" ? parsed.recovery : undefined;
+    throw new CliError(message, isKnownCode(code) ? code : "API_ERROR", recovery);
+  }
+  return (await res.json()) as T;
 }
 
 const KNOWN_CODES = new Set<string>([

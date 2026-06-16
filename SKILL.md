@@ -202,11 +202,18 @@ Intent routing (chain `1337` = Hyperliquid):
 
 **Perp markets aren't just crypto.** Hyperliquid lists leveraged perps across multiple asset classes — crypto, **equities/stocks**, **FX/currencies**, and **commodities** — so `acp trade --side long|short --token <SYMBOL>` can open a leveraged position on any of them. Pass the Hyperliquid market symbol as `--token` (e.g. `BTC`, `ETH`, plus the equity/FX/commodity markets HL lists); use `acp trade hl-status` to see your HL account (perp positions + HL spot balances). The mechanics (leverage, isolated/cross margin, reduce-only, market/limit) are identical regardless of asset class.
 
+**Discovery — `acp trade stock-list [symbol]` (read-only).** To find out *what* is tradable before constructing a trade. With **no symbol** it returns `{ stocks, hlSpot }`: `stocks` is the tokenized-stock catalog (`symbol`, `name`, `protocols`) and `hlSpot` is the HL spot order book (`token`, `pair`); a `warnings` field appears only if a venue's catalog is momentarily unavailable. With a **symbol** it returns `{ symbol, name?, routes }`, each route `{ kind, label, token, maxLeverage? }` — **`token` is the exact ticker to pass** (an HL equity perp must be quoted `xyz:AAPL`; the spot routes use bare `AAPL`). Use it to resolve the right ticker, then build the trade with the flags above. **It never implies you must pre-hold USDC on Hyperliquid: USDC is the settlement currency, not a prerequisite — any trade can be funded with any supported token on any supported chain via `--token-in`/`--chain-in`, and the backend bridges/swaps/deposits to settle.**
+
 Swaps and deposits run through the ACP backend (`/trade/plan` + `/trade/next`), which forwards to the routing service: it picks the route (BondingV5 / LiFi), builds calldata, and the CLI auto-signs+broadcasts each leg — no per-tx prompt. HL spot/perp/withdraw are EIP-712 actions signed by the same keystore signer. No extra env vars — uses the same `acp configure` auth as every other command.
 
 **Auto-balancing (no manual transfer needed).** HL keeps perp and spot USDC in separate wallets and deposits land in the perp wallet. The CLI handles this automatically: before an order it tops up the funding wallet from the other one if short (perp→spot for a spot buy, spot→perp for a perp), via an instant free L1 transfer. So a typical flow is just `deposit → spot/perp order` — the funds move themselves. (HL still enforces a ~$10 minimum order value.)
 
 ```bash
+# Discover what's tradable (read-only). No symbol → spot markets (stocks + HL spot).
+acp trade stock-list --json
+# With a symbol → every route for that asset, each naming the exact ticker to pass.
+acp trade stock-list AAPL --json
+
 # Same-chain swap (Base): USDC → VIRTUAL
 acp trade --token-in usdc --chain-in 8453 --amount-in 50 --token-out virtual --chain-out 8453 --json
 
@@ -249,6 +256,7 @@ Supported swap chains: Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), 
 | `trade` (HL withdraw) | Withdraw USDC from HL (`--chain-in 1337`, dest chain EVM) | `--token-in`, `--chain-in 1337`, `--amount-in`, `--token-out`, `--chain-out` | `--recipient`, `--dry-run` |
 | `trade` (HL perp) | Hyperliquid leveraged perp order — crypto, equities/stocks, FX/currencies, or commodities (pass the HL market symbol as `--token`) | `--side long\|short`, `--token`, `--size` | `--price`, `--leverage`, `--isolated`, `--reduce-only`, `--post-only`, `--slippage`, `--dry-run` |
 | `trade` (tokenized stock) | Spot buy/sell of a tokenized equity (you own the share token; NO `--side`). Backend auto-routes the venue/chain | `--token <TICKER>`, and `--amount-usdc` (buy) **or** `--amount-shares` (sell) | buy can fund from another chain via `--token-in`/`--chain-in`/`--amount-in`; `--chain eth\|sol` (required on sells), `--protocol`, `--slippage`, `--dry-run` |
+| `trade stock-list [symbol]` | **Read-only discovery.** No symbol → spot markets (`stocks` + `hlSpot`). With a symbol → routes for that asset, each naming the exact `token` to pass | — | `[symbol]` |
 | `trade hl-status` | **HL account ONLY**: HL perp positions, margin, HL spot balances. For on-chain token balances use `acp wallet balance` | — | — |
 | `trade withdraw-from-hl` | Withdraw USDC from HL L1 (settles to Arbitrum; `--to-chain` bridges onward) | `--amount` | `--destination`, `--to-chain`, `--dry-run` |
 

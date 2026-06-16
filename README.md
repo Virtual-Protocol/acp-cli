@@ -660,6 +660,24 @@ Swaps, deposits, and HL spot/perp/withdraw all run through the **ACP backend**, 
 
 No extra configuration is needed — these calls use the same authentication as every other command, so `acp configure` is all that's required.
 
+**Discovering what's tradable (`acp trade stock-list`):**
+
+Read-only discovery — no signing, no funds moved. Run it with **no symbol** to list the spot markets, or with a **symbol** to see every route for one asset.
+
+```bash
+# List the spot markets: tokenized stocks + the Hyperliquid spot order book
+acp trade stock-list
+
+# Every route for one asset, each naming the exact ticker to pass
+acp trade stock-list AAPL
+```
+
+With no symbol you get `{ stocks, hlSpot }` — `stocks` is the tokenized-stock catalog (`symbol`, `name`, `protocols`), `hlSpot` is the HL order book (`token`, `pair`). A `warnings` field appears only if one venue's catalog is temporarily unavailable.
+
+With a symbol you get `{ symbol, name?, routes }`, where each route is `{ kind, label, token, maxLeverage? }`. **`token` is the exact ticker string to pass** — e.g. an HL equity perp must be quoted `xyz:AAPL`, while the spot routes use bare `AAPL`. The route tells you *what's possible and which ticker*; the flags for each (`--side`, `--amount-usdc`, …) are documented above.
+
+> **Funding is flexible — `stock-list` never implies you must pre-hold USDC on Hyperliquid.** USDC is the *settlement* currency, not a prerequisite. You can fund any trade with any supported token on any supported chain (Ethereum, Base, Arbitrum, Solana, …) via `--token-in`/`--chain-in`; the backend bridges, swaps, and (for HL) deposits as needed to settle in one command.
+
 **Swaps (same-chain and cross-chain):**
 
 ```bash
