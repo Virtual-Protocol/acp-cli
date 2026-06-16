@@ -262,7 +262,7 @@ acp trade --side long --token BTC --size 0.01 --leverage 5 --json
 acp trade --side short --token ETH --size 0.5 --price 4000 --post-only --json
 
 # HL ACCOUNT status (read-only) — HL perp positions + HL spot balances ONLY.
-# For on-chain token balances (Ethereum/Arbitrum/Base/…), use `acp wallet balance` instead.
+# For on-chain token balances (all sponsored EVM chains + Solana), use `acp wallet balance` instead.
 acp trade hl-status --json
 # Withdraw USDC off Hyperliquid (settles to Arbitrum; --to-chain bridges onward)
 acp trade withdraw-from-hl --amount 25 --json
