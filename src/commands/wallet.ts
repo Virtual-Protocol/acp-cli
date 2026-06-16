@@ -13,8 +13,14 @@ import { getWalletAddress, getSolanaWalletAddress } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { getAgentId, getActiveWallet } from "../lib/config";
 import { CHAIN_NETWORK_MAP } from "../lib/api/agent";
+import type { TokenInfo } from "../lib/api/agent";
 import { CliError } from "../lib/errors";
-import { assertSponsoredChainId, solanaChainId } from "../lib/chains";
+import {
+  assertSponsoredChainId,
+  getEnvSponsoredChainIds,
+  getNativeCurrency,
+  solanaChainId,
+} from "../lib/chains";
 import { c } from "../lib/color";
 import { openBrowser } from "../lib/browser";
 import { selectOption, prompt } from "../lib/prompt";
@@ -49,6 +55,58 @@ function emitTopupUrlToStderr(url: string): void {
   process.stderr.write(
     `\n>>> Open this URL to fund your wallet:\n\n    ${url}\n\n`
   );
+}
+
+// Resolves the native currency (name + symbol) for a token's network, used as
+// the fallback label for native-token balances so non-ETH chains (BNB, POL,
+// MON, …) aren't mislabeled as ETH.
+type NativeResolver = (
+  network: string
+) => { name: string; symbol: string } | undefined;
+
+// Derive the displayable symbol/name/balance/usd for a token. Shared by the
+// single-chain and all-chains balance views so formatting stays identical.
+function formatToken(
+  t: TokenInfo,
+  native?: { name: string; symbol: string }
+): {
+  symbol: string;
+  name: string;
+  balance: string;
+  usd: string;
+  contract: string;
+} {
+  const isNative = t.tokenAddress === null;
+  const symbol =
+    t.tokenMetadata.symbol ?? (isNative ? native?.symbol ?? "ETH" : "???");
+  const name =
+    t.tokenMetadata.name ?? (isNative ? native?.name ?? "Ether" : "");
+  const decimals = t.tokenMetadata.decimals ?? 18;
+  const balance = formatUnits(BigInt(t.tokenBalance), decimals);
+  const unitPrice = parseFloat(t.tokenPrices?.[0]?.value ?? "0");
+  const value = unitPrice * parseFloat(balance);
+  return {
+    symbol,
+    name,
+    balance,
+    usd: `$${value.toFixed(2)}`,
+    contract: t.tokenAddress ?? "native",
+  };
+}
+
+// Render a token table for a single network's tokens (TTY mode).
+function printTokenTable(tokens: TokenInfo[], nativeFor: NativeResolver): void {
+  const header = `  ${c.dim("TOKEN".padEnd(10))}${c.dim(
+    "NAME".padEnd(22)
+  )}${c.dim("BALANCE".padEnd(24))}${c.dim("USD")}`;
+  console.log(header);
+  for (const t of tokens) {
+    const { symbol, name, balance, usd } = formatToken(t, nativeFor(t.network));
+    const bal = balance.length > 22 ? balance.slice(0, 22) : balance;
+    console.log(
+      `  ${c.cyan(symbol.padEnd(10))}${name.padEnd(22)}${bal.padEnd(24)}${usd}`
+    );
+  }
 }
 
 export function registerWalletCommands(program: Command): void {
@@ -196,23 +254,45 @@ export function registerWalletCommands(program: Command): void {
 
   wallet
     .command("balance")
-    .description("Show token balances for the active wallet")
-    .requiredOption("--chain-id <id>", "Chain ID")
+    .description(
+      "Show token balances for the active wallet. Omit --chain-id to show all sponsored chains for the current environment."
+    )
+    .option("--chain-id <id>", "Chain ID (omit to query all sponsored chains)")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const chainId = Number(opts.chainId);
-        assertSponsoredChainId(chainId);
+        // Resolve the set of chains to query: a single explicit --chain-id, or
+        // every sponsored chain for the current environment when omitted.
+        const explicit = opts.chainId !== undefined;
+        let chainIds: number[];
+        if (explicit) {
+          const chainId = Number(opts.chainId);
+          assertSponsoredChainId(chainId);
+          chainIds = [chainId];
+        } else {
+          chainIds = getEnvSponsoredChainIds();
+        }
 
-        const network = CHAIN_NETWORK_MAP[chainId];
-        if (!network) {
-          throw new CliError(
-            `No network mapping for chain ID: ${chainId}`,
-            "VALIDATION_ERROR",
-            `Known networks: ${Object.entries(CHAIN_NETWORK_MAP)
-              .map(([id, name]) => `${id} (${name})`)
-              .join(", ")}`
-          );
+        // Map each chain id to its network string and build a reverse lookup so
+        // returned tokens can be grouped back to their chain.
+        const networks: string[] = [];
+        const networkToChainId = new Map<string, number>();
+        for (const id of chainIds) {
+          const network = CHAIN_NETWORK_MAP[id];
+          if (!network) {
+            if (explicit) {
+              throw new CliError(
+                `No network mapping for chain ID: ${id}`,
+                "VALIDATION_ERROR",
+                `Known networks: ${Object.entries(CHAIN_NETWORK_MAP)
+                  .map(([cid, name]) => `${cid} (${name})`)
+                  .join(", ")}`
+              );
+            }
+            continue;
+          }
+          networks.push(network);
+          networkToChainId.set(network, id);
         }
 
         const walletAddress = getWalletAddress();
@@ -227,65 +307,82 @@ export function registerWalletCommands(program: Command): void {
         }
 
         const { agentApi } = await getClient();
-        const assets = await agentApi.getAgentAssets(agentId, [network]);
+        const assets = await agentApi.getAgentAssets(agentId, networks);
         const tokens = assets.data.tokens;
 
+        // Native-currency fallback label, resolved per token via its network.
+        const nativeFor: NativeResolver = (network) => {
+          const id = networkToChainId.get(network);
+          return id !== undefined ? getNativeCurrency(id) : undefined;
+        };
+
         if (json) {
-          outputResult(json, {
-            chainId,
-            network,
-            address: walletAddress,
-            tokens,
-          });
+          if (explicit) {
+            outputResult(json, {
+              chainId: chainIds[0],
+              network: networks[0],
+              address: walletAddress,
+              tokens,
+            });
+          } else {
+            outputResult(json, {
+              chains: networks.map((network) => ({
+                chainId: networkToChainId.get(network),
+                network,
+              })),
+              address: walletAddress,
+              tokens,
+            });
+          }
           return;
         }
 
         if (isTTY()) {
-          console.log(
-            `\n${c.bold(`Wallet Balance on ${network} (${chainId})`)}\n`
-          );
-          console.log(`  ${c.bold("Address:")}  ${c.dim(walletAddress)}\n`);
-
-          if (tokens.length === 0) {
-            console.log("  No tokens found.\n");
-          } else {
-            const header = `  ${c.dim("TOKEN".padEnd(10))}${c.dim(
-              "NAME".padEnd(22)
-            )}${c.dim("BALANCE".padEnd(24))}${c.dim("USD")}`;
-            console.log(header);
-            for (const t of tokens) {
-              const isNative = t.tokenAddress === null;
-              const symbol =
-                t.tokenMetadata.symbol ?? (isNative ? "ETH" : "???");
-              const name = t.tokenMetadata.name ?? (isNative ? "Ether" : "");
-              const decimals = t.tokenMetadata.decimals ?? 18;
-              const balance = formatUnits(BigInt(t.tokenBalance), decimals);
-              const bal = balance.length > 22 ? balance.slice(0, 22) : balance;
-              const unitPrice = parseFloat(t.tokenPrices?.[0]?.value ?? "0");
-              const value = unitPrice * parseFloat(balance);
-              const price = `$${value.toFixed(2)}`;
-              console.log(
-                `  ${c.cyan(symbol.padEnd(10))}${name.padEnd(22)}${bal.padEnd(
-                  24
-                )}${price}`
-              );
+          if (explicit) {
+            console.log(
+              `\n${c.bold(
+                `Wallet Balance on ${networks[0]} (${chainIds[0]})`
+              )}\n`
+            );
+            console.log(`  ${c.bold("Address:")}  ${c.dim(walletAddress)}\n`);
+            if (tokens.length === 0) {
+              console.log("  No tokens found.\n");
+            } else {
+              printTokenTable(tokens, nativeFor);
+              console.log("");
             }
-            console.log("");
+          } else {
+            console.log(`\n${c.bold("Wallet Balance")}\n`);
+            console.log(`  ${c.bold("Address:")}  ${c.dim(walletAddress)}\n`);
+
+            // Group tokens by network, preserving the queried order. Networks
+            // with no tokens are hidden.
+            let printedAny = false;
+            for (const network of networks) {
+              const group = tokens.filter((t) => t.network === network);
+              if (group.length === 0) continue;
+              printedAny = true;
+              const chainId = networkToChainId.get(network);
+              console.log(`  ${c.bold(`${network} (${chainId})`)}`);
+              printTokenTable(group, nativeFor);
+              console.log("");
+            }
+            if (!printedAny) {
+              console.log("  No tokens found.\n");
+            }
+            console.log(
+              `  ${c.dim(`Checked: ${networks.join(", ")} (${networks.length} chains)`)}\n`
+            );
           }
         } else {
-          console.log("TOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
+          console.log("NETWORK\tTOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
           for (const t of tokens) {
-            const isNative = t.tokenAddress === null;
-            const symbol = t.tokenMetadata.symbol ?? (isNative ? "ETH" : "???");
-            const name = t.tokenMetadata.name ?? (isNative ? "Ether" : "");
-            const decimals = t.tokenMetadata.decimals ?? 18;
-            const balance = formatUnits(BigInt(t.tokenBalance), decimals);
-            const unitPrice = parseFloat(t.tokenPrices?.[0]?.value ?? "0");
-            const value = unitPrice * parseFloat(balance);
+            const { symbol, name, balance, usd, contract } = formatToken(
+              t,
+              nativeFor(t.network)
+            );
             console.log(
-              `${symbol}\t${name}\t${balance}\t$${value.toFixed(2)}\t${
-                t.tokenAddress ?? "native"
-              }`
+              `${t.network}\t${symbol}\t${name}\t${balance}\t${usd}\t${contract}`
             );
           }
         }

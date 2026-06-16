@@ -29,6 +29,20 @@ export const SPONSORED_CHAIN_IDS = ERC20_SPONSORED_CHAINS.map(
   (chain) => chain.id
 );
 
+export function getEnvSponsoredChainIds(): number[] {
+  const isTestnet = process.env.IS_TESTNET === "true";
+  return ERC20_SPONSORED_CHAINS.filter(
+    (chain) => Boolean(chain.testnet) === isTestnet
+  ).map((chain) => chain.id);
+}
+
+export function getNativeCurrency(
+  chainId: number
+): { name: string; symbol: string } | undefined {
+  return ERC20_SPONSORED_CHAINS.find((chain) => chain.id === chainId)
+    ?.nativeCurrency;
+}
+
 export function formatChainId(id: number): string {
   const chain = getEvmChainByChainId(id);
   return chain ? `${id} (${chain.name})` : String(id);
