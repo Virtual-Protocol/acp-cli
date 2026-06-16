@@ -8,6 +8,13 @@ export const SPONSORED_CHAIN_IDS = ERC20_SPONSORED_CHAINS.map(
   (chain) => chain.id
 );
 
+export function getEnvSponsoredChainIds(): number[] {
+  const isTestnet = process.env.IS_TESTNET === "true";
+  return ERC20_SPONSORED_CHAINS.filter(
+    (chain) => Boolean(chain.testnet) === isTestnet
+  ).map((chain) => chain.id);
+}
+
 export function formatChainId(id: number): string {
   const chain = getEvmChainByChainId(id);
   return chain ? `${id} (${chain.name})` : String(id);
