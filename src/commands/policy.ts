@@ -36,8 +36,7 @@ function deferToDashboard(
   const url = dashboardWalletPoliciesUrl({ policyId, action });
   if (json) {
     outputResult(json, {
-      requiresDashboard: true,
-      reason: `${label} requires wallet-owner approval in the dashboard.`,
+      reason: `${label} requires wallet-owner approval — open the url in a browser to continue.`,
       url,
     });
     return;

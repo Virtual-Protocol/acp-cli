@@ -1087,9 +1087,8 @@ export function registerAgentCommands(program: Command): void {
 
       if (json) {
         outputResult(json, {
-          requiresDashboard: true,
           reason:
-            "Changing a live signer's policy requires wallet-owner approval in the dashboard.",
+            "Changing a live signer's policy requires wallet-owner approval — open the url in a browser to continue.",
           url,
         });
         return;

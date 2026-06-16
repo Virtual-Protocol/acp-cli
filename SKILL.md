@@ -185,9 +185,11 @@ Policies are reusable guardrails — an allowlist of contract/wallet addresses a
 | `acp policy list [--limit --cursor --chain-type] --json` | List your custom policies | `{data:[{id, policyId, name, contracts[]}], meta:{pagination:{nextCursor}}}` |
 | `acp policy show <id> --json` | One policy (local + Privy definition) | `{policy:{...}, remote:{...}}` |
 | `acp policy global --json` | Platform presets and their policy ids | `{data:[{name, policyId}]}` |
-| `acp policy edit <id>` / `acp policy delete <id>` | Deep-link straight to that policy's edit/delete dialog in the dashboard (owner-signed) | `{requiresDashboard:true, url}` |
+| `acp policy edit <id>` / `acp policy delete <id>` | **Cannot run in the CLI** — returns a `url` the user must open to edit/delete that policy in the dashboard (owner-signed) | `{reason, url}` |
 | `acp agent signer-policy [--agent-id] --json` | Show which policy the active signer uses | `{signerId, policyIds[], policy}` |
-| `acp agent set-signer-policy [--agent-id]` | Deep-link to change/remove a live signer's policy | `{requiresDashboard:true, url}` |
+| `acp agent set-signer-policy [--agent-id]` | **Cannot run in the CLI** — returns a `url` the user must open to change/remove a live signer's policy in the dashboard | `{reason, url}` |
+
+> **The three commands marked "Cannot run in the CLI" only return a `url` — the user must open it to perform the action.** `policy edit`, `policy delete`, and `agent set-signer-policy` need the wallet owner's dashboard session to sign, so they make no change themselves; each returns `{"reason": "...", "url": "..."}`. Treat that `url` exactly like the `add-signer`/`configure`/`topup` links: **STOP and post the raw `url` as plain visible text to the human** (e.g. `Approve the change here: https://...`), and do **not** report the edit/delete/policy-change as done — it stays pending until they complete it in the browser.
 
 To attach a **custom** policy to a signer, use `acp agent signer-policy` to confirm the current one, then `acp agent set-signer-policy` — it deep-links to the Signers tab where the owner-signed attach happens. This is the supported, working path. (Binding a custom policy at signer creation via `acp agent add-signer --policy <id>` is still rolling out on the dashboard; until then a custom id falls back to `ACP_ONLY` at creation, so attach with `set-signer-policy` afterward. The three presets work at creation today.) `ACP_DASHBOARD_URL` overrides the dashboard base used for the deep-links.
 
