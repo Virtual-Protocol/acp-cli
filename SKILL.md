@@ -143,18 +143,18 @@ If you're unsure which the human wants, ask before running.
 | Command | What it does | Response shape |
 |---|---|---|
 | `acp wallet address --json` | Show wallet address | `{address}` |
-| `acp wallet balance --chain-id <id> --json` | Token balances on a chain | `{chainId, network, address, tokens:[{tokenAddress, tokenBalance, tokenMetadata:{symbol, name, decimals}, tokenPrices:[{value}]}]}` (`tokenBalance` is the raw integer; decimal-shift by `tokenMetadata.decimals`) |
+| `acp wallet balance [--chain-id <id>] [--cluster <c>] --json` | Token balances. No flags → all sponsored EVM chains + Solana for the env. `--chain-id` narrows to one chain (EVM, or `500`/`501` for Solana); `--cluster devnet\|mainnet` → Solana only | Single chain (`--chain-id`/`--cluster`): `{chainId, network, address, tokens:[…]}`. All-chains (no flags): `{chains:[{chainId, network}], address, solanaAddress, tokens:[…]}` — `tokens` each carry `network`; group by it. Each token: `{tokenAddress, tokenBalance, tokenMetadata:{symbol, name, decimals}, tokenPrices:[{value}]}` (`tokenBalance` raw; decimal-shift by `decimals`, native token has `tokenAddress:null`) |
 | `acp wallet topup --chain-id <id> --method coinbase \| card \| qr [--amount <usd>] [--email <e>] [--us] --json` | On-ramp via Coinbase Pay, Crossmint card, or QR | Coinbase: `{walletAddress, method:"coinbase", url}`. Card: `{walletAddress, method:"card", checkoutUrl}`. QR: `{walletAddress, method:"qr", chainId}` |
 | `acp wallet sign-message --message <text> --chain-id <id> --json` | Sign plaintext (signer required) | `{signature}` |
 | `acp wallet sign-typed-data --data <json> --chain-id <id> --json` | Sign EIP-712 (signer required) | `{signature}` |
 | `acp wallet send-transaction --chain-id <id> --to <addr> [--value <wei>] [--data <hex>] --json` | Broadcast (signer + dashboard prerequisites — see callout below) | `{transactionHash}` |
 
-**Solana wallet** (`acp wallet sol …`). Same agent, its Solana address (same signer). No `--chain-id` — the cluster is implied by `IS_TESTNET` (devnet on testnet, else mainnet), override with `--cluster devnet|mainnet`. Amounts are human units (SOL, or token units). `transfer`/`sign-message`/`send-instructions` need a signer; `sign-typed-data`/`topup` are EVM-only.
+**Solana wallet** (`acp wallet sol …`). Same agent, its Solana address (same signer). No `--chain-id` — the cluster is implied by `IS_TESTNET` (devnet on testnet, else mainnet), override with `--cluster devnet|mainnet`. Amounts are human units (SOL, or token units). `transfer`/`sign-message`/`send-instructions` need a signer; `sign-typed-data`/`topup` are EVM-only. (Solana balances also appear in the unified `acp wallet balance`; `wallet sol balance` is a Solana-only shortcut with identical output.)
 
 | Command | What it does | Response shape |
 |---|---|---|
 | `acp wallet sol address --json` | Show the agent's Solana address | `{address}` |
-| `acp wallet sol balance [--cluster <c>] --json` | SOL + SPL balances (server-side) | `{chainId, network, address, tokens:[{tokenAddress, tokenBalance, tokenMetadata:{symbol, name, decimals}}]}` (native SOL has `tokenAddress:null`; `tokenBalance` raw, decimal-shift by `decimals`) |
+| `acp wallet sol balance [--cluster <c>] --json` | SOL + SPL balances (server-side) | `{chainId, network, address, tokens:[{tokenAddress, tokenBalance, tokenMetadata:{symbol, name, decimals}, tokenPrices:[{value}]}]}` (native SOL has `tokenAddress:null`; `tokenBalance` raw, decimal-shift by `decimals`) |
 | `acp wallet sol sign-message --message <text> [--cluster <c>] --json` | Sign plaintext (signer required) | `{signature}` (base58) |
 | `acp wallet sol transfer --to <addr> --amount <human> [--token <mint>] [--cluster <c>] --json` | Send SOL, or an SPL token with `--token` (auto-creates the recipient's token account) | `{signature}` |
 | `acp wallet sol send-instructions --instructions <json> [--cluster <c>] --json` | Send a raw instruction set (advanced); `<json>` = `[{programAddress, accounts:[{address, role}], data}]`, `data` base64/0x-hex, `role` ∈ writable_signer\|writable\|readonly_signer\|readonly | `{signature}` |

@@ -36,9 +36,16 @@ export function getEnvSponsoredChainIds(): number[] {
   ).map((chain) => chain.id);
 }
 
+export function isSolanaChainId(id: number): boolean {
+  return id === SOLANA_DEVNET_CHAIN_ID || id === SOLANA_MAINNET_CHAIN_ID;
+}
+
 export function getNativeCurrency(
   chainId: number
-): { name: string; symbol: string } | undefined {
+): { name: string; symbol: string; decimals: number } | undefined {
+  if (isSolanaChainId(chainId)) {
+    return { name: "Solana", symbol: "SOL", decimals: 9 };
+  }
   return ERC20_SPONSORED_CHAINS.find((chain) => chain.id === chainId)
     ?.nativeCurrency;
 }

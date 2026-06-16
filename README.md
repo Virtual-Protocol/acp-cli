@@ -257,8 +257,13 @@ Shows the supported chain IDs and network names based on the current environment
 # Show configured wallet address
 acp wallet address
 
-# Show token balances
+# Show token balances. With no flags, shows every sponsored EVM chain plus
+# Solana for the current environment, grouped by chain.
+acp wallet balance
+# Narrow to one EVM chain:
 acp wallet balance --chain-id 8453
+# Solana only (chain id 500/501 or --cluster):
+acp wallet balance --cluster mainnet
 
 # Sign a plaintext message (no dashboard prerequisites)
 acp wallet sign-message --message "hello world" --chain-id 8453
@@ -290,13 +295,13 @@ acp wallet topup --chain-id 8453 --method qr
 
 #### Solana wallet (`wallet sol`)
 
-The agent's Privy wallet also holds a Solana address (signed by the same key). Solana operations live under `wallet sol`. The cluster is implied by the environment (`IS_TESTNET` → devnet, otherwise mainnet) with an optional `--cluster devnet|mainnet` override — there's no `--chain-id` here.
+The agent's Privy wallet also holds a Solana address (signed by the same key). Solana operations live under `wallet sol`. The cluster is implied by the environment (`IS_TESTNET` → devnet, otherwise mainnet) with an optional `--cluster devnet|mainnet` override — there's no `--chain-id` here. (Balances also appear in the unified `acp wallet balance` view alongside EVM chains; `wallet sol balance` is a Solana-only shortcut.)
 
 ```bash
 # Show the agent's Solana address
 acp wallet sol address
 
-# SOL + SPL token balances
+# SOL + SPL token balances (same formatting as `acp wallet balance`)
 acp wallet sol balance
 
 # Sign a plaintext message (returns a base58 signature)
@@ -782,8 +787,8 @@ acp trade --side short --token BTC --size 0.01 --reduce-only
 
 ```bash
 # Show Hyperliquid ACCOUNT status ONLY — HL perp positions, margin, and HL spot balances.
-# This is the one HL-specific read. For on-chain token balances on any EVM chain
-# (Ethereum, Arbitrum, Base, …), use `acp wallet balance --chain-id <id>` instead.
+# This is the one HL-specific read. For on-chain token balances
+# EVM chains + Solana), use `acp wallet balance` instead.
 acp trade hl-status
 
 # Withdraw USDC off Hyperliquid (settles to Arbitrum; --to-chain bridges onward)

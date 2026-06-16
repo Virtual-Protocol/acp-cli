@@ -19,6 +19,7 @@ import {
   assertSponsoredChainId,
   getEnvSponsoredChainIds,
   getNativeCurrency,
+  isSolanaChainId,
   solanaChainId,
 } from "../lib/chains";
 import { c } from "../lib/color";
@@ -57,18 +58,18 @@ function emitTopupUrlToStderr(url: string): void {
   );
 }
 
-// Resolves the native currency (name + symbol) for a token's network, used as
-// the fallback label for native-token balances so non-ETH chains (BNB, POL,
-// MON, …) aren't mislabeled as ETH.
+// Resolves the native currency (name + symbol + decimals) for a token's network,
+// used as the fallback label for native-token balances so non-ETH chains (BNB,
+// POL, MON, SOL, …) aren't mislabeled as ETH.
 type NativeResolver = (
   network: string
-) => { name: string; symbol: string } | undefined;
+) => { name: string; symbol: string; decimals: number } | undefined;
 
 // Derive the displayable symbol/name/balance/usd for a token. Shared by the
 // single-chain and all-chains balance views so formatting stays identical.
 function formatToken(
   t: TokenInfo,
-  native?: { name: string; symbol: string }
+  native?: { name: string; symbol: string; decimals: number }
 ): {
   symbol: string;
   name: string;
@@ -81,7 +82,8 @@ function formatToken(
     t.tokenMetadata.symbol ?? (isNative ? native?.symbol ?? "ETH" : "???");
   const name =
     t.tokenMetadata.name ?? (isNative ? native?.name ?? "Ether" : "");
-  const decimals = t.tokenMetadata.decimals ?? 18;
+  const decimals =
+    t.tokenMetadata.decimals ?? (isNative ? native?.decimals ?? 18 : 18);
   const balance = formatUnits(BigInt(t.tokenBalance), decimals);
   const unitPrice = parseFloat(t.tokenPrices?.[0]?.value ?? "0");
   const value = unitPrice * parseFloat(balance);
@@ -106,6 +108,101 @@ function printTokenTable(tokens: TokenInfo[], nativeFor: NativeResolver): void {
     console.log(
       `  ${c.cyan(symbol.padEnd(10))}${name.padEnd(22)}${bal.padEnd(24)}${usd}`
     );
+  }
+}
+
+// Shared balance renderer for both the unified `wallet balance` and the
+// `wallet sol balance` shortcut, so EVM and Solana output stay identical
+// (JSON / grouped TTY table with USD / piped TSV).
+function renderBalances(opts: {
+  json: boolean;
+  networks: string[]; // queried order; drives grouping + the "Checked" line
+  networkToChainId: Map<string, number>;
+  tokens: TokenInfo[];
+  evmAddress?: string;
+  solAddress?: string;
+}): void {
+  const { json, networks, networkToChainId, tokens, evmAddress, solAddress } =
+    opts;
+  const single = networks.length === 1;
+  const nativeFor: NativeResolver = (network) => {
+    const id = networkToChainId.get(network);
+    return id !== undefined ? getNativeCurrency(id) : undefined;
+  };
+
+  if (json) {
+    if (single) {
+      const network = networks[0];
+      const chainId = networkToChainId.get(network);
+      const address = isSolanaChainId(chainId ?? -1) ? solAddress : evmAddress;
+      outputResult(json, { chainId, network, address, tokens });
+    } else {
+      outputResult(json, {
+        chains: networks.map((network) => ({
+          chainId: networkToChainId.get(network),
+          network,
+        })),
+        address: evmAddress,
+        solanaAddress: solAddress,
+        tokens,
+      });
+    }
+    return;
+  }
+
+  if (isTTY()) {
+    if (single) {
+      const network = networks[0];
+      const chainId = networkToChainId.get(network);
+      const address = isSolanaChainId(chainId ?? -1) ? solAddress : evmAddress;
+      console.log(`\n${c.bold(`Wallet Balance on ${network} (${chainId})`)}\n`);
+      console.log(`  ${c.bold("Address:")}  ${c.dim(address ?? "")}\n`);
+      if (tokens.length === 0) {
+        console.log("  No tokens found.\n");
+      } else {
+        printTokenTable(tokens, nativeFor);
+        console.log("");
+      }
+    } else {
+      console.log(`\n${c.bold("Wallet Balance")}\n`);
+      if (evmAddress) {
+        console.log(`  ${c.bold("EVM:")}     ${c.dim(evmAddress)}`);
+      }
+      if (solAddress) {
+        console.log(`  ${c.bold("Solana:")}  ${c.dim(solAddress)}`);
+      }
+      console.log("");
+
+      // Group tokens by network, preserving the queried order. Networks with
+      // no tokens are hidden.
+      let printedAny = false;
+      for (const network of networks) {
+        const group = tokens.filter((t) => t.network === network);
+        if (group.length === 0) continue;
+        printedAny = true;
+        const chainId = networkToChainId.get(network);
+        console.log(`  ${c.bold(`${network} (${chainId})`)}`);
+        printTokenTable(group, nativeFor);
+        console.log("");
+      }
+      if (!printedAny) {
+        console.log("  No tokens found.\n");
+      }
+      console.log(
+        `  ${c.dim(`Checked: ${networks.join(", ")} (${networks.length} chains)`)}\n`
+      );
+    }
+  } else {
+    console.log("NETWORK\tTOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
+    for (const t of tokens) {
+      const { symbol, name, balance, usd, contract } = formatToken(
+        t,
+        nativeFor(t.network)
+      );
+      console.log(
+        `${t.network}\t${symbol}\t${name}\t${balance}\t${usd}\t${contract}`
+      );
+    }
   }
 }
 
@@ -255,22 +352,28 @@ export function registerWalletCommands(program: Command): void {
   wallet
     .command("balance")
     .description(
-      "Show token balances for the active wallet. Omit --chain-id to show all sponsored chains for the current environment."
+      "Show token balances. With no flags, shows all sponsored EVM chains plus Solana for the current environment. Narrow with --chain-id or --cluster."
     )
-    .option("--chain-id <id>", "Chain ID (omit to query all sponsored chains)")
+    .option("--chain-id <id>", "Chain ID (EVM, or 500/501 for Solana)")
+    .option("--cluster <name>", "Solana only: devnet | mainnet")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        // Resolve the set of chains to query: a single explicit --chain-id, or
-        // every sponsored chain for the current environment when omitted.
-        const explicit = opts.chainId !== undefined;
+        // Resolve the chain-id set to query and whether this is an explicit
+        // single-chain request (vs the default all-chains view).
         let chainIds: number[];
-        if (explicit) {
+        let explicit: boolean;
+        if (opts.chainId !== undefined) {
           const chainId = Number(opts.chainId);
-          assertSponsoredChainId(chainId);
+          if (!isSolanaChainId(chainId)) assertSponsoredChainId(chainId);
           chainIds = [chainId];
+          explicit = true;
+        } else if (opts.cluster !== undefined) {
+          chainIds = [solanaChainId(opts.cluster)];
+          explicit = true;
         } else {
-          chainIds = getEnvSponsoredChainIds();
+          chainIds = [...getEnvSponsoredChainIds(), solanaChainId()];
+          explicit = false;
         }
 
         // Map each chain id to its network string and build a reverse lookup so
@@ -306,86 +409,40 @@ export function registerWalletCommands(program: Command): void {
           );
         }
 
+        // Resolve the Solana address only if a Solana network is in scope. In
+        // the default all-chains view a missing Solana wallet is skipped
+        // silently; an explicit Solana request surfaces the error.
+        let solAddress: string | undefined;
+        const hasSolana = networks.some((n) =>
+          isSolanaChainId(networkToChainId.get(n) ?? -1)
+        );
+        if (hasSolana) {
+          try {
+            solAddress = await getSolanaWalletAddress();
+          } catch (err) {
+            if (explicit) throw err;
+            // Drop the Solana network(s) and continue with EVM only.
+            for (const [network, id] of [...networkToChainId.entries()]) {
+              if (isSolanaChainId(id)) {
+                networks.splice(networks.indexOf(network), 1);
+                networkToChainId.delete(network);
+              }
+            }
+          }
+        }
+
         const { agentApi } = await getClient();
         const assets = await agentApi.getAgentAssets(agentId, networks);
         const tokens = assets.data.tokens;
 
-        // Native-currency fallback label, resolved per token via its network.
-        const nativeFor: NativeResolver = (network) => {
-          const id = networkToChainId.get(network);
-          return id !== undefined ? getNativeCurrency(id) : undefined;
-        };
-
-        if (json) {
-          if (explicit) {
-            outputResult(json, {
-              chainId: chainIds[0],
-              network: networks[0],
-              address: walletAddress,
-              tokens,
-            });
-          } else {
-            outputResult(json, {
-              chains: networks.map((network) => ({
-                chainId: networkToChainId.get(network),
-                network,
-              })),
-              address: walletAddress,
-              tokens,
-            });
-          }
-          return;
-        }
-
-        if (isTTY()) {
-          if (explicit) {
-            console.log(
-              `\n${c.bold(
-                `Wallet Balance on ${networks[0]} (${chainIds[0]})`
-              )}\n`
-            );
-            console.log(`  ${c.bold("Address:")}  ${c.dim(walletAddress)}\n`);
-            if (tokens.length === 0) {
-              console.log("  No tokens found.\n");
-            } else {
-              printTokenTable(tokens, nativeFor);
-              console.log("");
-            }
-          } else {
-            console.log(`\n${c.bold("Wallet Balance")}\n`);
-            console.log(`  ${c.bold("Address:")}  ${c.dim(walletAddress)}\n`);
-
-            // Group tokens by network, preserving the queried order. Networks
-            // with no tokens are hidden.
-            let printedAny = false;
-            for (const network of networks) {
-              const group = tokens.filter((t) => t.network === network);
-              if (group.length === 0) continue;
-              printedAny = true;
-              const chainId = networkToChainId.get(network);
-              console.log(`  ${c.bold(`${network} (${chainId})`)}`);
-              printTokenTable(group, nativeFor);
-              console.log("");
-            }
-            if (!printedAny) {
-              console.log("  No tokens found.\n");
-            }
-            console.log(
-              `  ${c.dim(`Checked: ${networks.join(", ")} (${networks.length} chains)`)}\n`
-            );
-          }
-        } else {
-          console.log("NETWORK\tTOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
-          for (const t of tokens) {
-            const { symbol, name, balance, usd, contract } = formatToken(
-              t,
-              nativeFor(t.network)
-            );
-            console.log(
-              `${t.network}\t${symbol}\t${name}\t${balance}\t${usd}\t${contract}`
-            );
-          }
-        }
+        renderBalances({
+          json,
+          networks,
+          networkToChainId,
+          tokens,
+          evmAddress: walletAddress,
+          solAddress,
+        });
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
@@ -585,25 +642,13 @@ export function registerWalletCommands(program: Command): void {
         const assets = await agentApi.getAgentAssets(agentId, [network]);
         const tokens = assets.data.tokens;
 
-        if (json) {
-          outputResult(json, { chainId, network, address, tokens });
-          return;
-        }
-
-        console.log(`\n${c.bold(`Solana balance on ${network}`)}\n`);
-        console.log(`  ${c.bold("Address:")}  ${c.dim(address)}\n`);
-        if (tokens.length === 0) {
-          console.log("  No tokens found.\n");
-        } else {
-          for (const t of tokens) {
-            const isNative = t.tokenAddress === null;
-            const symbol = t.tokenMetadata.symbol ?? (isNative ? "SOL" : "???");
-            const decimals = t.tokenMetadata.decimals ?? (isNative ? 9 : 0);
-            const balance = formatUnits(BigInt(t.tokenBalance), decimals);
-            console.log(`  ${c.cyan(symbol.padEnd(10))}${balance}`);
-          }
-          console.log("");
-        }
+        renderBalances({
+          json,
+          networks: [network],
+          networkToChainId: new Map([[network, chainId]]),
+          tokens,
+          solAddress: address,
+        });
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
