@@ -15,6 +15,13 @@ export function getEnvSponsoredChainIds(): number[] {
   ).map((chain) => chain.id);
 }
 
+export function getNativeCurrency(
+  chainId: number
+): { name: string; symbol: string } | undefined {
+  return ERC20_SPONSORED_CHAINS.find((chain) => chain.id === chainId)
+    ?.nativeCurrency;
+}
+
 export function formatChainId(id: number): string {
   const chain = getEvmChainByChainId(id);
   return chain ? `${id} (${chain.name})` : String(id);

@@ -11,6 +11,7 @@ import { CliError } from "../lib/errors";
 import {
   assertSponsoredChainId,
   getEnvSponsoredChainIds,
+  getNativeCurrency,
 } from "../lib/chains";
 import { c } from "../lib/color";
 import { openBrowser } from "../lib/browser";
@@ -29,9 +30,19 @@ function emitTopupUrlToStderr(url: string): void {
   );
 }
 
+// Resolves the native currency (name + symbol) for a token's network, used as
+// the fallback label for native-token balances so non-ETH chains (BNB, POL,
+// MON, …) aren't mislabeled as ETH.
+type NativeResolver = (
+  network: string
+) => { name: string; symbol: string } | undefined;
+
 // Derive the displayable symbol/name/balance/usd for a token. Shared by the
 // single-chain and all-chains balance views so formatting stays identical.
-function formatToken(t: TokenInfo): {
+function formatToken(
+  t: TokenInfo,
+  native?: { name: string; symbol: string }
+): {
   symbol: string;
   name: string;
   balance: string;
@@ -39,8 +50,10 @@ function formatToken(t: TokenInfo): {
   contract: string;
 } {
   const isNative = t.tokenAddress === null;
-  const symbol = t.tokenMetadata.symbol ?? (isNative ? "ETH" : "???");
-  const name = t.tokenMetadata.name ?? (isNative ? "Ether" : "");
+  const symbol =
+    t.tokenMetadata.symbol ?? (isNative ? native?.symbol ?? "ETH" : "???");
+  const name =
+    t.tokenMetadata.name ?? (isNative ? native?.name ?? "Ether" : "");
   const decimals = t.tokenMetadata.decimals ?? 18;
   const balance = formatUnits(BigInt(t.tokenBalance), decimals);
   const unitPrice = parseFloat(t.tokenPrices?.[0]?.value ?? "0");
@@ -55,13 +68,13 @@ function formatToken(t: TokenInfo): {
 }
 
 // Render a token table for a single network's tokens (TTY mode).
-function printTokenTable(tokens: TokenInfo[]): void {
+function printTokenTable(tokens: TokenInfo[], nativeFor: NativeResolver): void {
   const header = `  ${c.dim("TOKEN".padEnd(10))}${c.dim(
     "NAME".padEnd(22)
   )}${c.dim("BALANCE".padEnd(24))}${c.dim("USD")}`;
   console.log(header);
   for (const t of tokens) {
-    const { symbol, name, balance, usd } = formatToken(t);
+    const { symbol, name, balance, usd } = formatToken(t, nativeFor(t.network));
     const bal = balance.length > 22 ? balance.slice(0, 22) : balance;
     console.log(
       `  ${c.cyan(symbol.padEnd(10))}${name.padEnd(22)}${bal.padEnd(24)}${usd}`
@@ -270,6 +283,12 @@ export function registerWalletCommands(program: Command): void {
         const assets = await agentApi.getAgentAssets(agentId, networks);
         const tokens = assets.data.tokens;
 
+        // Native-currency fallback label, resolved per token via its network.
+        const nativeFor: NativeResolver = (network) => {
+          const id = networkToChainId.get(network);
+          return id !== undefined ? getNativeCurrency(id) : undefined;
+        };
+
         if (json) {
           if (explicit) {
             outputResult(json, {
@@ -302,7 +321,7 @@ export function registerWalletCommands(program: Command): void {
             if (tokens.length === 0) {
               console.log("  No tokens found.\n");
             } else {
-              printTokenTable(tokens);
+              printTokenTable(tokens, nativeFor);
               console.log("");
             }
           } else {
@@ -318,7 +337,7 @@ export function registerWalletCommands(program: Command): void {
               printedAny = true;
               const chainId = networkToChainId.get(network);
               console.log(`  ${c.bold(`${network} (${chainId})`)}`);
-              printTokenTable(group);
+              printTokenTable(group, nativeFor);
               console.log("");
             }
             if (!printedAny) {
@@ -331,7 +350,10 @@ export function registerWalletCommands(program: Command): void {
         } else {
           console.log("NETWORK\tTOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
           for (const t of tokens) {
-            const { symbol, name, balance, usd, contract } = formatToken(t);
+            const { symbol, name, balance, usd, contract } = formatToken(
+              t,
+              nativeFor(t.network)
+            );
             console.log(
               `${t.network}\t${symbol}\t${name}\t${balance}\t${usd}\t${contract}`
             );
