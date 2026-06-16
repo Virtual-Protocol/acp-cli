@@ -173,12 +173,35 @@ If you're unsure which the human wants, ask before running.
 >
 > `--method qr` returns no URL — it just shows the wallet address to send USDC to. Never substitute "run `acp wallet topup`" for actually running it.
 
-> **Dashboard prerequisites for `send-transaction` only.** Two controls at [app.virtuals.io/os](https://app.virtuals.io/os) → **Agents and Projects** → agent settings → **Wallet** tab can block a broadcast with a generic `Bad Request`. The CLI can't read or change either — **remind the user proactively, don't wait for the failure**:
+> **Dashboard prerequisites for `send-transaction` only.** Two controls at [app.virtuals.io/os](https://app.virtuals.io/os) → **Agents and Projects** → agent settings → **Wallet** tab can block a broadcast with a generic `Bad Request` — **remind the user proactively, don't wait for the failure**:
 >
-> 1. **Wallet policies** (going-forward) — a destination-address allowlist. If the recipient isn't on the list, the broadcast fails.
-> 2. **Transaction Mode** (older, being phased out) — `Restricted` (default) permits only Virtuals contracts; `Unrestricted` permits arbitrary destinations. Wallet policies take precedence when configured.
+> 1. **Wallet policies** (going-forward) — an address allowlist on the agent's signer. If the call's target isn't allowed, the broadcast fails. You *can* inspect and create these from the CLI (`acp policy …`, `acp agent signer-policy` — see [Wallet policies](#wallet-policies)); editing/deleting a policy or changing a live signer's policy stays dashboard-only.
+> 2. **Transaction Mode** (older, being phased out) — `Restricted` (default) permits only Virtuals contracts; `Unrestricted` permits arbitrary destinations. Dashboard-only. Wallet policies take precedence when configured.
 >
 > `sign-message` / `sign-typed-data` are not affected (they don't broadcast). Tokenization and marketplace job actions also need a signer; see [Marketplace flows](#marketplace-flows) for the latter.
+
+### Wallet policies
+
+Policies are reusable guardrails — an allowlist of contract/wallet addresses an agent signer may interact with. Three platform presets exist (`ACP_ONLY` = "Virtuals Only", `DENY_ALL`, and "No Policy" = none attached); you can also create **custom** policies that whitelist specific addresses. A policy is attached to a signer, and what it permits is enforced server-side on every transaction that signer makes.
+
+**What the CLI can do vs. what needs the dashboard.** A policy and the agent wallet are owned by the user's Privy account, and *mutating* an owned resource requires that account's session signature — which only the dashboard can produce (the CLI's signer key can't). So:
+
+- **CLI, no approval:** create a policy, list/show policies, list platform presets, read the current signer's policy.
+- **Dashboard only (the CLI deep-links you there — relay the URL):** edit/delete a policy, change or remove a *live* signer's policy. Attaching a policy when you **first add a signer** works from the CLI, because that routes through the browser approval URL already.
+
+| Command | What it does | Response shape |
+|---|---|---|
+| `acp policy create --name <n> --contract <addr...> --json` | Create a custom policy. `--contract` is repeatable; use `Label=0xaddr` to name an entry. ETHEREUM only. | `{id, policyId, chainType, name, contracts[]}` |
+| `acp policy list [--limit --cursor --chain-type] --json` | List your custom policies | `{data:[{id, policyId, name, contracts[]}], meta:{pagination:{nextCursor}}}` |
+| `acp policy show <id> --json` | One policy (local + Privy definition) | `{policy:{...}, remote:{...}}` |
+| `acp policy global --json` | Platform presets and their policy ids | `{data:[{name, policyId}]}` |
+| `acp policy edit <id>` / `acp policy delete <id>` | **Cannot run in the CLI** — returns a `url` the user must open to edit/delete that policy in the dashboard (owner-signed) | `{reason, url}` |
+| `acp agent signer-policy [--agent-id] --json` | Show which policy the active signer uses | `{signerId, policyIds[], policy}` |
+| `acp agent set-signer-policy [--agent-id]` | **Cannot run in the CLI** — returns a `url` the user must open to change/remove a live signer's policy in the dashboard | `{reason, url}` |
+
+> **The three commands marked "Cannot run in the CLI" only return a `url` — the user must open it to perform the action.** `policy edit`, `policy delete`, and `agent set-signer-policy` need the wallet owner's dashboard session to sign, so they make no change themselves; each returns `{"reason": "...", "url": "..."}`. Treat that `url` exactly like the `add-signer`/`configure`/`topup` links: **STOP and post the raw `url` as plain visible text to the human** (e.g. `Approve the change here: https://...`), and do **not** report the edit/delete/policy-change as done — it stays pending until they complete it in the browser.
+
+To attach a **custom** policy to a signer, use `acp agent signer-policy` to confirm the current one, then `acp agent set-signer-policy` — it deep-links to the Signers tab where the owner-signed attach happens. This is the supported, working path. (Binding a custom policy at signer creation via `acp agent add-signer --policy <id>` is still rolling out on the dashboard; until then a custom id falls back to `ACP_ONLY` at creation, so attach with `set-signer-policy` afterward. The three presets work at creation today.) `ACP_DASHBOARD_URL` overrides the dashboard base used for the deep-links.
 
 ### Trading (`acp trade`)
 
@@ -293,8 +316,10 @@ Quick pointers:
 | `acp agent use [--agent-id]` | Switch active agent |
 | `acp agent whoami --json` | Show details of the active agent (per-chain tokenization status, ERC-8004 IDs, offerings, resources) |
 | `acp agent update [--name --description --image]` | Update active agent metadata |
-| `acp agent add-signer [--agent-id] [--no-wait] --policy <restricted\|deny-all\|unrestricted>` | Generate P256 signer, browser-approve, persist to OS keychain. **Always pass `--policy` explicitly** (don't rely on the `restricted` default): `restricted` (authorized for all ACP transactions), `deny-all` (manual approval for all transactions), `unrestricted` (authorizes everything, no approval). `--no-wait` returns `{signerUrl, requestId, publicKey}` and exits for the split flow |
+| `acp agent add-signer [--agent-id] [--no-wait] --policy <restricted\|deny-all\|unrestricted>` | Generate P256 signer, browser-approve, persist to OS keychain. **Always pass `--policy` explicitly** (don't rely on the `restricted` default): `restricted` (authorized for all ACP transactions), `deny-all` (manual approval for all transactions), `unrestricted` (authorizes everything, no approval). For a **custom** policy, add the signer then attach it via `acp agent set-signer-policy` (binding a custom id at creation is rolling out — see [Wallet policies](#wallet-policies)). `--no-wait` returns `{signerUrl, requestId, publicKey}` and exits for the split flow |
 | `acp agent signer-status --request-id --public-key [--agent-id --wait --timeout]` | Complete a split `add-signer --no-wait`: check approval, persist signer. `{status:'pending'}` until approved |
+| `acp agent signer-policy [--agent-id]` | Show which wallet policy the active agent's signer is currently using (resolves preset/custom names). See [Wallet policies](#wallet-policies) |
+| `acp agent set-signer-policy [--agent-id] [--open]` | Change or remove a live signer's policy — deep-links to the dashboard (requires wallet-owner approval) |
 | `acp agent tokenize [--chain-id --symbol --anti-sniper <0\|1\|2> --prebuy --acf --60-days --airdrop-percent --robotics --configure]` | Launch a tradeable token (signer + VIRTUAL launch fee + ETH gas). See [docs/tokenization.md](docs/tokenization.md). |
 | `acp agent register-erc8004 [--agent-id --chain-id]` | Register on the ERC-8004 identity registry (signer required) |
 | `acp agent migrate [--agent-id --complete]` | Migrate a legacy v1 agent to v2 (two phases) |
@@ -599,7 +624,7 @@ Most commands print structured JSON errors to stderr on `--json`:
 ### Known issues
 
 - **`wallet send-transaction` fails with a generic `Bad Request`** (no useful body). Two dashboard-side controls can produce this; check at [app.virtuals.io/os](https://app.virtuals.io/os) → **Agents and Projects** → agent settings → **Wallet** tab:
-  1. **Wallet policies** (the going-forward control): destination-address allowlist. If the recipient isn't on the list, the broadcast fails. Have the user add the destination (or remove the policy for unrestricted), then retry.
+  1. **Wallet policies** (the going-forward control): address allowlist on the signer. If the target isn't allowed, the broadcast fails. Inspect with `acp agent signer-policy` / `acp policy list` (see [Wallet policies](#wallet-policies)); to change which policy a live signer uses, the user must approve it in the dashboard (`acp agent set-signer-policy` deep-links there). Or remove the policy for unrestricted, then retry.
   2. **Transaction Mode** (older, being phased out): when no wallet policy is configured, `Restricted` (default) only permits Virtuals contracts. Have the user switch to `Unrestricted`, then retry.
   Check wallet policies first; fall back to Transaction Mode if no policies are set.
 
@@ -622,7 +647,8 @@ bin/acp-cli-signer-*        Platform signer binaries (linux/macos/windows)
 src/
   commands/
     configure.ts            Browser-based auth flow; saves token to OS keychain
-    agent.ts                Agent management (create, list, use, whoami, add-signer, update, tokenize, migrate, register-erc8004)
+    agent.ts                Agent management (create, list, use, whoami, add-signer, signer-policy, set-signer-policy, update, tokenize, migrate, register-erc8004)
+    policy.ts               Wallet policy management (create, list, show, global; edit/delete deep-link to dashboard)
     offering.ts             Offering management (list, create, update, delete; subscription attachments)
     subscription.ts         Subscription management
     resource.ts             Resource management

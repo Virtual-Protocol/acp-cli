@@ -664,9 +664,12 @@ export class AgentApi {
     return this.client.get<AgentBrowseResponse>("/agents/search", params);
   }
 
+  // `policy` is a preset name (SignerPolicy) or a custom policy id. The backend
+  // forwards it verbatim into the browser approval URL, where the user's Privy
+  // session attaches it — so any value the dashboard understands is valid here.
   async addSignerWithUrl(
     agentId: string,
-    policy: SignerPolicy = "restricted"
+    policy: string = "restricted"
   ): Promise<AddSignerResponse> {
     return this.client.post(`/agents/${agentId}/signer`, { policy });
   }
