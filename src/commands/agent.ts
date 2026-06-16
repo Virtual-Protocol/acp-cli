@@ -20,6 +20,8 @@ import {
   SIGNER_POLICIES,
 } from "../lib/api/agent";
 import { getClient } from "../lib/api/client";
+import type { GlobalPolicy, Policy, WalletSigner } from "../lib/api/policy";
+import { dashboardSignerPolicyUrl } from "../lib/dashboard";
 import {
   prompt,
   selectFromList,
@@ -133,7 +135,7 @@ async function startAddSignerFlow(
   json: boolean,
   agent: Agent,
   open: boolean,
-  policy: SignerPolicy = "restricted"
+  policy: string = "restricted"
 ): Promise<{ publicKey: string; signerUrl: string; requestId: string } | null> {
   let publicKey: string;
   try {
@@ -251,7 +253,7 @@ async function runAddSignerFlow(
   api: AgentApi,
   json: boolean,
   agent: Agent,
-  policy: SignerPolicy = "restricted"
+  policy: string = "restricted"
 ): Promise<boolean> {
   const started = await startAddSignerFlow(api, json, agent, !json, policy);
   if (!started) return false;
@@ -401,21 +403,25 @@ export function registerAgentCommands(program: Command): void {
         SIGNER_POLICIES.map(
           (p) => `${p}: ${SIGNER_POLICY_DESCRIPTIONS[p]}`
         ).join("; ") +
-        ".",
+        ". Or pass a custom policy id from `acp policy list`.",
       "restricted"
     )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
 
-      let policy = String(opts.policy) as SignerPolicy;
+      // A preset name (SIGNER_POLICIES) or a custom policy id from
+      // `acp policy list`. Both are forwarded verbatim to the approval URL.
+      let policy = String(opts.policy).trim();
       const policyFromCli = cmd.getOptionValueSource("policy") === "cli";
-      if (!SIGNER_POLICIES.includes(policy)) {
+      if (!policy) {
         outputError(
           json,
           new CliError(
-            `Invalid policy "${opts.policy}".`,
+            "Policy cannot be empty.",
             "VALIDATION_ERROR",
-            `Use one of: ${SIGNER_POLICIES.join(", ")}.`
+            `Use a preset (${SIGNER_POLICIES.join(
+              ", "
+            )}) or a custom policy id from \`acp policy list\`.`
           )
         );
         return;
@@ -754,7 +760,7 @@ export function registerAgentCommands(program: Command): void {
         SIGNER_POLICIES.map(
           (p) => `${p}: ${SIGNER_POLICY_DESCRIPTIONS[p]}`
         ).join("; ") +
-        ".",
+        ". Or pass a custom policy id from `acp policy list`.",
       "restricted"
     )
     .option(
@@ -764,14 +770,18 @@ export function registerAgentCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
 
-      const policy = String(opts.policy) as SignerPolicy;
-      if (!SIGNER_POLICIES.includes(policy)) {
+      // A preset name (SIGNER_POLICIES) or a custom policy id from
+      // `acp policy list`. Both are forwarded verbatim to the approval URL.
+      const policy = String(opts.policy).trim();
+      if (!policy) {
         outputError(
           json,
           new CliError(
-            `Invalid policy "${opts.policy}".`,
+            "Policy cannot be empty.",
             "VALIDATION_ERROR",
-            `Use one of: ${SIGNER_POLICIES.join(", ")}.`
+            `Use a preset (${SIGNER_POLICIES.join(
+              ", "
+            )}) or a custom policy id from \`acp policy list\`.`
           )
         );
         return;
@@ -920,6 +930,176 @@ export function registerAgentCommands(program: Command): void {
         agentId: selected.id,
         agentName: selected.name,
       });
+    });
+
+  agent
+    .command("signer-policy")
+    .description(
+      "Show which wallet policy the active agent's signer is currently using."
+    )
+    .option("--agent-id <id>", "Agent ID (defaults to the active agent)")
+    .action(async (opts, cmd) => {
+      const { agentApi, policyApi } = await getClient();
+      const json = isJson(cmd);
+
+      // Resolve the target agent (explicit --agent-id, else the active one).
+      let agentId: string | undefined;
+      let walletAddress: string | undefined;
+      const selected = await resolveAgent(agentApi, opts, json);
+      if (selected) {
+        agentId = selected.id;
+        walletAddress = selected.walletAddress;
+      } else {
+        walletAddress = getActiveWallet();
+        if (!walletAddress) {
+          outputError(
+            json,
+            new CliError(
+              "No active agent set.",
+              "NO_ACTIVE_AGENT",
+              "Pass --agent-id <id> or set an active agent with `acp agent use`."
+            )
+          );
+          return;
+        }
+        agentId = getAgentId(walletAddress);
+        if (!agentId) {
+          outputError(
+            json,
+            new CliError(
+              "Agent ID not found for active wallet.",
+              "NO_ACTIVE_AGENT",
+              "Run `acp agent list` or `acp agent use` to populate it."
+            )
+          );
+          return;
+        }
+      }
+
+      let signers: WalletSigner[];
+      try {
+        const res = await policyApi.getWalletSigners(agentId);
+        signers = res.data ?? [];
+      } catch (err) {
+        outputError(
+          json,
+          `Failed to fetch signers: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return;
+      }
+
+      // Build policyId -> human name from custom + global policies so we can
+      // render names instead of opaque Privy ids. Best-effort: unresolved ids
+      // fall back to the raw id.
+      const nameById = new Map<string, string>();
+      try {
+        const [custom, global] = await Promise.all([
+          policyApi.listPolicies({ limit: 100 }),
+          policyApi.getGlobalPolicies(),
+        ]);
+        (custom.data ?? []).forEach((p: Policy) =>
+          nameById.set(p.policyId, p.name)
+        );
+        (global.data ?? []).forEach((g: GlobalPolicy) =>
+          nameById.set(g.policyId, g.name)
+        );
+      } catch {
+        // Name resolution is a nicety; raw ids are still meaningful.
+      }
+      const resolve = (id: string) => nameById.get(id) ?? id;
+      const describe = (s: WalletSigner) => {
+        const ids = s.policy_ids ?? [];
+        return ids.length === 0
+          ? "No Policy (no approval required)"
+          : ids.map(resolve).join(", ");
+      };
+
+      // Match the CLI's own signer key against each signer's authorization_keys.
+      const publicKey = walletAddress ? getPublicKey(walletAddress) : undefined;
+      const mine =
+        (publicKey &&
+          signers.find((s) =>
+            (s.authorization_keys ?? []).some(
+              (k) => k.public_key === publicKey
+            )
+          )) ||
+        (signers.length === 1 ? signers[0] : undefined);
+
+      if (mine) {
+        if (json) {
+          outputResult(json, {
+            signerId: mine.id,
+            policyIds: mine.policy_ids ?? [],
+            policy: describe(mine),
+          });
+          return;
+        }
+        printTable([
+          ["Signer", mine.display_name || mine.id],
+          ["Policy", describe(mine)],
+        ]);
+        return;
+      }
+
+      // No confident match — show every signer's policy so the user can tell.
+      if (json) {
+        outputResult(json, {
+          matched: false,
+          signers: signers.map((s) => ({
+            signerId: s.id,
+            policyIds: s.policy_ids ?? [],
+            policy: describe(s),
+          })),
+        });
+        return;
+      }
+      if (signers.length === 0) {
+        console.log("\nThis agent has no signers.\n");
+        return;
+      }
+      console.log(
+        `\n${c.yellow(
+          "Could not match this CLI's signer key; showing all signers:"
+        )}\n`
+      );
+      printTable(
+        signers.map((s) => [s.display_name || s.id, describe(s)])
+      );
+    });
+
+  agent
+    .command("set-signer-policy")
+    .description(
+      "Change or remove the active signer's policy (opens the dashboard — requires wallet-owner approval)."
+    )
+    .option("--agent-id <id>", "Agent ID (defaults to the active agent)")
+    .option("--open", "Also open the dashboard in a browser")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      const { agentApi } = await getClient();
+      const selected = await resolveAgent(agentApi, opts, json);
+      const agentId =
+        selected?.id ??
+        (getActiveWallet() ? getAgentId(getActiveWallet()!) : undefined);
+      const url = dashboardSignerPolicyUrl(agentId);
+
+      if (json) {
+        outputResult(json, {
+          requiresDashboard: true,
+          reason:
+            "Changing a live signer's policy requires wallet-owner approval in the dashboard.",
+          url,
+        });
+        return;
+      }
+      console.log(
+        `\n${c.yellow("Changing a signer's policy requires wallet-owner approval.")}\n` +
+          `This signs with your wallet owner's session, which only the dashboard can do.\n\n` +
+          `Open it here:\n\n    ${url}\n`
+      );
+      if (opts.open === true) openBrowser(url);
     });
 
   agent

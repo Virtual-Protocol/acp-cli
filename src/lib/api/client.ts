@@ -8,6 +8,7 @@ import {
 import { CliError } from "../errors";
 import { AuthApi } from "./auth";
 import { AgentApi } from "./agent";
+import { PolicyApi } from "./policy";
 import {
   ACP_SERVER_URL,
   ACP_TESTNET_SERVER_URL,
@@ -131,6 +132,7 @@ async function resolveToken(apiUrl: string): Promise<string> {
 export async function getClient(unauthenticated?: boolean): Promise<{
   agentApi: AgentApi;
   authApi: AuthApi;
+  policyApi: PolicyApi;
 }> {
   const isTestnet = process.env.IS_TESTNET === "true";
   const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
@@ -139,6 +141,7 @@ export async function getClient(unauthenticated?: boolean): Promise<{
   return {
     agentApi: new AgentApi(httpClient),
     authApi: new AuthApi(httpClient),
+    policyApi: new PolicyApi(httpClient),
   };
 }
 
