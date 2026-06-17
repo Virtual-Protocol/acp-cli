@@ -36,6 +36,20 @@ const ACCOUNT_ROLE_BY_NAME: Record<string, AccountRole> = {
 // token list. `usd_value` is precomputed by Treasures, so prefer it; fall back
 // to tokens × usd_per_token, and show "—" when neither is available (null means
 // "unknown", never 0).
+// USD for a stock position: prefer Treasures' precomputed usd_value, fall back
+// to tokens × usd_per_token, and return "—" when neither is known (null means
+// "unknown", never 0). Shared by the TTY table and the piped output so both
+// agree.
+function stockUsd(p: StockPosition): string {
+  if (p.usd_value != null) {
+    return `$${parseFloat(p.usd_value).toFixed(2)}`;
+  }
+  if (p.usd_per_token != null) {
+    return `$${(parseFloat(p.tokens) * parseFloat(p.usd_per_token)).toFixed(2)}`;
+  }
+  return "—";
+}
+
 function printStockPositions(positions: StockPosition[]): void {
   if (positions.length === 0) return;
   console.log(`\n  ${c.bold("Tokenized Stocks")}\n`);
@@ -47,16 +61,10 @@ function printStockPositions(positions: StockPosition[]): void {
     const token = p.token_ticker ?? "—";
     const tokens = p.tokens.length > 16 ? p.tokens.slice(0, 16) : p.tokens;
     const shares = p.shares ?? "—";
-    let usd = "—";
-    if (p.usd_value != null) {
-      usd = `$${parseFloat(p.usd_value).toFixed(2)}`;
-    } else if (p.usd_per_token != null) {
-      usd = `$${(parseFloat(p.tokens) * parseFloat(p.usd_per_token)).toFixed(2)}`;
-    }
     console.log(
       `  ${c.cyan(p.ticker.padEnd(10))}${token.padEnd(12)}${tokens.padEnd(
         18
-      )}${String(shares).padEnd(14)}${usd}`
+      )}${String(shares).padEnd(14)}${stockUsd(p)}`
     );
   }
   console.log("");
@@ -321,9 +329,9 @@ export function registerWalletCommands(program: Command): void {
           }
           for (const p of stocks) {
             console.log(
-              `${p.token_ticker ?? p.ticker}\t${p.ticker}\t${p.tokens}\t$${
-                p.usd_value ?? "0"
-              }\tstock`
+              `${p.token_ticker ?? p.ticker}\t${p.ticker}\t${
+                p.tokens
+              }\t${stockUsd(p)}\tstock`
             );
           }
         }
