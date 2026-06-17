@@ -559,9 +559,36 @@ export interface TokenInfo {
   hasVirtualToken?: boolean;
 }
 
+// A tokenized-stock holding from the Treasures portfolio, surfaced alongside
+// on-chain tokens. All money/amount fields are strings and independently
+// nullable — treat any null as "unknown", never "0".
+export interface StockPosition {
+  ticker: string;
+  token_ticker: string | null;
+  chain: "sol" | "eth";
+  protocol: string;
+  token_address: string | null;
+  tokens: string;
+  shares: string | null;
+  usd_per_token: string | null;
+  usd_per_share: string | null;
+  usd_value: string | null;
+  shares_internal_only: string | null;
+  avg_entry_price_per_share: string | null;
+  unrealized_pnl: string | null;
+}
+
 export interface AgentAssetsResponse {
   message: string;
-  data: { tokens: TokenInfo[]; pageKey: null };
+  data: {
+    tokens: TokenInfo[];
+    pageKey: null;
+    stocks: {
+      positions: StockPosition[];
+      asOf: number | null;
+      isCached: boolean;
+    };
+  };
 }
 
 export const CHAIN_NETWORK_MAP: Record<number, string> = {
@@ -841,6 +868,7 @@ export class AgentApi {
       subject: string;
       textBody: string;
       htmlBody?: string;
+      category?: string;
     }
   ): Promise<ComposeEmailResponse> {
     const res = await this.client.post<{ data: ComposeEmailResponse }>(

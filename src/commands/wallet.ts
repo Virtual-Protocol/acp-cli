@@ -12,7 +12,7 @@ import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import { getWalletAddress, getSolanaWalletAddress } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { getAgentId, getActiveWallet } from "../lib/config";
-import { CHAIN_NETWORK_MAP } from "../lib/api/agent";
+import { CHAIN_NETWORK_MAP, type StockPosition } from "../lib/api/agent";
 import { CliError } from "../lib/errors";
 import { assertSponsoredChainId, solanaChainId } from "../lib/chains";
 import { c } from "../lib/color";
@@ -31,6 +31,36 @@ const ACCOUNT_ROLE_BY_NAME: Record<string, AccountRole> = {
   readonly_signer: AccountRole.READONLY_SIGNER,
   readonly: AccountRole.READONLY,
 };
+
+// Render Treasures tokenized-stock holdings as a table beneath the on-chain
+// token list. `usd_value` is precomputed by Treasures, so prefer it; fall back
+// to tokens × usd_per_token, and show "—" when neither is available (null means
+// "unknown", never 0).
+function printStockPositions(positions: StockPosition[]): void {
+  if (positions.length === 0) return;
+  console.log(`\n  ${c.bold("Tokenized Stocks")}\n`);
+  const header = `  ${c.dim("TICKER".padEnd(10))}${c.dim(
+    "TOKEN".padEnd(12)
+  )}${c.dim("TOKENS".padEnd(18))}${c.dim("SHARES".padEnd(14))}${c.dim("USD")}`;
+  console.log(header);
+  for (const p of positions) {
+    const token = p.token_ticker ?? "—";
+    const tokens = p.tokens.length > 16 ? p.tokens.slice(0, 16) : p.tokens;
+    const shares = p.shares ?? "—";
+    let usd = "—";
+    if (p.usd_value != null) {
+      usd = `$${parseFloat(p.usd_value).toFixed(2)}`;
+    } else if (p.usd_per_token != null) {
+      usd = `$${(parseFloat(p.tokens) * parseFloat(p.usd_per_token)).toFixed(2)}`;
+    }
+    console.log(
+      `  ${c.cyan(p.ticker.padEnd(10))}${token.padEnd(12)}${tokens.padEnd(
+        18
+      )}${String(shares).padEnd(14)}${usd}`
+    );
+  }
+  console.log("");
+}
 
 // Instruction data accepts hex (0x…) or base64.
 function decodeIxData(data: string): Uint8Array {
@@ -225,6 +255,9 @@ export function registerWalletCommands(program: Command): void {
         const { agentApi } = await getClient();
         const assets = await agentApi.getAgentAssets(agentId, [network]);
         const tokens = assets.data.tokens;
+        // The Treasures portfolio spans both chains and isn't tied to the
+        // queried network, so surface every position regardless of chain-id.
+        const stocks = assets.data.stocks.positions;
 
         if (json) {
           outputResult(json, {
@@ -232,6 +265,7 @@ export function registerWalletCommands(program: Command): void {
             network,
             address: walletAddress,
             tokens,
+            stocks,
           });
           return;
         }
@@ -268,6 +302,7 @@ export function registerWalletCommands(program: Command): void {
             }
             console.log("");
           }
+          printStockPositions(stocks);
         } else {
           console.log("TOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
           for (const t of tokens) {
@@ -282,6 +317,13 @@ export function registerWalletCommands(program: Command): void {
               `${symbol}\t${name}\t${balance}\t$${value.toFixed(2)}\t${
                 t.tokenAddress ?? "native"
               }`
+            );
+          }
+          for (const p of stocks) {
+            console.log(
+              `${p.token_ticker ?? p.ticker}\t${p.ticker}\t${p.tokens}\t$${
+                p.usd_value ?? "0"
+              }\tstock`
             );
           }
         }
@@ -482,9 +524,10 @@ export function registerWalletCommands(program: Command): void {
         const { agentApi } = await getClient();
         const assets = await agentApi.getAgentAssets(agentId, [network]);
         const tokens = assets.data.tokens;
+        const stocks = assets.data.stocks.positions;
 
         if (json) {
-          outputResult(json, { chainId, network, address, tokens });
+          outputResult(json, { chainId, network, address, tokens, stocks });
           return;
         }
 
@@ -502,6 +545,7 @@ export function registerWalletCommands(program: Command): void {
           }
           console.log("");
         }
+        printStockPositions(stocks);
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
