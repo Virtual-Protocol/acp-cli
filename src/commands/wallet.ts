@@ -13,7 +13,7 @@ import { getWalletAddress, getSolanaWalletAddress } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { getAgentId, getActiveWallet } from "../lib/config";
 import { CHAIN_NETWORK_MAP } from "../lib/api/agent";
-import type { TokenInfo } from "../lib/api/agent";
+import type { StockPosition, TokenInfo } from "../lib/api/agent";
 import { CliError } from "../lib/errors";
 import {
   assertSponsoredChainId,
@@ -38,6 +38,61 @@ const ACCOUNT_ROLE_BY_NAME: Record<string, AccountRole> = {
   readonly_signer: AccountRole.READONLY_SIGNER,
   readonly: AccountRole.READONLY,
 };
+
+// Render Treasures tokenized-stock holdings as a table beneath the on-chain
+// token list. `usd_value` is precomputed by Treasures, so prefer it; fall back
+// to tokens × usd_per_token, and show "—" when neither is available (null means
+// "unknown", never 0).
+// USD for a stock position: prefer Treasures' precomputed usd_value, fall back
+// to tokens × usd_per_token, and return "—" when neither is known (null means
+// "unknown", never 0). Shared by the TTY table and the piped output so both
+// agree.
+function stockUsd(p: StockPosition): string {
+  if (p.usd_value != null) {
+    return `$${parseFloat(p.usd_value).toFixed(2)}`;
+  }
+  if (p.usd_per_token != null) {
+    return `$${(parseFloat(p.tokens) * parseFloat(p.usd_per_token)).toFixed(2)}`;
+  }
+  return "—";
+}
+
+// A nullable USD amount → "$12.34", or "—" when unknown (null ≠ 0).
+function usd(v: string | null): string {
+  return v == null ? "—" : `$${parseFloat(v).toFixed(2)}`;
+}
+
+// Unrealized PnL with an explicit sign so gains/losses read at a glance.
+function pnl(v: string | null): string {
+  if (v == null) return "—";
+  const n = parseFloat(v);
+  return `${n < 0 ? "-" : "+"}$${Math.abs(n).toFixed(2)}`;
+}
+
+// Truncate a long decimal string to keep table columns aligned.
+function clip(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+function printStockPositions(positions: StockPosition[]): void {
+  if (positions.length === 0) return;
+  console.log(`\n  ${c.bold("Tokenized Stocks")}\n`);
+  const header =
+    `  ${c.dim("TICKER".padEnd(8))}${c.dim("TOKENS".padEnd(14))}` +
+    `${c.dim("SHARES".padEnd(13))}${c.dim("$/SHARE".padEnd(11))}` +
+    `${c.dim("$/TOKEN".padEnd(11))}${c.dim("AVG ENTRY".padEnd(11))}` +
+    `${c.dim("VALUE".padEnd(11))}${c.dim("PnL")}`;
+  console.log(header);
+  for (const p of positions) {
+    console.log(
+      `  ${c.cyan(p.ticker.padEnd(8))}${clip(p.tokens, 12).padEnd(14)}` +
+        `${clip(p.shares ?? "—", 11).padEnd(13)}${usd(p.usd_per_share).padEnd(11)}` +
+        `${usd(p.usd_per_token).padEnd(11)}${usd(p.avg_entry_price_per_share).padEnd(11)}` +
+        `${stockUsd(p).padEnd(11)}${pnl(p.unrealized_pnl)}`
+    );
+  }
+  console.log("");
+}
 
 // Instruction data accepts hex (0x…) or base64.
 function decodeIxData(data: string): Uint8Array {
@@ -119,11 +174,21 @@ function renderBalances(opts: {
   networks: string[]; // queried order; drives grouping + the "Checked" line
   networkToChainId: Map<string, number>;
   tokens: TokenInfo[];
+  // Tokenized-stock holdings span both chains and aren't tied to a queried
+  // network, so they render once, after the per-network token tables.
+  stocks?: StockPosition[];
   evmAddress?: string;
   solAddress?: string;
 }): void {
-  const { json, networks, networkToChainId, tokens, evmAddress, solAddress } =
-    opts;
+  const {
+    json,
+    networks,
+    networkToChainId,
+    tokens,
+    stocks = [],
+    evmAddress,
+    solAddress,
+  } = opts;
   const single = networks.length === 1;
   const nativeFor: NativeResolver = (network) => {
     const id = networkToChainId.get(network);
@@ -135,7 +200,7 @@ function renderBalances(opts: {
       const network = networks[0];
       const chainId = networkToChainId.get(network);
       const address = isSolanaChainId(chainId ?? -1) ? solAddress : evmAddress;
-      outputResult(json, { chainId, network, address, tokens });
+      outputResult(json, { chainId, network, address, tokens, stocks });
     } else {
       outputResult(json, {
         chains: networks.map((network) => ({
@@ -145,6 +210,7 @@ function renderBalances(opts: {
         address: evmAddress,
         solanaAddress: solAddress,
         tokens,
+        stocks,
       });
     }
     return;
@@ -192,15 +258,24 @@ function renderBalances(opts: {
         `  ${c.dim(`Checked: ${networks.join(", ")} (${networks.length} chains)`)}\n`
       );
     }
+    // Stocks span both chains — print the table once, after the token output.
+    printStockPositions(stocks);
   } else {
     console.log("NETWORK\tTOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
     for (const t of tokens) {
-      const { symbol, name, balance, usd, contract } = formatToken(
+      const { symbol, name, balance, usd: usdValue, contract } = formatToken(
         t,
         nativeFor(t.network)
       );
       console.log(
-        `${t.network}\t${symbol}\t${name}\t${balance}\t${usd}\t${contract}`
+        `${t.network}\t${symbol}\t${name}\t${balance}\t${usdValue}\t${contract}`
+      );
+    }
+    for (const p of stocks) {
+      console.log(
+        `${p.token_ticker ?? p.ticker}\t${p.ticker}\t${p.tokens}\t` +
+          `${p.shares ?? "—"}\t${usd(p.usd_per_share)}\t${usd(p.usd_per_token)}\t` +
+          `${usd(p.avg_entry_price_per_share)}\t${stockUsd(p)}\t${pnl(p.unrealized_pnl)}\tstock`
       );
     }
   }
@@ -434,12 +509,16 @@ export function registerWalletCommands(program: Command): void {
         const { agentApi } = await getClient();
         const assets = await agentApi.getAgentAssets(agentId, networks);
         const tokens = assets.data.tokens;
+        // The Treasures portfolio spans both chains and isn't tied to the
+        // queried network, so surface every position regardless of chain-id.
+        const stocks = assets.data.stocks.positions;
 
         renderBalances({
           json,
           networks,
           networkToChainId,
           tokens,
+          stocks,
           evmAddress: walletAddress,
           solAddress,
         });
@@ -641,12 +720,14 @@ export function registerWalletCommands(program: Command): void {
         const { agentApi } = await getClient();
         const assets = await agentApi.getAgentAssets(agentId, [network]);
         const tokens = assets.data.tokens;
+        const stocks = assets.data.stocks.positions;
 
         renderBalances({
           json,
           networks: [network],
           networkToChainId: new Map([[network, chainId]]),
           tokens,
+          stocks,
           solAddress: address,
         });
       } catch (err) {
