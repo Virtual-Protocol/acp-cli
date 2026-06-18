@@ -435,7 +435,11 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
       (plan.direction && plan.route ? ` (${plan.direction} via ${plan.route})` : "")
   );
   const result = opts.dryRun
-    ? await runTradeLoop(apiUrl, token, await createProviderAdapter(), plan, json)
+    ? // A dry run signs and submits nothing — the server returns a `preview`
+      // action and runTradeLoop returns immediately — so skip building the
+      // signer entirely. This lets `--dry-run` work on agents with no signer
+      // registered (and avoids the approval gate's signer requirement).
+      await runTradeLoop(apiUrl, token, undefined, plan, json)
     : await withApprovalGate(
         (provider) => runTradeLoop(apiUrl, token, provider, plan, json),
         { json }
@@ -446,10 +450,24 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
 export async function runTradeLoop(
   url: string,
   token: string,
-  provider: IEvmProviderAdapter,
+  // Undefined for a dry run: the server returns a `preview` action that returns
+  // before any send/sign, so no signer is needed. Execution branches assert it.
+  provider: IEvmProviderAdapter | undefined,
   plan: PlanResponse,
   json: boolean
 ): Promise<Record<string, unknown>> {
+  // Any branch that actually signs/broadcasts requires the signer; a dry run
+  // never reaches them. Fail loud rather than deref undefined if it ever does.
+  const requireSigner = (): IEvmProviderAdapter => {
+    if (!provider) {
+      throw new CliError(
+        "A signer is required to execute this trade.",
+        "NO_SIGNER",
+        "Run `acp agent add-signer` to register a signing key.",
+      );
+    }
+    return provider;
+  };
   let action = plan.action;
   let step = plan.step;
   // Created on the first Solana sign action and reused for the trade's
@@ -483,7 +501,7 @@ export async function runTradeLoop(
     if (action.kind === "send") {
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
-        const txHash = await provider.sendTransaction(action.chainId, {
+        const txHash = await requireSigner().sendTransaction(action.chainId, {
           to: action.to as `0x${string}`,
           data: action.data as `0x${string}`,
           ...(action.value && action.value !== "0"
@@ -524,9 +542,9 @@ export async function runTradeLoop(
             signature = await solSigner.signTransactionViaPrivy(action.txBase64 ?? "");
           }
         } else if (action.sigType === "eip712") {
-          signature = await provider.signTypedData(action.chainId, action.typedData);
+          signature = await requireSigner().signTypedData(action.chainId, action.typedData);
         } else {
-          signature = await provider.signMessage(action.chainId, action.message ?? "");
+          signature = await requireSigner().signMessage(action.chainId, action.message ?? "");
         }
         nextBody = { tradeId: plan.tradeId, step, signature };
       } catch (err) {
