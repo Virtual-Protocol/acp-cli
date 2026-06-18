@@ -50,21 +50,38 @@ function stockUsd(p: StockPosition): string {
   return "—";
 }
 
+// A nullable USD amount → "$12.34", or "—" when unknown (null ≠ 0).
+function usd(v: string | null): string {
+  return v == null ? "—" : `$${parseFloat(v).toFixed(2)}`;
+}
+
+// Unrealized PnL with an explicit sign so gains/losses read at a glance.
+function pnl(v: string | null): string {
+  if (v == null) return "—";
+  const n = parseFloat(v);
+  return `${n < 0 ? "-" : "+"}$${Math.abs(n).toFixed(2)}`;
+}
+
+// Truncate a long decimal string to keep table columns aligned.
+function clip(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max) : s;
+}
+
 function printStockPositions(positions: StockPosition[]): void {
   if (positions.length === 0) return;
   console.log(`\n  ${c.bold("Tokenized Stocks")}\n`);
-  const header = `  ${c.dim("TICKER".padEnd(10))}${c.dim(
-    "TOKEN".padEnd(12)
-  )}${c.dim("TOKENS".padEnd(18))}${c.dim("SHARES".padEnd(14))}${c.dim("USD")}`;
+  const header =
+    `  ${c.dim("TICKER".padEnd(8))}${c.dim("TOKENS".padEnd(14))}` +
+    `${c.dim("SHARES".padEnd(13))}${c.dim("$/SHARE".padEnd(11))}` +
+    `${c.dim("$/TOKEN".padEnd(11))}${c.dim("AVG ENTRY".padEnd(11))}` +
+    `${c.dim("VALUE".padEnd(11))}${c.dim("PnL")}`;
   console.log(header);
   for (const p of positions) {
-    const token = p.token_ticker ?? "—";
-    const tokens = p.tokens.length > 16 ? p.tokens.slice(0, 16) : p.tokens;
-    const shares = p.shares ?? "—";
     console.log(
-      `  ${c.cyan(p.ticker.padEnd(10))}${token.padEnd(12)}${tokens.padEnd(
-        18
-      )}${String(shares).padEnd(14)}${stockUsd(p)}`
+      `  ${c.cyan(p.ticker.padEnd(8))}${clip(p.tokens, 12).padEnd(14)}` +
+        `${clip(p.shares ?? "—", 11).padEnd(13)}${usd(p.usd_per_share).padEnd(11)}` +
+        `${usd(p.usd_per_token).padEnd(11)}${usd(p.avg_entry_price_per_share).padEnd(11)}` +
+        `${stockUsd(p).padEnd(11)}${pnl(p.unrealized_pnl)}`
     );
   }
   console.log("");
@@ -329,9 +346,9 @@ export function registerWalletCommands(program: Command): void {
           }
           for (const p of stocks) {
             console.log(
-              `${p.token_ticker ?? p.ticker}\t${p.ticker}\t${
-                p.tokens
-              }\t${stockUsd(p)}\tstock`
+              `${p.token_ticker ?? p.ticker}\t${p.ticker}\t${p.tokens}\t` +
+                `${p.shares ?? "—"}\t${usd(p.usd_per_share)}\t${usd(p.usd_per_token)}\t` +
+                `${usd(p.avg_entry_price_per_share)}\t${stockUsd(p)}\t${pnl(p.unrealized_pnl)}\tstock`
             );
           }
         }
