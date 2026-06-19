@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
 import {
@@ -59,7 +59,20 @@ function loadConfig(): Config {
 
 function saveConfig(config: Config): void {
   mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
+  const tempPath = `${CONFIG_PATH}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    writeFileSync(tempPath, JSON.stringify(config, null, 2) + "\n", {
+      mode: 0o600,
+    });
+    renameSync(tempPath, CONFIG_PATH);
+  } catch (err) {
+    try {
+      rmSync(tempPath, { force: true });
+    } catch {
+      // best effort cleanup
+    }
+    throw err;
+  }
 }
 
 function isKeychainUnavailable(err: unknown): boolean {
