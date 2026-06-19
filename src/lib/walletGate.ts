@@ -13,6 +13,10 @@ interface ApprovalGateOptions {
   json?: boolean;
 }
 
+interface ApprovalGateOptions {
+  json?: boolean;
+}
+
 export async function withApprovalGate<T>(
   fn: (provider: IEvmProviderAdapter) => Promise<T>,
   opts: ApprovalGateOptions = {}

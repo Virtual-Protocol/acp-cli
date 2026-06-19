@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import type { AcpAgentDetail } from "@virtuals-protocol/acp-node-v2";
+import type { AcpAgentDetail, BrowseMode } from "@virtuals-protocol/acp-node-v2";
 import { isJson, outputError, isTTY } from "../lib/output";
 import {
   createAgentFromConfig,
@@ -105,6 +105,16 @@ export function registerBrowseCommand(program: Command): void {
       "Filter by online status: all, online, offline"
     )
     .option("--cluster <name>", "Filter by cluster")
+    .option(
+      "--mode <mode>",
+      "Result ordering: relevance (default), recency (newest first), mixed (proven + new agents)",
+      "relevance"
+    )
+    .option(
+      "--mix-new-count <n>",
+      "MIXED mode only: how many new agents to interleave (default 5)",
+      parseInt
+    )
     .option("--legacy", "Search legacy (openclaw-cli) agents instead of v2")
     .action(async (query, opts, cmd) => {
       if (!query) {
@@ -113,6 +123,15 @@ export function registerBrowseCommand(program: Command): void {
       }
 
       const json = isJson(cmd);
+
+      const validModes = ["relevance", "recency", "mixed"];
+      if (opts.mode && !validModes.includes(opts.mode)) {
+        outputError(
+          json,
+          `Invalid --mode '${opts.mode}'. Allowed: ${validModes.join(", ")}`
+        );
+        return;
+      }
 
       try {
         if (opts.legacy) {
@@ -178,6 +197,8 @@ export function registerBrowseCommand(program: Command): void {
           topK: opts.topK,
           isOnline: opts.online,
           cluster: opts.cluster,
+          browseMode: opts.mode as BrowseMode,
+          mixNewCount: opts.mode === "mixed" ? opts.mixNewCount : undefined,
         });
 
         if (json) {
@@ -192,7 +213,10 @@ export function registerBrowseCommand(program: Command): void {
 
         if (isTTY()) {
           for (const a of data) {
-            console.log(`  ${c.bold("Name:")}           ${c.cyan(a.name)}`);
+            const newBadge = a.isNew ? `${c.green(c.bold("[NEW]"))} ` : "";
+            console.log(
+              `  ${c.bold("Name:")}           ${newBadge}${c.cyan(a.name)}`
+            );
             console.log(`  ${c.bold("Description:")}    ${a.description}`);
             console.log(
               `  ${c.bold("Wallet:")}         ${c.dim(a.walletAddress)}`
@@ -240,10 +264,10 @@ export function registerBrowseCommand(program: Command): void {
           }
           console.log(`\n${c.dim(`${data.length} agent(s) found.`)}`);
         } else {
-          console.log("NAME\tWALLET\tOFFERINGS\tRESOURCES");
+          console.log("NAME\tWALLET\tOFFERINGS\tRESOURCES\tISNEW");
           for (const a of data) {
             console.log(
-              `${a.name}\t${a.walletAddress}\t${a.offerings.length}\t${a.resources.length}`
+              `${a.name}\t${a.walletAddress}\t${a.offerings.length}\t${a.resources.length}\t${a.isNew ? "new" : ""}`
             );
           }
         }
