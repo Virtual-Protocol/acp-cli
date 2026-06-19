@@ -545,11 +545,25 @@ export function registerClientCommands(program: Command): void {
         ]);
         const txnHash = Array.isArray(result) ? result[0] : result;
 
-        const message = await agentApi.confirmJobFeedback(
-          chainId,
-          opts.jobId,
-          txnHash
-        );
+        let message: string | undefined;
+        try {
+          message = await agentApi.confirmJobFeedback(
+            chainId,
+            opts.jobId,
+            txnHash
+          );
+        } catch (err) {
+          const errMessage = err instanceof Error ? err.message : String(err);
+          throw new CliError(
+            `Backend confirmation failed after review transaction was broadcast. Tx hash: ${txnHash}. ${errMessage}`,
+            "API_ERROR",
+            "The on-chain transaction was already sent. Keep the Tx Hash and retry or contact support with it.",
+            {
+              action: "client review",
+              txnHash,
+            }
+          );
+        }
 
         if (json) {
           outputResult(json, {

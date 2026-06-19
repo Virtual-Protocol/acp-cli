@@ -39,6 +39,11 @@ export function outputError(
     if (isCliErr) {
       payload.code = errOrMessage.code;
       if (errOrMessage.recovery) payload.recovery = errOrMessage.recovery;
+      if (errOrMessage.details) {
+        for (const [key, value] of Object.entries(errOrMessage.details)) {
+          payload[key] = String(value);
+        }
+      }
     }
     process.stdout.write(JSON.stringify(payload) + "\n");
   } else {
