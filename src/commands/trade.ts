@@ -71,6 +71,24 @@ interface SendAction {
   expectedTxKind?: string;
   timeoutMs?: number;
 }
+// One call inside a SendBatchAction (mirrors trading-agent's BatchCall).
+interface BatchCall {
+  to: string;
+  data: string;
+  value: string;
+  label?: string;
+  kind?: string;
+}
+// Atomic multi-call bundle — executed as a single EIP-5792 sendCalls (one
+// signature, paymaster-sponsored), returning one txHash. Used to fuse the
+// platform fee into the trade's first on-chain tx.
+interface SendBatchAction {
+  kind: "sendBatch";
+  label: string;
+  chainId: number;
+  calls: BatchCall[];
+  timeoutMs?: number;
+}
 interface SignAction {
   kind: "sign";
   label: string;
@@ -170,6 +188,7 @@ interface PreviewAction {
 }
 type Action =
   | SendAction
+  | SendBatchAction
   | SignAction
   | WaitAction
   | DoneAction
@@ -269,6 +288,9 @@ export function registerTradeCommands(program: Command): void {
     .option("--isolated", "Use isolated margin when setting leverage", false)
     .option("--reduce-only", "Only reduce an existing perp position", false)
     .option("--dry-run", "Preview the trade (route, size, margin, fees) without signing or submitting anything", false)
+    .option("--tax-bps <bps>", "Platform fee in basis points (50 = 0.5%); overrides ACP_TRADE_TAX_BPS")
+    .option("--tax-treasury <addr>", "EVM treasury (0x…) the platform fee is sent to; overrides ACP_TRADE_TAX_TREASURY")
+    .option("--tax-treasury-sol <addr>", "Solana treasury (base58) the platform fee is sent to; overrides ACP_TRADE_TAX_TREASURY_SOL")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -357,10 +379,29 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   const owner = getWalletAddress() as Address;
   const provider = await createProviderAdapter();
 
-  const body: Record<string, unknown> = { walletAddress: owner };
+  // This CLI executes EIP-5792 sendCalls bundles, so the backend may fuse the
+  // platform fee atomically into the trade's first tx (vs a standalone fee tx).
+  const body: Record<string, unknown> = { walletAddress: owner, supportsBatch: true };
   const fwd = (key: string, v: unknown) => {
     if (v !== undefined) body[key] = v;
   };
+
+  // Partner identity — the existing acp-cli convention (see api/agent.ts, which
+  // stamps it on tokenize/prepareLaunch). The backend VALIDATES this to scope the
+  // platform fee to the intended partner: the fee is applied only when partnerId
+  // matches the partner the backend is configured to tax.
+  if (process.env.PARTNER_ID) body.partnerId = process.env.PARTNER_ID;
+
+  // Optional per-trade fee override. The backend uses these only if the partner
+  // is the taxed one; otherwise it falls back to the backend's config. The rate
+  // `taxBps` turns the fee on; a --tax-* flag overrides the ACP_TRADE_TAX_* env.
+  const taxBpsRaw = opts.taxBps ?? process.env.ACP_TRADE_TAX_BPS;
+  if (taxBpsRaw !== undefined && taxBpsRaw !== "") {
+    const bps = Number(taxBpsRaw);
+    if (Number.isFinite(bps) && bps > 0) body.taxBps = bps;
+  }
+  fwd("taxTreasury", opts.taxTreasury ?? process.env.ACP_TRADE_TAX_TREASURY);
+  fwd("taxTreasurySol", opts.taxTreasurySol ?? process.env.ACP_TRADE_TAX_TREASURY_SOL);
   fwd("tokenIn", opts.tokenIn);
   fwd("chainIn", opts.chainIn);
   fwd("amountIn", opts.amountIn);
@@ -485,6 +526,29 @@ export async function runTradeLoop(
             ? { value: BigInt(action.value) }
             : {}),
         });
+        nextBody = { tradeId: plan.tradeId, step, txHash };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        nextBody = {
+          tradeId: plan.tradeId,
+          step,
+          error: { code: "TX_FAILED", message },
+        };
+      }
+    } else if (action.kind === "sendBatch") {
+      // Atomic bundle → one EIP-5792 sendCalls (the 7702 smart wallet executes
+      // all calls in a single tx with one signature). Reports one txHash back.
+      progress(json, `[step ${step + 1}] ${action.label}`);
+      try {
+        const res = await provider.sendCalls(
+          action.chainId,
+          action.calls.map((c) => ({
+            to: c.to as `0x${string}`,
+            data: c.data as `0x${string}`,
+            ...(c.value && c.value !== "0" ? { value: BigInt(c.value) } : {}),
+          }))
+        );
+        const txHash = Array.isArray(res) ? res[0] : res;
         nextBody = { tradeId: plan.tradeId, step, txHash };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
