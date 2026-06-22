@@ -143,7 +143,7 @@ export function registerJobCommands(program: Command): void {
 
           const agent = await createAgentFromConfig();
           const status = LegacyBuyerAdapter.phaseToStatus(legacyJob.phase);
-          const deliverable = legacyJob.getDeliverable();
+          const deliverable = await legacyJob.getDeliverable();
           const budget = legacyJob.price;
 
           const fundRequestMemo = legacyJob.memos.find(
@@ -350,7 +350,7 @@ export function registerJobCommands(program: Command): void {
               const tools = legacyAvailableTools(job.phase);
               const actionable = tools.filter((t) => t !== "wait");
 
-              const deliverable = job.getDeliverable();
+              const deliverable = await job.getDeliverable();
               const budget = job.price;
               const chainId = legacyChainId ?? 84532;
 
