@@ -693,6 +693,10 @@ Each event line includes the job ID, chain ID, status, your roles, available act
 | **1337**    | **1337**    | **Spot** order on the Hyperliquid order book |
 | **1337**    | EVM         | **Withdraw** USDC from Hyperliquid           |
 | **Solana**  | EVM         | **Swap** out of Solana (USDC@sol → an EVM token) |
+| EVM         | **Solana**  | **Buy SOL / SPL** — delivered to your agent's Solana wallet |
+| **Solana**  | **Solana**  | **Swap** on Solana (e.g. USDC@sol → SOL)     |
+
+> **`--chain-out` is optional — it defaults to `--chain-in`.** Omit it to keep the output on the source chain. Single-chain tokens infer their own chain, so `--token-out sol` routes to Solana with no `--chain-out`. A buy that lands on Solana needs no `--recipient` — it delivers to your agent's own Solana wallet automatically (pass `--recipient` only to send elsewhere).
 
 Two intents don't use the chain-pair shape:
 
@@ -735,6 +739,9 @@ acp trade --token-in usdc --chain-in 8453 --amount-in 50 --token-out virtual --c
 
 # Cross-chain swap: USDC on Ethereum → USDC on Base
 acp trade --token-in usdc --chain-in 1 --amount-in 100 --token-out usdc --chain-out 8453
+
+# Buy SOL from Base — no --chain-out (infers Solana); lands on your agent's sol wallet
+acp trade --token-in usdc --chain-in 8453 --amount-in 5 --token-out sol
 ```
 
 Supported chains: **Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), Solana** (+ Base Sepolia testnet). Token symbols `eth`, `weth`, `usdc`, `usdt`, `sol`, `virtual` are resolved automatically; anything else is taken as a token address.
