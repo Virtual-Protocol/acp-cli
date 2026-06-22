@@ -698,6 +698,8 @@ Each event line includes the job ID, chain ID, status, your roles, available act
 
 > **`--chain-out` is optional — it defaults to `--chain-in`.** Omit it to keep the output on the source chain. Single-chain tokens infer their own chain, so `--token-out sol` routes to Solana with no `--chain-out`. A buy that lands on Solana needs no `--recipient` — it delivers to your agent's own Solana wallet automatically (pass `--recipient` only to send elsewhere).
 
+> **One command runs the whole route.** You only ever state the start and end (`--token-in`/`--chain-in` → `--token-out`/`--chain-out`); the backend decomposes it into as many legs as the route needs and the CLI signs each in turn, blocking until the last one settles. `PURR@HL → ETH@Base` is one command that sells on HL, withdraws, bridges, and swaps — there's no need to chain a `deposit` then a `spot order`, or a `bridge` then a `swap`, yourself. A multi-leg route can take a few minutes; that's the legs settling, not a hang.
+
 Two intents don't use the chain-pair shape:
 
 - **Perps** — `--side long|short` (with `--token`). Leveraged positions on **crypto, stocks/equities, FX/currencies, and commodities**.

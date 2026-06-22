@@ -223,6 +223,8 @@ Intent routing (chain `1337` = Hyperliquid):
 
 > **`--chain-out` is optional — it defaults to `--chain-in`** (omit it to keep the output on the source chain). Single-chain tokens infer their own chain: `--token-out sol` resolves to Solana even with no `--chain-out`. A buy delivering to Solana (`--token-out sol`, or any SPL) needs no `--recipient` — the backend derives it from the agent's own Solana wallet; pass `--recipient` only to deliver elsewhere.
 
+> **One command does the whole route — never chain trades yourself.** A single `acp trade` is decomposed by the backend into however many legs the route needs and the CLI signs each in sequence, blocking until the **last** leg settles. Asking for `PURR@HL → ETH@Base` runs four legs in one call (sell PURR on HL → spot→perp transfer → withdraw to L1 → bridge+swap to ETH on Base); `VIRTUAL@Base → AAPL` bridges then buys. **Express the trade by its start and end (`--token-in`/`--chain-in` → `--token-out`/`--chain-out`) and let one command plan the path** — do NOT issue a `deposit` then a separate `spot order`, or a `bridge` then a `swap`. (The settle wait is per the slowest leg; a multi-leg route can run minutes — keep the process alive, don't re-issue on a perceived hang.)
+
 **Tokenized stocks (spot) — buy/sell real shares, not a perp.** `acp trade --token <TICKER> --amount-usdc <usd>` buys tokenized equity (you receive the share token); `--amount-shares <n>` sells. This is **spot** (no leverage, no funding, you own the asset) — distinct from an HL equity *perp*. The backend auto-picks the venue/chain; you don't specify one. Fund a buy with USDC you already hold, or from another chain (it bridges first). A buy with no venue pinned auto-routes; sells need `--chain eth|sol` (the server can't see which chain holds your shares).
 
 > **Stock vs perp — route by FLAG, never the symbol.** `AAPL` exists as both a tokenized stock AND an HL equity perp. The companion flag decides: `--amount-usdc`/`--amount-shares` (no `--side`) → spot stock; `--side long|short` → leveraged perp. Never infer the venue from the ticker.
@@ -260,6 +262,9 @@ acp trade --token AAPL --amount-shares 0.01 --chain sol --json
 acp trade --token-in usdc --chain-in solana --amount-in 5 --token-out usdc --chain-out 8453 --json
 # Buy SOL from Base (no --chain-out → infers Solana; lands on the agent's sol wallet)
 acp trade --token-in usdc --chain-in 8453 --amount-in 5 --token-out sol --json
+# Multi-leg in ONE call: sell PURR on HL and exit to ETH on Base
+# (sell → transfer → withdraw → bridge+swap; one command, blocks until the last leg)
+acp trade --token-in PURR --chain-in 1337 --amount-in 1000 --token-out eth --chain-out 8453 --json
 
 # HL perp: market long 0.01 BTC at 5x leverage
 acp trade --side long --token BTC --size 0.01 --leverage 5 --json
