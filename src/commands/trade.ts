@@ -48,7 +48,7 @@ import type { Command } from "commander";
 import type { Address } from "viem";
 import { isJson, isTTY, outputError, outputResult } from "../lib/output";
 import { CliError, type ErrorCode } from "../lib/errors";
-import { getApiContext } from "../lib/api/client";
+import { getApiContext, forceTokenRefresh } from "../lib/api/client";
 import {
   createProviderAdapter,
   createSolanaProviderAdapter,
@@ -456,6 +456,15 @@ export async function runTradeLoop(
   plan: PlanResponse,
   json: boolean
 ): Promise<Record<string, unknown>> {
+  // The access token is captured once, but a long trade (e.g. an HL-exit's
+  // multi-minute settle wait) can outlive its TTL. On a 401, mint a fresh token
+  // and keep using it for the rest of the loop, so the trade doesn't die just
+  // because the token expired mid-flight.
+  let currentToken = token;
+  const onAuthRefresh = async (): Promise<string> => {
+    currentToken = await forceTokenRefresh(url);
+    return currentToken;
+  };
   // Any branch that actually signs/broadcasts requires the signer; a dry run
   // never reaches them. Fail loud rather than deref undefined if it ever does.
   const requireSigner = (): IEvmProviderAdapter => {
@@ -572,10 +581,11 @@ export async function runTradeLoop(
     // reported an already-completed deposit as failed.
     const next: NextResponse = await post(
       url,
-      token,
+      currentToken,
       "/trade/next",
       nextBody,
-      action.kind === "wait"
+      action.kind === "wait",
+      onAuthRefresh
     );
     action = next.action;
     step = next.step;
@@ -637,7 +647,10 @@ async function post<T>(
   token: string,
   path: string,
   body: unknown,
-  retryTransient = false
+  retryTransient = false,
+  // Called once on a 401 to mint a fresh access token (a long trade can outlive
+  // the token captured at the start). Returns the new token to retry with.
+  onAuthRefresh?: () => Promise<string>
 ): Promise<T> {
   const base = baseUrl.replace(/\/$/, "");
   // Calldata to sign flows back over this connection, so refuse plaintext: a
@@ -649,6 +662,8 @@ async function post<T>(
       "The ACP API base URL must be https://."
     );
   }
+  let tok = token;
+  let refreshedAuth = false;
   for (let attempt = 0; ; attempt++) {
     const canRetry = retryTransient && attempt < TRANSIENT_RETRY_DELAYS_MS.length;
     let res: Response;
@@ -657,7 +672,7 @@ async function post<T>(
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${token}`,
+          authorization: `Bearer ${tok}`,
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -679,6 +694,14 @@ async function post<T>(
         );
       }
       throw err;
+    }
+    // Token expired mid-trade → refresh once and retry with the new token. Not
+    // a transient retry, so it doesn't consume a transient slot.
+    if (res.status === 401 && onAuthRefresh && !refreshedAuth) {
+      tok = await onAuthRefresh();
+      refreshedAuth = true;
+      attempt--;
+      continue;
     }
     if (!res.ok) {
       if (canRetry && TRANSIENT_STATUS.has(res.status)) {

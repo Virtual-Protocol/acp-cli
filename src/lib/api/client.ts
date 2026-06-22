@@ -154,6 +154,36 @@ async function resolveToken(apiUrl: string): Promise<string> {
   return result.token;
 }
 
+/**
+ * Force a token refresh via the stored refresh token, regardless of local expiry.
+ * For mid-trade 401s: a long-running trade can outlive its access token (the
+ * loop captures it once), and the local expiry check can disagree with the
+ * server, so re-resolving isn't enough — mint a fresh one unconditionally and
+ * persist it. Returns the new access token.
+ */
+export async function forceTokenRefresh(apiUrl: string): Promise<string> {
+  const ownerWallet = getCurrentOwnerWallet();
+  const refreshToken = await getRefreshToken(ownerWallet);
+  if (!refreshToken) {
+    throw new CliError(
+      "Session expired.",
+      "NOT_AUTHENTICATED",
+      "Run `acp configure` to re-authenticate.",
+    );
+  }
+  const authApi = new AuthApi(new ApiClient(apiUrl));
+  const result = await authApi.refreshCliToken(refreshToken);
+  if (!result) {
+    throw new CliError(
+      "Session expired.",
+      "NOT_AUTHENTICATED",
+      "Run `acp configure` to re-authenticate.",
+    );
+  }
+  await setTokens(result.token, result.refreshToken, ownerWallet);
+  return result.token;
+}
+
 export async function getClient(unauthenticated?: boolean): Promise<{
   agentApi: AgentApi;
   authApi: AuthApi;
