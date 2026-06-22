@@ -216,8 +216,14 @@ Intent routing (chain `1337` = Hyperliquid):
 | **1337** | **1337**  | **Spot** order on the HL order book        |
 | **1337** | EVM       | **Withdraw** USDC from Hyperliquid         |
 | **Solana** | EVM     | **Swap** out of Solana (USDC@sol → an EVM token) |
+| EVM      | **Solana** | **Buy SOL / SPL** — delivered to the agent's Solana wallet |
+| **Solana** | **Solana** | **Swap** on Solana (e.g. USDC@sol → SOL)  |
 | —        | —         | `--side long\|short` → **perp** (leveraged) |
 | —        | —         | `--token <TICKER> --amount-usdc\|--amount-shares` (NO `--side`) → **tokenized stock** (spot) |
+
+> **`--chain-out` is optional — it defaults to `--chain-in`** (omit it to keep the output on the source chain). Single-chain tokens infer their own chain: `--token-out sol` resolves to Solana even with no `--chain-out`. A buy delivering to Solana (`--token-out sol`, or any SPL) needs no `--recipient` — the backend derives it from the agent's own Solana wallet; pass `--recipient` only to deliver elsewhere.
+
+> **One command does the whole route — never chain trades yourself.** A single `acp trade` is decomposed by the backend into however many legs the route needs and the CLI signs each in sequence, blocking until the **last** leg settles. Asking for `PURR@HL → ETH@Base` runs four legs in one call (sell PURR on HL → spot→perp transfer → withdraw to L1 → bridge+swap to ETH on Base); `VIRTUAL@Base → AAPL` bridges then buys. **Express the trade by its start and end (`--token-in`/`--chain-in` → `--token-out`/`--chain-out`) and let one command plan the path** — do NOT issue a `deposit` then a separate `spot order`, or a `bridge` then a `swap`. (The settle wait is per the slowest leg; a multi-leg route can run minutes — keep the process alive, don't re-issue on a perceived hang.)
 
 **Tokenized stocks (spot) — buy/sell real shares, not a perp.** `acp trade --token <TICKER> --amount-usdc <usd>` buys tokenized equity (you receive the share token); `--amount-shares <n>` sells. This is **spot** (no leverage, no funding, you own the asset) — distinct from an HL equity *perp*. The backend auto-picks the venue/chain; you don't specify one. Fund a buy with USDC you already hold, or from another chain (it bridges first). A buy with no venue pinned auto-routes; sells need `--chain eth|sol` (the server can't see which chain holds your shares).
 
@@ -254,6 +260,11 @@ acp trade --token AAPL --token-in virtual --chain-in 8453 --amount-in 8 --json
 acp trade --token AAPL --amount-shares 0.01 --chain sol --json
 # Swap out of Solana: USDC@sol → USDC@Base
 acp trade --token-in usdc --chain-in solana --amount-in 5 --token-out usdc --chain-out 8453 --json
+# Buy SOL from Base (no --chain-out → infers Solana; lands on the agent's sol wallet)
+acp trade --token-in usdc --chain-in 8453 --amount-in 5 --token-out sol --json
+# Multi-leg in ONE call: sell PURR on HL and exit to ETH on Base
+# (sell → transfer → withdraw → bridge+swap; one command, blocks until the last leg)
+acp trade --token-in PURR --chain-in 1337 --amount-in 1000 --token-out eth --chain-out 8453 --json
 
 # HL perp: market long 0.01 BTC at 5x leverage
 acp trade --side long --token BTC --size 0.01 --leverage 5 --json
@@ -274,7 +285,7 @@ Supported swap chains: Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), 
 
 | Command | Description | Required Flags | Optional Flags |
 |---|---|---|---|
-| `trade` (swap) | Same/cross-chain token swap via DEX routing (BondingV5 / LiFi); both chains EVM | `--token-in`, `--chain-in`, `--amount-in`, `--token-out`, `--chain-out` | `--recipient`, `--slippage`, `--deadline-secs`, `--dry-run` |
+| `trade` (swap) | Same/cross-chain token swap via DEX routing (BondingV5 / LiFi). EVM↔EVM, plus Solana↔EVM and Solana↔Solana (buy/sell `sol`) | `--token-in`, `--chain-in`, `--amount-in`, `--token-out` | `--chain-out` (defaults to `--chain-in`; single-chain tokens like `sol` infer it), `--recipient` (auto-derived for Solana delivery), `--slippage`, `--deadline-secs`, `--dry-run` |
 | `trade` (HL deposit) | Bridge USDC into Hyperliquid (`--chain-out 1337`, source chain EVM) | `--token-in`, `--chain-in`, `--amount-in`, `--token-out`, `--chain-out 1337` | `--slippage`, `--dry-run` |
 | `trade` (HL withdraw) | Withdraw USDC from HL (`--chain-in 1337`, dest chain EVM) | `--token-in`, `--chain-in 1337`, `--amount-in`, `--token-out`, `--chain-out` | `--recipient`, `--dry-run` |
 | `trade` (HL perp) | Hyperliquid leveraged perp order — crypto, equities/stocks, FX/currencies, or commodities (pass the HL market symbol as `--token`) | `--side long\|short`, `--token`, `--size` | `--price`, `--leverage`, `--isolated`, `--reduce-only`, `--post-only`, `--slippage`, `--dry-run` |
