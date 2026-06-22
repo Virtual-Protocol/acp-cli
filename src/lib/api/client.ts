@@ -14,6 +14,31 @@ import {
   ACP_TESTNET_SERVER_URL,
 } from "@virtuals-protocol/acp-node-v2";
 
+// Hard ceiling on any single API request. Without it, a stalled connection
+// makes `fetch` hang forever — which froze the trade loop indefinitely mid-trade
+// (a /trade/next call never returned, so the loop neither advanced nor errored).
+// Generous enough for slow legitimate calls (e.g. a LiFi quote inside
+// /trade/next) but bounded, so a hung request fails fast and is recoverable.
+const REQUEST_TIMEOUT_MS = 120_000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new CliError(
+        `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s (no response from the server).`,
+        "TIMEOUT",
+        "Re-run the command — the request stalled rather than failing, and is safe to retry.",
+      );
+    }
+    throw err;
+  }
+}
+
 export class ApiClient {
   constructor(private baseUrl: string, private token?: string) {}
 
@@ -26,14 +51,14 @@ export class ApiClient {
     if (params) {
       for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     }
-    const res = await fetch(url.toString(), { headers: this.authHeaders() });
+    const res = await fetchWithTimeout(url.toString(), { headers: this.authHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     return res.json() as Promise<T>;
   }
 
   async post<T>(path: string, body: unknown): Promise<T> {
     const url = new URL(path, this.baseUrl);
-    const res = await fetch(url.toString(), {
+    const res = await fetchWithTimeout(url.toString(), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...this.authHeaders() },
       body: JSON.stringify(body),
@@ -44,7 +69,7 @@ export class ApiClient {
 
   async put<T>(path: string, body: unknown): Promise<T> {
     const url = new URL(path, this.baseUrl);
-    const res = await fetch(url.toString(), {
+    const res = await fetchWithTimeout(url.toString(), {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...this.authHeaders() },
       body: JSON.stringify(body),
@@ -55,7 +80,7 @@ export class ApiClient {
 
   async patch<T>(path: string, body: unknown): Promise<T> {
     const url = new URL(path, this.baseUrl);
-    const res = await fetch(url.toString(), {
+    const res = await fetchWithTimeout(url.toString(), {
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...this.authHeaders() },
       body: JSON.stringify(body),
@@ -66,7 +91,7 @@ export class ApiClient {
 
   async delete<T>(path: string): Promise<T> {
     const url = new URL(path, this.baseUrl);
-    const res = await fetch(url.toString(), {
+    const res = await fetchWithTimeout(url.toString(), {
       method: "DELETE",
       headers: this.authHeaders(),
     });
@@ -85,7 +110,7 @@ export class ApiClient {
     if (params) {
       for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     }
-    const res = await fetch(url.toString(), { headers: this.authHeaders() });
+    const res = await fetchWithTimeout(url.toString(), { headers: this.authHeaders() });
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
     return res;
   }

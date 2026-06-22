@@ -624,6 +624,13 @@ async function runStatus(json: boolean): Promise<void> {
 // whether the server consumed the original before the connection died.
 const TRANSIENT_STATUS = new Set([502, 503, 504]);
 const TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
+// Hard per-request ceiling. Without it `fetch` waits forever on a stalled
+// connection — which froze the trade loop indefinitely mid-trade (a /trade/next
+// call neither returned nor threw, so the retry below never fired and the loop
+// hung). With a timeout, a stall throws → it retries (for `wait` polls) or
+// surfaces a clean error instead of hanging. Generous for slow legitimate calls
+// (e.g. a LiFi quote inside /trade/next) but bounded.
+const REQUEST_TIMEOUT_MS = 120_000;
 
 async function post<T>(
   baseUrl: string,
@@ -653,12 +660,23 @@ async function post<T>(
           authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
-      // Network-level failure (connection reset/refused) — same class as a 502.
+      // Network-level failure (connection reset/refused) OR a timeout (stalled
+      // connection) — same class as a 502, so retry transient calls.
+      const timedOut =
+        err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
       if (canRetry) {
         await sleep(TRANSIENT_RETRY_DELAYS_MS[attempt]);
         continue;
+      }
+      if (timedOut) {
+        throw new CliError(
+          `Request to ${path} timed out after ${REQUEST_TIMEOUT_MS / 1000}s (no response).`,
+          "TIMEOUT",
+          "Re-run the command — the request stalled rather than failing, and is safe to retry.",
+        );
       }
       throw err;
     }
@@ -702,10 +720,23 @@ async function get<T>(baseUrl: string, token: string, path: string): Promise<T> 
       "The ACP API base URL must be https://."
     );
   }
-  const res = await fetch(base + path, {
-    method: "GET",
-    headers: { authorization: `Bearer ${token}` },
-  });
+  let res: Response;
+  try {
+    res = await fetch(base + path, {
+      method: "GET",
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new CliError(
+        `Request to ${path} timed out after ${REQUEST_TIMEOUT_MS / 1000}s (no response).`,
+        "TIMEOUT",
+        "Re-run the command — the request stalled rather than failing, and is safe to retry.",
+      );
+    }
+    throw err;
+  }
   if (!res.ok) {
     const raw = await res.text();
     let parsed: { error?: string; code?: string; recovery?: string } | string;
