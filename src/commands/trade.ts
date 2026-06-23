@@ -288,9 +288,8 @@ export function registerTradeCommands(program: Command): void {
     .option("--isolated", "Use isolated margin when setting leverage", false)
     .option("--reduce-only", "Only reduce an existing perp position", false)
     .option("--dry-run", "Preview the trade (route, size, margin, fees) without signing or submitting anything", false)
-    .option("--tax-bps <bps>", "Platform fee in basis points (50 = 0.5%); overrides ACP_TRADE_TAX_BPS")
-    .option("--tax-treasury <addr>", "EVM treasury (0x…) the platform fee is sent to; overrides ACP_TRADE_TAX_TREASURY")
-    .option("--tax-treasury-sol <addr>", "Solana treasury (base58) the platform fee is sent to; overrides ACP_TRADE_TAX_TREASURY_SOL")
+    .option("--tax-rate <pct>", "Platform fee rate as a percent (0.5 = 0.5%); overrides the partner's default. Requires PARTNER_ID.")
+    .option("--tax-wallet <addr>", "Treasury the platform fee is sent to (EVM 0x… or Solana base58); overrides the partner's default. Requires PARTNER_ID.")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -375,6 +374,18 @@ export function registerTradeCommands(program: Command): void {
 // detects the venue (swap / deposit / HL spot / HL perp / HL withdraw /
 // Treasures) and hands back the actions to sign. The CLI does no routing.
 async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<void> {
+  // Validate fee overrides up front (before any auth/network): per-trade fee
+  // overrides are partner-scoped, so a fee can never be set on a non-partner
+  // trade. Refuse --tax-rate/--tax-wallet unless PARTNER_ID is configured.
+  const partnerId = process.env.PARTNER_ID;
+  if ((opts.taxRate !== undefined || opts.taxWallet !== undefined) && !partnerId) {
+    throw new CliError(
+      "--tax-rate/--tax-wallet require a partner key.",
+      "VALIDATION_ERROR",
+      "Set PARTNER_ID in the environment, or drop the --tax-* flags to use the partner's default fee."
+    );
+  }
+
   const { apiUrl, token } = await getApiContext();
   const owner = getWalletAddress() as Address;
   const provider = await createProviderAdapter();
@@ -387,21 +398,33 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   };
 
   // Partner identity — the existing acp-cli convention (see api/agent.ts, which
-  // stamps it on tokenize/prepareLaunch). The backend VALIDATES this to scope the
-  // platform fee to the intended partner: the fee is applied only when partnerId
-  // matches the partner the backend is configured to tax.
-  if (process.env.PARTNER_ID) body.partnerId = process.env.PARTNER_ID;
+  // stamps PARTNER_ID on tokenize/prepareLaunch). When set, the backend taxes
+  // every trade for this partner using its configured default rate + treasury
+  // (stored in agentic-commerce-be). The flags below override those defaults.
+  // (--tax-* without PARTNER_ID was already rejected at the top of runTrade.)
+  if (partnerId) body.partnerId = partnerId;
 
-  // Optional per-trade fee override. The backend uses these only if the partner
-  // is the taxed one; otherwise it falls back to the backend's config. The rate
-  // `taxBps` turns the fee on; a --tax-* flag overrides the ACP_TRADE_TAX_* env.
-  const taxBpsRaw = opts.taxBps ?? process.env.ACP_TRADE_TAX_BPS;
-  if (taxBpsRaw !== undefined && taxBpsRaw !== "") {
-    const bps = Number(taxBpsRaw);
-    if (Number.isFinite(bps) && bps > 0) body.taxBps = bps;
+  // --tax-rate is a percent (0.5 = 0.5%); the backend takes basis points. Cap at
+  // 10% to mirror the backend's MAX_PLATFORM_TAX_BPS guard.
+  if (opts.taxRate !== undefined) {
+    const pct = Number(opts.taxRate);
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 10) {
+      throw new CliError(
+        `--tax-rate must be a percent between 0 and 10 (got "${opts.taxRate}").`,
+        "VALIDATION_ERROR",
+        "e.g. --tax-rate 0.5 for a 0.5% fee."
+      );
+    }
+    body.taxBps = Math.round(pct * 100);
   }
-  fwd("taxTreasury", opts.taxTreasury ?? process.env.ACP_TRADE_TAX_TREASURY);
-  fwd("taxTreasurySol", opts.taxTreasurySol ?? process.env.ACP_TRADE_TAX_TREASURY_SOL);
+
+  // --tax-wallet routes by address shape: EVM (0x… 20 bytes) → taxTreasury,
+  // anything else (base58) → taxTreasurySol.
+  if (opts.taxWallet !== undefined) {
+    const w = String(opts.taxWallet).trim();
+    if (/^0x[0-9a-fA-F]{40}$/.test(w)) body.taxTreasury = w;
+    else body.taxTreasurySol = w;
+  }
   fwd("tokenIn", opts.tokenIn);
   fwd("chainIn", opts.chainIn);
   fwd("amountIn", opts.amountIn);
