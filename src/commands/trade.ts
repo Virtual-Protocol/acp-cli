@@ -536,11 +536,13 @@ export async function runTradeLoop(
         };
       }
     } else if (action.kind === "sendBatch") {
-      // Atomic bundle → one EIP-5792 sendCalls (the 7702 smart wallet executes
-      // all calls in a single tx with one signature). Reports one txHash back.
+      // Atomic bundle → one tx (the 7702 smart wallet executes all calls in a
+      // single tx with one signature). Routed through sendTransaction (which
+      // accepts an array → one ERC20-sponsored EIP-5792 userOp); the SDK's
+      // sendCalls path is gasless and 400s on Base mainnet. Reports one txHash.
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
-        const res = await provider.sendCalls(
+        const txHash = await provider.sendTransaction(
           action.chainId,
           action.calls.map((c) => ({
             to: c.to as `0x${string}`,
@@ -548,7 +550,6 @@ export async function runTradeLoop(
             ...(c.value && c.value !== "0" ? { value: BigInt(c.value) } : {}),
           }))
         );
-        const txHash = Array.isArray(res) ? res[0] : res;
         nextBody = { tradeId: plan.tradeId, step, txHash };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
