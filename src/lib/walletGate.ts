@@ -13,19 +13,33 @@ interface ApprovalGateOptions {
   json?: boolean;
 }
 
-interface ApprovalGateOptions {
-  json?: boolean;
+interface SolanaApprovalGateOptions extends ApprovalGateOptions {
+  chainId: number;
 }
 
-export async function withApprovalGate<T>(
+export function withApprovalGate<T>(
   fn: (provider: IEvmProviderAdapter) => Promise<T>,
-  opts: ApprovalGateOptions = {}
+  opts?: ApprovalGateOptions
+): Promise<T>;
+
+export function withApprovalGate<T>(
+  fn: (provider: ISolanaProviderAdapter) => Promise<T>,
+  opts: SolanaApprovalGateOptions
+): Promise<T>;
+
+export async function withApprovalGate<T>(
+  fn: (provider: any) => Promise<T>,
+  opts: ApprovalGateOptions & { chainId?: number } = {}
 ): Promise<T> {
   let transport: Awaited<ReturnType<typeof createSseTransport>> | undefined;
   const restoreApprovalConsole = mirrorApprovalConsoleToStderr(opts);
   try {
-    const provider = await createProviderAdapter();
-    transport = await createSseTransport(provider, [STREAMS.WALLET]);
+    const evmProvider = await createProviderAdapter();
+    transport = await createSseTransport(evmProvider, [STREAMS.WALLET]);
+    const provider =
+      opts.chainId === undefined
+        ? evmProvider
+        : await createSolanaProviderAdapter(opts.chainId);
     return await fn(provider);
   } finally {
     if (transport) {
@@ -33,17 +47,6 @@ export async function withApprovalGate<T>(
     }
     restoreApprovalConsole();
   }
-}
-
-// Solana wallet operations sign + broadcast through the ACP server proxy /
-// Privy directly (no EVM-style approval SSE stream), so this simply builds the
-// Solana provider for the resolved chainId and runs the operation.
-export async function withSolanaWallet<T>(
-  chainId: number,
-  fn: (provider: ISolanaProviderAdapter) => Promise<T>
-): Promise<T> {
-  const provider = await createSolanaProviderAdapter(chainId);
-  return fn(provider);
 }
 
 function emitApprovalUrlToStderr(url: string): void {
