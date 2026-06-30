@@ -732,9 +732,14 @@ export function registerWalletCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const walletAddress = getWalletAddress();
         const chainId = Number(opts.chainId);
-        assertSponsoredChainId(chainId);
+        // Solana top-ups settle to the agent's Solana wallet; EVM chains use the
+        // EVM wallet and must be a sponsored chain.
+        const isSolana = isSolanaChainId(chainId);
+        const walletAddress = isSolana
+          ? await getSolanaWalletAddress()
+          : getWalletAddress();
+        if (!isSolana) assertSponsoredChainId(chainId);
 
         const { agentApi } = await getClient();
 
