@@ -5,8 +5,6 @@ import {
   buildSolTransferIx,
   buildSplTransferInstructions,
   getSplTokenBalance,
-  AccountRole,
-  type SolanaInstructionLike,
   type ISolanaProviderAdapter,
 } from "@virtuals-protocol/acp-node-v2";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
@@ -33,18 +31,13 @@ import { c } from "../lib/color";
 import { openBrowser } from "../lib/browser";
 import { selectOption, prompt } from "../lib/prompt";
 import { withApprovalGate } from "../lib/walletGate";
+import {
+  deserializeSolanaInstructions,
+  signSolanaMessage,
+  type SerializedSolanaInstruction,
+  type SolAddr,
+} from "../lib/solana";
 import qrcode from "qrcode-terminal";
-
-// Address type accepted by the SDK Solana helpers (branded), derived without a
-// direct @solana/kit import.
-type SolAddr = Parameters<typeof buildSolTransferIx>[0];
-
-const ACCOUNT_ROLE_BY_NAME: Record<string, AccountRole> = {
-  writable_signer: AccountRole.WRITABLE_SIGNER,
-  writable: AccountRole.WRITABLE,
-  readonly_signer: AccountRole.READONLY_SIGNER,
-  readonly: AccountRole.READONLY,
-};
 
 // Render Treasures tokenized-stock holdings as a table beneath the on-chain
 // token list. `usd_value` is precomputed by Treasures, so prefer it; fall back
@@ -207,14 +200,6 @@ function printHyperliquid(hl?: HyperliquidBalanceSummary | null): void {
     }
   }
   console.log("");
-}
-
-// Instruction data accepts hex (0x…) or base64.
-function decodeIxData(data: string): Uint8Array {
-  const buf = data.startsWith("0x")
-    ? Buffer.from(data.slice(2), "hex")
-    : Buffer.from(data, "base64");
-  return Uint8Array.from(buf);
 }
 
 // In --json mode the funding URL goes to stdout as JSON for machine parsing,
@@ -902,7 +887,7 @@ export function registerWalletCommands(program: Command): void {
       try {
         const chainId = solanaChainId(opts.cluster);
         const signature = await withApprovalGate(
-          (p: ISolanaProviderAdapter) => p.signMessage(opts.message),
+          (p: ISolanaProviderAdapter) => signSolanaMessage(p, opts.message),
           { chainId }
         );
         outputResult(json, { signature });
@@ -969,26 +954,10 @@ export function registerWalletCommands(program: Command): void {
       const json = isJson(cmd);
       try {
         const chainId = solanaChainId(opts.cluster);
-        const parsed = JSON.parse(opts.instructions) as Array<{
-          programAddress: string;
-          accounts: { address: string; role: string }[];
-          data: string;
-        }>;
-        const ixs: SolanaInstructionLike[] = parsed.map((ix) => ({
-          programAddress: ix.programAddress as SolAddr,
-          accounts: ix.accounts.map((a) => {
-            const role = ACCOUNT_ROLE_BY_NAME[a.role.toLowerCase()];
-            if (role === undefined) {
-              throw new CliError(
-                `Unknown account role "${a.role}".`,
-                "VALIDATION_ERROR",
-                "Use writable_signer | writable | readonly_signer | readonly."
-              );
-            }
-            return { address: a.address as SolAddr, role };
-          }),
-          data: decodeIxData(ix.data),
-        }));
+        const parsed = JSON.parse(
+          opts.instructions
+        ) as SerializedSolanaInstruction[];
+        const ixs = deserializeSolanaInstructions(parsed);
         const signature = await withApprovalGate(
           (p: ISolanaProviderAdapter) => p.sendInstructions(ixs),
           { chainId }

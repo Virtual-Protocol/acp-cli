@@ -34,7 +34,15 @@ import {
 } from "./compat/legacyBuyerAdapter";
 import { CliError } from "./errors";
 import { Chain } from "viem";
-import { base, baseSepolia, mainnet, arbitrum, optimism, polygon, bsc } from "viem/chains";
+import {
+  base,
+  baseSepolia,
+  mainnet,
+  arbitrum,
+  optimism,
+  polygon,
+  bsc,
+} from "viem/chains";
 
 export async function getWalletIdByAddress(
   walletAddress: string
@@ -76,7 +84,7 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
 
   return AcpAgent.create({
     contractAddresses: ACP_CONTRACT_ADDRESSES,
-    provider: await createProviderFromConfig(chains, serverUrl, privyAppId),
+    evmProvider: await createProviderFromConfig(chains, serverUrl, privyAppId),
     api: new AcpApiClient({ serverUrl }),
     transport: new SseTransport({ serverUrl }),
   });
@@ -191,16 +199,16 @@ export async function createSseTransport(
     provider.getSupportedChainIds(),
   ]);
 
-  const ctx = {
-    agentAddress,
+  const transport = new SseTransport({ serverUrl });
+  transport.setContext({
+    agentAddresses: { evm: agentAddress },
     contractAddresses: ACP_CONTRACT_ADDRESSES,
     providerSupportedChainIds,
-    signTypedData: (chainId, typedData) =>
-      provider.signTypedData(chainId, typedData),
-  } as Parameters<SseTransport["setContext"]>[0];
-
-  const transport = new SseTransport({ serverUrl });
-  transport.setContext(ctx);
+    signMessage: (chainId, message) => provider.signMessage(chainId, message),
+    getClientForChain: () => {
+      throw new Error("getClientForChain is unavailable in the CLI transport.");
+    },
+  });
   await transport.connect(undefined, streams);
   return transport;
 }
@@ -279,7 +287,8 @@ export async function getSolanaWalletAddress(): Promise<string> {
  * server proxy / Privy).
  */
 export async function createSolanaProviderAdapter(
-  chainId: number
+  chainId: number,
+  opts?: { sponsored?: boolean }
 ): Promise<ISolanaProviderAdapter> {
   const isTestnet = process.env.IS_TESTNET === "true";
   const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
@@ -306,5 +315,6 @@ export async function createSolanaProviderAdapter(
     chainId,
     serverUrl,
     privyAppId,
+    ...(opts?.sponsored === undefined ? {} : { sponsored: opts.sponsored }),
   });
 }

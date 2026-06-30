@@ -43,15 +43,18 @@ import {
   createAgentFromConfig,
   createProviderAdapter,
 } from "../lib/agentFactory";
-import { EvmAcpClient } from "@virtuals-protocol/acp-node-v2";
 import {
-  checkVirtualBalance,
-  sendApprove,
-  sendPreLaunch,
+  EvmAcpClient,
+  SOLANA_DEVNET_CHAIN_ID,
+  SOLANA_MAINNET_CHAIN_ID,
+} from "@virtuals-protocol/acp-node-v2";
+import {
+  tokenizeOnSolana,
+  tokenizeOnEvm,
+  convertPrebuyVirtual,
 } from "../lib/tokenize";
 import * as viemChains from "viem/chains";
-import { formatEther, parseEther } from "viem";
-import { formatChainId } from "../lib/chains";
+import { formatChainId, solanaChainId, isSolanaChainId } from "../lib/chains";
 
 // In --json mode the signer approval URL goes to stdout as JSON for machine
 // parsing, but many agent harnesses buffer or suppress stdout while passing
@@ -606,13 +609,14 @@ export function registerAgentCommands(program: Command): void {
 
       try {
         const acpAgent = await createAgentFromConfig();
-        const client = acpAgent.getClient();
-        if (!(client instanceof EvmAcpClient)) return;
 
-        const chainIds = await client.getProvider().getSupportedChainIds();
+        const chainIds = acpAgent.getSupportedChainIds();
         if (chainIds.length === 0) return;
 
         const firstChainId = chainIds[0];
+        const client = acpAgent.getClient(firstChainId);
+        if (!(client instanceof EvmAcpClient)) return;
+
         const chainById = new Map<number, string>(
           Object.values(viemChains).map((c) => [c.id, c.name])
         );
@@ -1021,9 +1025,7 @@ export function registerAgentCommands(program: Command): void {
       const mine =
         (publicKey &&
           signers.find((s) =>
-            (s.authorization_keys ?? []).some(
-              (k) => k.public_key === publicKey
-            )
+            (s.authorization_keys ?? []).some((k) => k.public_key === publicKey)
           )) ||
         (signers.length === 1 ? signers[0] : undefined);
 
@@ -1064,9 +1066,7 @@ export function registerAgentCommands(program: Command): void {
           "Could not match this CLI's signer key; showing all signers:"
         )}\n`
       );
-      printTable(
-        signers.map((s) => [s.display_name || s.id, describe(s)])
-      );
+      printTable(signers.map((s) => [s.display_name || s.id, describe(s)]));
     });
 
   agent
@@ -1493,7 +1493,7 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      // Step 3: Resolve chain options from the EVM provider
+      // Step 3: Resolve chain options from the EVM & Solana provider
       let providerChains: { id: number; name: string }[];
       try {
         const provider = await createProviderAdapter();
@@ -1509,6 +1509,14 @@ export function registerAgentCommands(program: Command): void {
           id,
           name: chainById.get(id) ?? `Chain ${id}`,
         }));
+
+        const hasSolana =
+          !!selected.solWalletAddress &&
+          selected.walletProviders.some((wp) => wp.chainType === "SOLANA");
+
+        if (hasSolana) {
+          providerChains.push({ id: solanaChainId(), name: "Solana" });
+        }
       } catch (err) {
         outputError(
           json,
@@ -1564,7 +1572,12 @@ export function registerAgentCommands(program: Command): void {
         });
 
         try {
-          symbol = (await prompt(rl, "\nEnter token symbol: "))
+          symbol = (
+            await prompt(
+              rl,
+              "\nEnter token symbol, [only alphanumeric letters allowed]: "
+            )
+          )
             .trim()
             .toUpperCase();
           if (!symbol) {
@@ -1602,28 +1615,20 @@ export function registerAgentCommands(program: Command): void {
       }
 
       // Step 5: Pre-buy amount (VIRTUAL to spend at launch)
-      let prebuyVirtualWei = 0n;
-      const parsePrebuy = (raw: string): bigint | null => {
-        const trimmed = raw.trim();
-        if (!trimmed) return 0n;
-        if (!/^\d*\.?\d+$/.test(trimmed)) return null;
-        try {
-          const wei = parseEther(trimmed as `${number}`);
-          return wei < 0n ? null : wei;
-        } catch {
-          return null;
-        }
-      };
+      let prebuyVirtualBaseUnit = 0n;
       if (opts.prebuy !== undefined) {
-        const wei = parsePrebuy(String(opts.prebuy));
-        if (wei === null) {
+        const baseUnit = convertPrebuyVirtual(
+          String(opts.prebuy),
+          selectedChain.id
+        );
+        if (baseUnit === null) {
           outputError(
             json,
             `Invalid --prebuy value: ${opts.prebuy}. Must be a non-negative number of VIRTUAL tokens.`
           );
           return;
         }
-        prebuyVirtualWei = wei;
+        prebuyVirtualBaseUnit = baseUnit;
       } else if (opts.configure && !json) {
         const rl = readline.createInterface({
           input: process.stdin,
@@ -1634,15 +1639,15 @@ export function registerAgentCommands(program: Command): void {
             rl,
             "\nPre-buy amount in VIRTUAL tokens (blank to skip): "
           );
-          const wei = parsePrebuy(raw);
-          if (wei === null) {
+          const base = convertPrebuyVirtual(raw, selectedChain.id);
+          if (base === null) {
             outputError(
               json,
               `Invalid pre-buy value: ${raw}. Must be a non-negative number.`
             );
             return;
           }
-          prebuyVirtualWei = wei;
+          prebuyVirtualBaseUnit = base;
         } finally {
           rl.close();
         }
@@ -1671,66 +1676,75 @@ export function registerAgentCommands(program: Command): void {
 
       // Step 6b: 60 Days Experiment toggle
       let isProject60days = false;
-      if (opts["60Days"]) {
-        isProject60days = true;
-      } else if (opts.configure && !json) {
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
-        try {
-          const raw = (await prompt(rl, "\nEnable 60 Days Experiment? (y/N): "))
-            .trim()
-            .toLowerCase();
-          isProject60days = raw === "y" || raw === "yes";
-        } finally {
-          rl.close();
-        }
-      }
-
-      // Step 6c: Airdrop percent (0–5%)
       let airdropPercent = 0;
-      const parseAirdropPercent = (raw: string): number | null => {
-        const trimmed = raw.trim();
-        if (!trimmed) return 0;
-        if (!/^\d*\.?\d+$/.test(trimmed)) return null;
-        const n = Number(trimmed);
-        if (!Number.isFinite(n) || n < 0 || n > 5) return null;
-        return n;
-      };
-      if (opts.airdropPercent !== undefined) {
-        const n = parseAirdropPercent(String(opts.airdropPercent));
-        if (n === null) {
-          outputError(
-            json,
-            `Invalid --airdrop-percent value: ${opts.airdropPercent}. Must be a number between 0 and 5.`
-          );
-          return;
+
+      if (
+        selectedChain.id !== SOLANA_DEVNET_CHAIN_ID &&
+        selectedChain.id !== SOLANA_MAINNET_CHAIN_ID
+      ) {
+        if (opts["60Days"]) {
+          isProject60days = true;
+        } else if (opts.configure && !json) {
+          const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+          try {
+            const raw = (
+              await prompt(rl, "\nEnable 60 Days Experiment? (y/N): ")
+            )
+              .trim()
+              .toLowerCase();
+            isProject60days = raw === "y" || raw === "yes";
+          } finally {
+            rl.close();
+          }
         }
-        airdropPercent = n;
-      } else if (opts.configure && !json) {
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
-        try {
-          const raw = await prompt(
-            rl,
-            "\nAirdrop percentage to veVIRTUAL holders (0–5, blank to skip): "
-          );
-          const n = parseAirdropPercent(raw);
+
+        // Step 6c: Airdrop percent (0–5%)
+        const parseAirdropPercent = (raw: string): number | null => {
+          const trimmed = raw.trim();
+          if (!trimmed) return 0;
+          if (!/^\d*\.?\d+$/.test(trimmed)) return null;
+          const n = Number(trimmed);
+          if (!Number.isFinite(n) || n < 0 || n > 5) return null;
+          return n;
+        };
+        if (opts.airdropPercent !== undefined) {
+          const n = parseAirdropPercent(String(opts.airdropPercent));
           if (n === null) {
             outputError(
               json,
-              `Invalid airdrop percent: ${raw}. Must be a number between 0 and 5.`
+              `Invalid --airdrop-percent value: ${opts.airdropPercent}. Must be a number between 0 and 5.`
             );
             return;
           }
           airdropPercent = n;
-        } finally {
-          rl.close();
+        } else if (opts.configure && !json) {
+          const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+          try {
+            const raw = await prompt(
+              rl,
+              "\nAirdrop percentage to veVIRTUAL holders (0–5, blank to skip): "
+            );
+            const n = parseAirdropPercent(raw);
+            if (n === null) {
+              outputError(
+                json,
+                `Invalid airdrop percent: ${raw}. Must be a number between 0 and 5.`
+              );
+              return;
+            }
+            airdropPercent = n;
+          } finally {
+            rl.close();
+          }
         }
       }
+
       // Step 6d: Robotics Launch
       let isRobotics = false;
       if (opts.robotics) {
@@ -1755,106 +1769,29 @@ export function registerAgentCommands(program: Command): void {
         }
       }
 
-      // Step 7: Prepare launch (backend creates virtual + saves launchInfo)
-      let prepareLaunchResponse: Awaited<
-        ReturnType<typeof agentApi.prepareLaunch>
-      >;
-      try {
-        if (!json) console.log(`\nPreparing token launch...`);
+      const onProgress = json ? undefined : (m: string) => console.log(m);
 
-        prepareLaunchResponse = await agentApi.prepareLaunch(
-          selected.id,
-          selectedChain.id,
+      let result: Awaited<ReturnType<typeof tokenizeOnEvm>>;
+      try {
+        const tokenizeParams = {
+          agentId: selected.id,
+          chainId: selectedChain.id,
           symbol,
           antiSniperTaxType,
           needAcf,
           isProject60days,
           airdropPercent,
           isRobotics,
-          prebuyVirtualWei > 0n ? prebuyVirtualWei.toString() : undefined
-        );
+          prebuyVirtualBaseUnit,
+          walletAddress: selected.walletAddress,
+          onProgress,
+        };
+
+        result = isSolanaChainId(selectedChain.id)
+          ? await tokenizeOnSolana(agentApi, tokenizeParams, json)
+          : await tokenizeOnEvm(agentApi, tokenizeParams, json);
       } catch (err) {
-        outputError(
-          json,
-          `Failed to prepare launch: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-        return;
-      }
-
-      const {
-        virtualId,
-        contracts,
-        launchFee,
-        approveCalldata,
-        preLaunchCalldata,
-      } = prepareLaunchResponse;
-
-      const launchFeeWei = BigInt(launchFee);
-      const totalApprovalWei = launchFeeWei + prebuyVirtualWei;
-
-      // Step 8: On-chain — approve VIRTUAL token + call preLaunch
-      let preLaunchTxHash: string;
-      try {
-        await checkVirtualBalance(
-          selectedChain.id,
-          contracts.virtualToken,
-          selected.walletAddress,
-          totalApprovalWei.toString()
-        );
-        if (!json && needAcf) {
-          console.log(
-            `Launch fee (with ACF): ${formatEther(launchFeeWei)} VIRTUAL`
-          );
-        }
-        if (!json && isProject60days) {
-          console.log(
-            `60 Days Experiment enabled — pre-buy tokens will follow a 60-day cliff.`
-          );
-        }
-        if (!json && airdropPercent > 0) {
-          console.log(
-            `Airdrop: allocating ${airdropPercent}% of supply to veVIRTUAL holders.`
-          );
-        }
-        if (!json && isRobotics) {
-          console.log(`Robotics Launch: enabled (Eastworld eligibility).`);
-        }
-        if (!json && prebuyVirtualWei > 0n) {
-          console.log(
-            `Pre-buying ${formatEther(prebuyVirtualWei)} VIRTUAL of $${symbol}`
-          );
-        }
-        if (!json) console.log(`Approving VIRTUAL token...`);
-
-        await sendApprove(
-          selectedChain.id,
-          contracts.virtualToken,
-          approveCalldata
-        );
-
-        if (!json) console.log(`Calling preLaunch contract...`);
-        preLaunchTxHash = await sendPreLaunch(
-          selectedChain.id,
-          contracts.bondingV5,
-          preLaunchCalldata
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const hints: string[] = [];
-        if (needAcf && prebuyVirtualWei > 0n) {
-          hints.push("with ACF enabled, pre-buy must be ≤50% of LP");
-        }
-        if (airdropPercent > 0 && prebuyVirtualWei > 0n) {
-          hints.push(
-            `airdrop reserves ${airdropPercent}% of supply before LP, reducing pre-buy headroom`
-          );
-        }
-        const hint = hints.length
-          ? ` Hint: ${hints.join("; ")}; reduce --prebuy and retry.`
-          : "";
-        outputError(json, `Failed to launch token: ${msg}${hint}`);
+        outputError(json, err instanceof Error ? err : String(err));
         return;
       }
 
@@ -1862,19 +1799,19 @@ export function registerAgentCommands(program: Command): void {
         console.log(
           `\nAgent ${selected.name} tokenized successfully as $${symbol}`
         );
-        console.log(`Transaction: ${preLaunchTxHash}`);
+        console.log(`Transaction: ${result.txHash}`);
       } else {
         outputResult(json, {
           success: true,
           agentId: selected.id,
           agentName: selected.name,
-          virtualId,
-          txHash: preLaunchTxHash,
+          virtualId: result.virtualId,
+          txHash: result.txHash,
           needAcf,
           isProject60days,
           airdropPercent,
           isRobotics,
-          launchFee: launchFeeWei.toString(),
+          launchFee: result.launchFee,
         });
       }
     });
@@ -1889,7 +1826,14 @@ export function registerAgentCommands(program: Command): void {
       const json = isJson(cmd);
 
       const acpAgent = await createAgentFromConfig();
-      const client = acpAgent.getClient();
+
+      const supportedChainIds = acpAgent.getSupportedChainIds();
+      if (supportedChainIds.length === 0) {
+        outputError(json, "No supported chains configured for this agent.");
+        return;
+      }
+
+      const client = acpAgent.getClient(supportedChainIds[0]);
 
       if (!(client instanceof EvmAcpClient)) {
         outputError(

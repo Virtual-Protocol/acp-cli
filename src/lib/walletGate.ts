@@ -15,6 +15,7 @@ interface ApprovalGateOptions {
 
 interface SolanaApprovalGateOptions extends ApprovalGateOptions {
   chainId: number;
+  sponsored?: boolean;
 }
 
 export function withApprovalGate<T>(
@@ -29,7 +30,7 @@ export function withApprovalGate<T>(
 
 export async function withApprovalGate<T>(
   fn: (provider: any) => Promise<T>,
-  opts: ApprovalGateOptions & { chainId?: number } = {}
+  opts: ApprovalGateOptions & { chainId?: number; sponsored?: boolean } = {}
 ): Promise<T> {
   let transport: Awaited<ReturnType<typeof createSseTransport>> | undefined;
   const restoreApprovalConsole = mirrorApprovalConsoleToStderr(opts);
@@ -39,7 +40,9 @@ export async function withApprovalGate<T>(
     const provider =
       opts.chainId === undefined
         ? evmProvider
-        : await createSolanaProviderAdapter(opts.chainId);
+        : await createSolanaProviderAdapter(opts.chainId, {
+            sponsored: opts.sponsored,
+          });
     return await fn(provider);
   } finally {
     if (transport) {
