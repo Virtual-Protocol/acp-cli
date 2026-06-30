@@ -12,7 +12,11 @@ import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import { getWalletAddress, getSolanaWalletAddress } from "../lib/agentFactory";
 import { getClient } from "../lib/api/client";
 import { getAgentId, getActiveWallet } from "../lib/config";
-import { CHAIN_NETWORK_MAP, type StockPosition } from "../lib/api/agent";
+import {
+  CHAIN_NETWORK_MAP,
+  type StockPosition,
+  type HyperliquidBalanceSummary,
+} from "../lib/api/agent";
 import { CliError } from "../lib/errors";
 import { assertSponsoredChainId, solanaChainId } from "../lib/chains";
 import { c } from "../lib/color";
@@ -83,6 +87,108 @@ function printStockPositions(positions: StockPosition[]): void {
         `${usd(p.usd_per_token).padEnd(11)}${usd(p.avg_entry_price_per_share).padEnd(11)}` +
         `${stockUsd(p).padEnd(11)}${pnl(p.unrealized_pnl)}`
     );
+  }
+  console.log("");
+}
+
+// Coerce a raw Hyperliquid numeric field (string or number) into a string for
+// display, or null when absent/empty. The backend passes HL amounts through
+// untouched, so a field can be either type.
+function hlNum(v: unknown): string | null {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "string" && v.trim() !== "") return v.trim();
+  return null;
+}
+
+// Extract the display fields from a Hyperliquid perp position, tolerating both
+// the flat hl-status shape (token/size, no notional) and the nested info-API
+// shape (position.coin/szi/positionValue). When no notional is reported, derive
+// an entry-price notional (|size| × entryPx) for the value column.
+function hlPosition(p: HyperliquidBalanceSummary["positions"][number]): {
+  coin: string;
+  size: string | null;
+  entry: string | null;
+  value: string | null;
+  upnl: string | null;
+} {
+  const pos = (p.position ?? p) as Record<string, unknown>;
+  const coin = String(pos.coin ?? pos.token ?? "—");
+  const size = hlNum(pos.szi) ?? hlNum(pos.size);
+  const entry = hlNum(pos.entryPx);
+  let value = hlNum(pos.positionValue);
+  if (value === null && size !== null && entry !== null) {
+    const v = Math.abs(parseFloat(size)) * parseFloat(entry);
+    if (Number.isFinite(v)) value = v.toFixed(2);
+  }
+  return { coin, size, entry, value, upnl: hlNum(pos.unrealizedPnl) };
+}
+
+// Only render the Hyperliquid section when there's something to show — an
+// account value, a spot balance, or an open position. Mirrors how stock
+// positions stay hidden when empty.
+function hlHasData(
+  hl?: HyperliquidBalanceSummary | null
+): hl is HyperliquidBalanceSummary {
+  if (!hl) return false;
+  return (
+    hl.balanceUsd != null ||
+    (hl.spotBalances?.length ?? 0) > 0 ||
+    (hl.positions?.length ?? 0) > 0
+  );
+}
+
+// Render the Hyperliquid account beneath the on-chain token list: account
+// value, a spot/longs split, then any non-zero spot balances and open perp
+// positions. HL funds/positions live off-chain, so they never appear in the
+// EVM token list — this section is the only place `wallet balance` surfaces them.
+function printHyperliquid(hl?: HyperliquidBalanceSummary | null): void {
+  if (!hlHasData(hl)) return;
+
+  console.log(`\n  ${c.bold("Hyperliquid")}\n`);
+  const src =
+    hl.source && hl.source !== "unknown" ? ` ${c.dim(`(${hl.source})`)}` : "";
+  console.log(`  ${c.bold("Account Value:")}  ${usd(hl.balanceUsd)}${src}`);
+  console.log(
+    `  ${c.dim("Spot:")} ${usd(hl.spotUsd)}   ${c.dim("Longs:")} ${usd(
+      hl.longPositionsUsd
+    )}`
+  );
+
+  const spot = (hl.spotBalances ?? []).filter((b) => {
+    const t = hlNum(b.total);
+    return t !== null && parseFloat(t) > 0;
+  });
+  if (spot.length) {
+    console.log(`\n  ${c.dim("SPOT")}`);
+    console.log(
+      `  ${c.dim("COIN".padEnd(10))}${c.dim("TOTAL".padEnd(20))}${c.dim("HOLD")}`
+    );
+    for (const b of spot) {
+      const coin = String(b.coin ?? b.token ?? "—");
+      console.log(
+        `  ${c.cyan(coin.padEnd(10))}${clip(hlNum(b.total) ?? "—", 18).padEnd(
+          20
+        )}${hlNum(b.hold) ?? "—"}`
+      );
+    }
+  }
+
+  const positions = hl.positions ?? [];
+  if (positions.length) {
+    console.log(`\n  ${c.dim("PERPS")}`);
+    console.log(
+      `  ${c.dim("COIN".padEnd(10))}${c.dim("SIZE".padEnd(16))}${c.dim(
+        "ENTRY".padEnd(12)
+      )}${c.dim("VALUE".padEnd(12))}${c.dim("PnL")}`
+    );
+    for (const p of positions) {
+      const { coin, size, entry, value, upnl } = hlPosition(p);
+      console.log(
+        `  ${c.cyan(coin.padEnd(10))}${clip(size ?? "—", 14).padEnd(16)}${usd(
+          entry
+        ).padEnd(12)}${usd(value).padEnd(12)}${pnl(upnl)}`
+      );
+    }
   }
   console.log("");
 }
@@ -283,6 +389,9 @@ export function registerWalletCommands(program: Command): void {
         // The Treasures portfolio spans both chains and isn't tied to the
         // queried network, so surface every position regardless of chain-id.
         const stocks = assets.data.stocks.positions;
+        // Hyperliquid funds/positions live off-chain (account-wide, not tied to
+        // the queried chain), so surface them alongside the on-chain balances.
+        const hyperliquid = assets.data.hyperliquid ?? null;
 
         if (json) {
           outputResult(json, {
@@ -291,6 +400,7 @@ export function registerWalletCommands(program: Command): void {
             address: walletAddress,
             tokens,
             stocks,
+            hyperliquid,
           });
           return;
         }
@@ -328,6 +438,7 @@ export function registerWalletCommands(program: Command): void {
             console.log("");
           }
           printStockPositions(stocks);
+          printHyperliquid(hyperliquid);
         } else {
           console.log("TOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
           for (const t of tokens) {
@@ -350,6 +461,28 @@ export function registerWalletCommands(program: Command): void {
                 `${p.shares ?? "—"}\t${usd(p.usd_per_share)}\t${usd(p.usd_per_token)}\t` +
                 `${usd(p.avg_entry_price_per_share)}\t${stockUsd(p)}\t${pnl(p.unrealized_pnl)}\tstock`
             );
+          }
+          if (hlHasData(hyperliquid)) {
+            console.log(
+              `HL\taccountValue\t\t${usd(hyperliquid.balanceUsd)}\t${
+                hyperliquid.source
+              }\thl`
+            );
+            for (const b of hyperliquid.spotBalances ?? []) {
+              console.log(
+                `${b.coin ?? b.token ?? "—"}\t${hlNum(b.total) ?? "—"}\t${
+                  hlNum(b.hold) ?? "—"
+                }\thl-spot`
+              );
+            }
+            for (const p of hyperliquid.positions ?? []) {
+              const { coin, size, entry, value, upnl } = hlPosition(p);
+              console.log(
+                `${coin}\t${size ?? "—"}\t${usd(entry)}\t${usd(value)}\t${pnl(
+                  upnl
+                )}\thl-perp`
+              );
+            }
           }
         }
       } catch (err) {

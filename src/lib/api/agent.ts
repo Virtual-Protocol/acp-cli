@@ -578,6 +578,54 @@ export interface StockPosition {
   unrealized_pnl: string | null;
 }
 
+// A single Hyperliquid spot balance, passed through from the HL API by the
+// backend (raw shape). All amount fields may arrive as strings or numbers.
+export interface HyperliquidSpotBalance {
+  coin?: string | null;
+  token?: string | number | null;
+  total?: string | number | null;
+  hold?: string | number | null;
+  usdValue?: string | number | null;
+  [key: string]: unknown;
+}
+
+// A single Hyperliquid perp position. The live hl-status returns a flat entry
+// (token/size/entryPx/unrealizedPnl/leverage); the raw info-API shape nests the
+// same data under `position` (coin/szi/positionValue). Support both.
+export interface HyperliquidPerpPosition {
+  type?: string;
+  token?: string | null;
+  size?: string | number | null;
+  entryPx?: string | number | null;
+  positionValue?: string | number | null;
+  unrealizedPnl?: string | number | null;
+  leverage?: { type?: string; value?: number; rawUsd?: string } | null;
+  position?: {
+    coin?: string | null;
+    szi?: string | number | null;
+    entryPx?: string | number | null;
+    positionValue?: string | number | null;
+    unrealizedPnl?: string | number | null;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+// Hyperliquid account summary the backend now attaches to /agents/:id/assets.
+// Mirrors HyperliquidBalanceSummary in agentic-commerce-be. Money fields are
+// nullable strings — treat null as "unknown", never 0.
+export interface HyperliquidBalanceSummary {
+  accountMode: string | null;
+  balanceUsd: string | null;
+  source: "unified" | "spot_and_longs" | "unknown";
+  spotUsd: string | null;
+  longPositionsUsd: string | null;
+  spotBalances: HyperliquidSpotBalance[];
+  positions: HyperliquidPerpPosition[];
+  asOf: number | null;
+  isCached: boolean;
+}
+
 export interface AgentAssetsResponse {
   message: string;
   data: {
@@ -588,6 +636,9 @@ export interface AgentAssetsResponse {
       asOf: number | null;
       isCached: boolean;
     };
+    // Present once agentic-commerce-be's HL merge is deployed; optional so the
+    // CLI still works against older backends that don't return it.
+    hyperliquid?: HyperliquidBalanceSummary | null;
   };
 }
 
