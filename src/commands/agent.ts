@@ -559,6 +559,7 @@ export function registerAgentCommands(program: Command): void {
         ["Name", created.name],
         ["Description", created.description],
         ["Wallet Address", created.walletAddress ?? "N/A"],
+        ["Sol Wallet Address", created.solWalletAddress ?? "N/A"],
       ];
       if (emailAddress) tableRows.push(["Email", emailAddress]);
       printTable(tableRows);
@@ -610,24 +611,28 @@ export function registerAgentCommands(program: Command): void {
       try {
         const acpAgent = await createAgentFromConfig();
 
+        // Deploy for base chain only
+        const baseChainId = process.env.IS_TESTNET
+          ? viemChains.baseSepolia.id
+          : viemChains.base.id;
+
         const chainIds = acpAgent.getSupportedChainIds();
         if (chainIds.length === 0) return;
+        if (!chainIds.includes(baseChainId)) return;
 
-        const firstChainId = chainIds[0];
-        const client = acpAgent.getClient(firstChainId);
+        const client = acpAgent.getClient(baseChainId);
         if (!(client instanceof EvmAcpClient)) return;
 
         const chainById = new Map<number, string>(
           Object.values(viemChains).map((c) => [c.id, c.name])
         );
-        const chainName =
-          chainById.get(firstChainId) ?? `Chain ${firstChainId}`;
+        const chainName = chainById.get(baseChainId) ?? `Chain ${baseChainId}`;
 
         await runRegisterErc8004Flow(
           agentApi,
           json,
           created,
-          firstChainId,
+          baseChainId,
           chainName
         );
       } catch (err) {
