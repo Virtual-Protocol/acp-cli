@@ -19,6 +19,7 @@ import type {
   HyperliquidBalanceSummary,
   HyperliquidSpotBalance,
   HyperliquidPerpPosition,
+  AgentApi,
 } from "../lib/api/agent";
 import { CliError } from "../lib/errors";
 import {
@@ -225,6 +226,46 @@ function emitTopupUrlToStderr(url: string): void {
   process.stderr.write(
     `\n>>> Open this URL to fund your wallet:\n\n    ${url}\n\n`
   );
+}
+
+const COINFLOW_POLL_INTERVAL_MS = 4000;
+const COINFLOW_WAIT_TIMEOUT_MS = 15 * 60 * 1000; // card payment + settlement
+
+// Poll the card top-up status until it settles, fails, or times out. Mirrors the
+// add-signer wait loop: transient errors are swallowed as pending so a blip
+// doesn't abort the wait. Returns the final status for the command to output.
+async function waitForCoinflowSettlement(
+  agentApi: AgentApi,
+  walletAddress: string,
+  sessionId: string,
+  json: boolean
+): Promise<{ status: string; txSignature?: string }> {
+  const interactive = !json && isTTY();
+  if (interactive) process.stdout.write("  Waiting for payment to settle...");
+  const deadline = Date.now() + COINFLOW_WAIT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, COINFLOW_POLL_INTERVAL_MS));
+    let status: string;
+    let txSignature: string | undefined;
+    try {
+      const res = await agentApi.getCoinflowStatus(walletAddress, sessionId);
+      status = res.data.status;
+      txSignature = res.data.txSignature;
+    } catch {
+      continue; // transient — keep waiting
+    }
+    if (status === "complete") {
+      if (interactive) console.log(` ${c.green("✓ settled")}`);
+      return { status, txSignature };
+    }
+    if (status === "failed") {
+      if (interactive) console.log(` ${c.red("✗ failed")}`);
+      return { status };
+    }
+    if (interactive) process.stdout.write(".");
+  }
+  if (interactive) console.log(` ${c.dim("timed out (still pending)")}`);
+  return { status: "pending" };
 }
 
 // Resolves the native currency (name + symbol + decimals) for a token's network,
@@ -687,6 +728,7 @@ export function registerWalletCommands(program: Command): void {
     )
     .requiredOption("--chain-id <id>", "Chain ID")
     .option("--amount <amount>", "Amount in USD")
+    .option("--wait", "Wait for a card payment to settle before returning")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -757,23 +799,36 @@ export function registerWalletCommands(program: Command): void {
             amountCents
           );
           const { url, sessionId } = result.data;
-          outputResult(json, {
-            walletAddress,
-            method: "card",
-            url,
-            sessionId,
-          });
           if (json) {
             emitTopupUrlToStderr(url);
           } else if (isTTY()) {
-            console.log(`\n  Opening Coinflow checkout in your browser...\n`);
+            console.log(`\n  Opening checkout in your browser...\n`);
             openBrowser(url);
-            console.log(
-              `  ${c.dim(
-                "Check settlement with: acp wallet topup-status --session-id " +
-                  sessionId
-              )}\n`
+          }
+
+          if (opts.wait) {
+            const settled = await waitForCoinflowSettlement(
+              agentApi,
+              walletAddress,
+              sessionId,
+              json
             );
+            outputResult(json, {
+              walletAddress,
+              method: "card",
+              sessionId,
+              ...settled,
+            });
+          } else {
+            outputResult(json, { walletAddress, method: "card", url, sessionId });
+            if (!json && isTTY()) {
+              console.log(
+                `  ${c.dim(
+                  "Check settlement with: acp wallet topup-status --session-id " +
+                    sessionId
+                )}\n`
+              );
+            }
           }
         } else if (method === "qr") {
           if (!json && isTTY()) {
