@@ -681,11 +681,12 @@ export function registerWalletCommands(program: Command): void {
   wallet
     .command("topup")
     .description("Add funds to your agent wallet")
-    .option("--method <method>", "Payment method: coinbase or card")
+    .option(
+      "--method <method>",
+      "Payment method: card (default), coinbase, or qr"
+    )
     .requiredOption("--chain-id <id>", "Chain ID")
     .option("--amount <amount>", "Amount in USD")
-    .option("--email <email>", "Receipt email (required for card)")
-    .option("--us", "Required for US residents when paying by card")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -695,20 +696,16 @@ export function registerWalletCommands(program: Command): void {
 
         const { agentApi } = await getClient();
 
-        // Determine payment method
+        // Determine payment method. Card (default) is processed via Coinflow.
         let method: string;
         if (opts.method) {
           method = opts.method;
         } else if (!isTTY() || json) {
-          throw new CliError(
-            "Payment method required in non-interactive mode.",
-            "VALIDATION_ERROR",
-            "Use --method coinbase, --method card, or --method qr"
-          );
+          method = "card";
         } else {
           const methods = [
-            { label: "Coinbase", value: "coinbase" },
             { label: "Card", value: "card" },
+            { label: "Coinbase", value: "coinbase" },
             { label: "Manual transfer (QR)", value: "qr" },
           ];
           const selected = await selectOption(
@@ -735,71 +732,48 @@ export function registerWalletCommands(program: Command): void {
           }
         } else if (method === "card") {
           let amount = opts.amount;
-          let email = opts.email;
 
-          if ((!amount || !email) && isTTY() && !json) {
+          if (!amount && isTTY() && !json) {
             const rl = readline.createInterface({
               input: process.stdin,
               output: process.stdout,
             });
-            if (!amount) amount = await prompt(rl, "  Amount (USD): ");
-            if (!email) email = await prompt(rl, "  Receipt email: ");
+            amount = await prompt(rl, "  Amount (USD): ");
             rl.close();
           }
 
-          if (!amount || !email) {
+          const amountCents = Math.round(Number(amount) * 100);
+          if (!amount || !Number.isFinite(amountCents) || amountCents <= 0) {
             throw new CliError(
-              "Amount and email required for card payment.",
+              "A positive amount is required for card top-up.",
               "VALIDATION_ERROR",
-              "Use --amount and --email flags"
+              "Use --amount <usd>"
             );
           }
 
-          // Step 1: Init Crossmint order
-          const isUS = opts.us === true;
-          const initResult = await agentApi.initCrossmintOrder(
+          const result = await agentApi.getCoinflowUrl(
             walletAddress,
             chainId,
-            isUS
+            amountCents
           );
-          let signature: string | undefined;
-
-          // Step 2: Sign challenge if needed
-          if (initResult.data.needsSignature && initResult.data.challenge) {
-            if (!json && isTTY()) {
-              process.stdout.write("  Signing wallet verification...");
-            }
-            const challenge = initResult.data.challenge;
-            signature = await withApprovalGate(
-              (p) => p.signMessage(chainId, challenge),
-              { json }
-            );
-            if (!json && isTTY()) {
-              console.log(` ${c.green("✓")}`);
-            }
-          }
-
-          // Step 3: Complete order
-          const completeResult = await agentApi.completeCrossmintOrder({
-            walletAddress,
-            chainId,
-            amount: Number(amount),
-            receiptEmail: email,
-            signature,
-            isUS,
-          });
-
-          const { checkoutUrl } = completeResult.data;
+          const { url, sessionId } = result.data;
           outputResult(json, {
             walletAddress,
             method: "card",
-            checkoutUrl,
+            url,
+            sessionId,
           });
           if (json) {
-            emitTopupUrlToStderr(checkoutUrl);
+            emitTopupUrlToStderr(url);
           } else if (isTTY()) {
-            console.log(`\n  Opening Crossmint checkout in your browser...\n`);
-            openBrowser(checkoutUrl);
+            console.log(`\n  Opening Coinflow checkout in your browser...\n`);
+            openBrowser(url);
+            console.log(
+              `  ${c.dim(
+                "Check settlement with: acp wallet topup-status --session-id " +
+                  sessionId
+              )}\n`
+            );
           }
         } else if (method === "qr") {
           if (!json && isTTY()) {
@@ -822,8 +796,40 @@ export function registerWalletCommands(program: Command): void {
           throw new CliError(
             `Unknown payment method: ${method}`,
             "VALIDATION_ERROR",
-            "Use --method coinbase, --method card, or --method qr"
+            "Use --method card, --method coinbase, or --method qr"
           );
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  wallet
+    .command("topup-status")
+    .description("Check the status of a card top-up")
+    .requiredOption("--session-id <id>", "Session ID returned by `wallet topup`")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const walletAddress = getWalletAddress();
+        const { agentApi } = await getClient();
+
+        const result = await agentApi.getCoinflowStatus(
+          walletAddress,
+          opts.sessionId
+        );
+        const { status, txSignature } = result.data;
+        outputResult(json, { walletAddress, ...result.data });
+        if (!json && isTTY()) {
+          const label =
+            status === "complete"
+              ? c.green("complete")
+              : status === "failed"
+                ? c.red("failed")
+                : c.dim("pending");
+          console.log(`\n  Top-up status: ${label}`);
+          if (txSignature) console.log(`  Tx: ${txSignature}`);
+          console.log("");
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));

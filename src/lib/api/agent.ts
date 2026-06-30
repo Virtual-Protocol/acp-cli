@@ -1171,6 +1171,36 @@ export class AgentApi {
     });
   }
 
+  // Coinflow card top-up: returns a hosted checkout URL to open plus a
+  // sessionId used to poll settlement via getCoinflowStatus.
+  async getCoinflowUrl(
+    walletAddress: string,
+    chainId: number,
+    amountCents: number
+  ): Promise<{ data: { url: string; sessionId: string } }> {
+    return this.client.post("/topup/coinflow-url", {
+      walletAddress,
+      chainId,
+      amountCents,
+    });
+  }
+
+  async getCoinflowStatus(
+    walletAddress: string,
+    sessionId: string
+  ): Promise<{
+    data: {
+      status: "pending" | "complete" | "failed";
+      paymentId?: string;
+      txSignature?: string;
+    };
+  }> {
+    return this.client.post("/topup/coinflow-status", {
+      walletAddress,
+      sessionId,
+    });
+  }
+
   async initCrossmintOrder(
     walletAddress: string,
     chainId: number,
