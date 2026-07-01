@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import * as readline from "readline";
 import { formatUnits, parseUnits, isAddress, isHex } from "viem";
+import { base, baseSepolia } from "viem/chains";
 import {
   buildSolTransferIx,
   buildSplTransferInstructions,
@@ -726,13 +727,18 @@ export function registerWalletCommands(program: Command): void {
       "--method <method>",
       "Payment method: card (default), coinbase, or qr"
     )
-    .requiredOption("--chain-id <id>", "Chain ID")
+    .option("--chain-id <id>", "Chain ID (defaults to Base)")
     .option("--amount <amount>", "Amount in USD")
     .option("--wait", "Wait for a card payment to settle before returning")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const chainId = Number(opts.chainId);
+        // Default to Base (env-aware) when no chain is specified.
+        const chainId = opts.chainId
+          ? Number(opts.chainId)
+          : process.env.IS_TESTNET === "true"
+            ? baseSepolia.id
+            : base.id;
         // Solana top-ups settle to the agent's Solana wallet; EVM chains use the
         // EVM wallet and must be a sponsored chain.
         const isSolana = isSolanaChainId(chainId);
