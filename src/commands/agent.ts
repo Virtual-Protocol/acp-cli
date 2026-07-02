@@ -43,13 +43,12 @@ import {
   createAgentFromConfig,
   createProviderAdapter,
 } from "../lib/agentFactory";
-import { EvmAcpClient } from "@virtuals-protocol/acp-node-v2";
+import { EVM_CHAINS, EvmAcpClient } from "@virtuals-protocol/acp-node-v2";
 import {
   checkVirtualBalance,
   sendApprove,
   sendPreLaunch,
 } from "../lib/tokenize";
-import * as viemChains from "viem/chains";
 import { formatEther, parseEther } from "viem";
 import { formatChainId } from "../lib/chains";
 
@@ -614,7 +613,7 @@ export function registerAgentCommands(program: Command): void {
 
         const firstChainId = chainIds[0];
         const chainById = new Map<number, string>(
-          Object.values(viemChains).map((c) => [c.id, c.name])
+          EVM_CHAINS.map((c) => [c.id, c.name])
         );
         const chainName =
           chainById.get(firstChainId) ?? `Chain ${firstChainId}`;
@@ -1021,9 +1020,7 @@ export function registerAgentCommands(program: Command): void {
       const mine =
         (publicKey &&
           signers.find((s) =>
-            (s.authorization_keys ?? []).some(
-              (k) => k.public_key === publicKey
-            )
+            (s.authorization_keys ?? []).some((k) => k.public_key === publicKey)
           )) ||
         (signers.length === 1 ? signers[0] : undefined);
 
@@ -1064,9 +1061,7 @@ export function registerAgentCommands(program: Command): void {
           "Could not match this CLI's signer key; showing all signers:"
         )}\n`
       );
-      printTable(
-        signers.map((s) => [s.display_name || s.id, describe(s)])
-      );
+      printTable(signers.map((s) => [s.display_name || s.id, describe(s)]));
     });
 
   agent
@@ -1094,7 +1089,9 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
       console.log(
-        `\n${c.yellow("Changing a signer's policy requires wallet-owner approval.")}\n` +
+        `\n${c.yellow(
+          "Changing a signer's policy requires wallet-owner approval."
+        )}\n` +
           `This signs with your wallet owner's session, which only the dashboard can do.\n\n` +
           `Open it here:\n\n    ${url}\n`
       );
@@ -1497,18 +1494,12 @@ export function registerAgentCommands(program: Command): void {
       let providerChains: { id: number; name: string }[];
       try {
         const provider = await createProviderAdapter();
-        const chainIds = await provider.getSupportedChainIds();
-        const chainById = new Map<number, string>(
-          (Object.values(viemChains) as { id?: number; name?: string }[])
-            .filter(
-              (c) => typeof c?.id === "number" && typeof c?.name === "string"
-            )
-            .map((c) => [c.id as number, c.name as string])
+        const supportedChainIds = new Set(
+          await provider.getSupportedChainIds()
         );
-        providerChains = chainIds.map((id) => ({
-          id,
-          name: chainById.get(id) ?? `Chain ${id}`,
-        }));
+        providerChains = EVM_CHAINS.filter((c) =>
+          supportedChainIds.has(c.id)
+        ).map((c) => ({ id: c.id, name: c.name }));
       } catch (err) {
         outputError(
           json,
@@ -1900,15 +1891,10 @@ export function registerAgentCommands(program: Command): void {
       }
 
       const provider = client.getProvider();
-
-      const providerChains = await provider.getSupportedChainIds();
-      const chainNames = new Map<number, string>(
-        Object.values(viemChains).map((c) => [c.id, c.name])
-      );
-      const erc8004Chains = providerChains.map((id) => ({
-        id,
-        name: chainNames.get(id) ?? `Chain ${id}`,
-      }));
+      const supportedChainIds = new Set(await provider.getSupportedChainIds());
+      const erc8004Chains = EVM_CHAINS.filter((c) =>
+        supportedChainIds.has(c.id)
+      ).map((c) => ({ id: c.id, name: c.name }));
 
       // Step 1: Select agent
       let selected = await resolveAgent(agentApi, opts, json);

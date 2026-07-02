@@ -34,7 +34,7 @@ import {
 } from "./compat/legacyBuyerAdapter";
 import { CliError } from "./errors";
 import { Chain } from "viem";
-import { base, baseSepolia, mainnet, arbitrum, optimism, polygon, bsc } from "viem/chains";
+import { base, baseSepolia } from "viem/chains";
 
 export async function getWalletIdByAddress(
   walletAddress: string
@@ -165,18 +165,7 @@ export async function createProviderAdapter(): Promise<IEvmProviderAdapter> {
   const isTestnet = process.env.IS_TESTNET === "true";
   const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
   const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
-  // The trade command signs `send` legs the trading-agent returns on chains
-  // beyond the SDK's default set (EVM_MAINNET_CHAINS is just [base]) — e.g.
-  // Arbitrum bridge legs for HL deposits/withdrawals, or BSC/Polygon swaps.
-  // The provider needs a viem Chain for each so it can build the client; bind
-  // the EVM chains the trade flows can touch. (Listing a chain here only lets
-  // it construct a client — end-to-end signing still requires SDK paymaster
-  // support for that chain.)
-  const extraMainnet: Chain[] = [mainnet, arbitrum, optimism, polygon, bsc];
-  const baseChains = isTestnet ? EVM_TESTNET_CHAINS : EVM_MAINNET_CHAINS;
-  const chains = isTestnet
-    ? baseChains
-    : dedupeChains([...baseChains, ...extraMainnet]);
+  const chains = isTestnet ? EVM_TESTNET_CHAINS : EVM_MAINNET_CHAINS;
   return createProviderFromConfig(chains, serverUrl, privyAppId);
 }
 
@@ -203,19 +192,6 @@ export async function createSseTransport(
   transport.setContext(ctx);
   await transport.connect(undefined, streams);
   return transport;
-}
-
-// Dedupe a chains list by id, keeping the first occurrence (so the SDK's own
-// entries take precedence over our appended extras).
-function dedupeChains(chains: Chain[]): Chain[] {
-  const seen = new Set<number>();
-  const out: Chain[] = [];
-  for (const c of chains) {
-    if (seen.has(c.id)) continue;
-    seen.add(c.id);
-    out.push(c);
-  }
-  return out;
 }
 
 export function getWalletAddress(): string {
