@@ -325,7 +325,13 @@ export function registerTradeCommands(program: Command): void {
     .option("--size <size>", "Perp order size in token units")
     .option("--leverage <n>", "Set leverage for this token before a perp order")
     .option("--isolated", "Use isolated margin when setting leverage", false)
-    .option("--reduce-only", "Only reduce an existing perp position", false)
+    .option(
+      "--reduce-only",
+      "Close/shrink an existing perp position. --side must be the OPPOSITE of the position " +
+        "(close a long with --side short, close a short with --side long). " +
+        "Never set this when opening or adding to a position — HL rejects it.",
+      false
+    )
     .option(
       "--take-profit <price>",
       "Perp take-profit trigger price. With --size/--amount-usdc it attaches to the entry; alone it attaches to an existing position. Market close unless --take-profit-limit is set."

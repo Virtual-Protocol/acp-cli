@@ -793,9 +793,15 @@ acp trade --side short --token ETH --size 0.5 --price 4000 --post-only
 # Same shape for an equity, FX, or commodity perp — just change the symbol
 acp trade --side long --token <HL_MARKET_SYMBOL> --size 1 --leverage 3
 
-# Reduce-only (close part of a position)
-acp trade --side short --token BTC --size 0.01 --reduce-only
+# Close (part of) a position: --reduce-only with --side OPPOSITE to the position.
+# Closing a LONG is a SHORT order; closing a SHORT is a LONG order.
+acp trade --side short --token BTC --size 0.01 --reduce-only   # closes a BTC long
+acp trade --side long --token BTC --size 0.01 --reduce-only    # closes a BTC short
 ```
+
+> `--reduce-only` only shrinks an existing position — never set it when opening or
+> adding. If the side matches the position (or there's no position), Hyperliquid
+> rejects the order with "Reduce only order would increase position".
 
 **Hyperliquid — account & withdraw:**
 
