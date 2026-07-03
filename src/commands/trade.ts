@@ -72,6 +72,17 @@ interface SendAction {
   expectedTxKind?: string;
   timeoutMs?: number;
 }
+// Atomic multi-call bundle (EIP-5792 sendCalls): one signature, one on-chain
+// tx, ONE txHash posted back. The server only emits this when the plan request
+// advertised `supportsBatch` — used to fuse approve+swap (and the platform fee)
+// into a single tx instead of separate send actions.
+interface SendBatchAction {
+  kind: "sendBatch";
+  label: string;
+  chainId: number;
+  calls: { to: string; data: string; value: string; label: string; kind: string }[];
+  timeoutMs?: number;
+}
 interface SignAction {
   kind: "sign";
   label: string;
@@ -171,6 +182,7 @@ interface PreviewAction {
 }
 type Action =
   | SendAction
+  | SendBatchAction
   | SignAction
   | WaitAction
   | DoneAction
@@ -357,7 +369,10 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   const { apiUrl, token } = await getApiContext();
   const owner = getWalletAddress() as Address;
 
-  const body: Record<string, unknown> = { walletAddress: owner };
+  // The wallet is a Privy 7702 smart wallet with EIP-5792 sendCalls, so always
+  // advertise batching: the server then fuses approve+swap (and the platform
+  // fee) into one atomic sendBatch — one signature instead of two or three.
+  const body: Record<string, unknown> = { walletAddress: owner, supportsBatch: true };
   const fwd = (key: string, v: unknown) => {
     if (v !== undefined) body[key] = v;
   };
@@ -517,6 +532,31 @@ export async function runTradeLoop(
             ? { value: BigInt(action.value) }
             : {}),
         });
+        nextBody = { tradeId: plan.tradeId, step, txHash };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        nextBody = {
+          tradeId: plan.tradeId,
+          step,
+          error: { code: "TX_FAILED", message },
+        };
+      }
+    } else if (action.kind === "sendBatch") {
+      // Atomic bundle (e.g. [approve, swap]): one signature, one on-chain tx.
+      // sendTransaction accepts Call[] and folds them into a single UserOp via
+      // the same ERC-20-gas/paymaster client as a plain send, waits for
+      // inclusion, and returns the bundle's ONE tx hash; the server settles
+      // every batched leg off that hash, so post it back like a single send.
+      progress(json, `[step ${step + 1}] ${action.label}`);
+      try {
+        const txHash = await requireSigner().sendTransaction(
+          action.chainId,
+          action.calls.map((c) => ({
+            to: c.to as `0x${string}`,
+            data: c.data as `0x${string}`,
+            ...(c.value && c.value !== "0" ? { value: BigInt(c.value) } : {}),
+          }))
+        );
         nextBody = { tradeId: plan.tradeId, step, txHash };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
