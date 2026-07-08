@@ -289,6 +289,8 @@ export function registerTradeCommands(program: Command): void {
         "  acp trade withdraw-from-hl --amount 25                                                       # withdraw to Arbitrum\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5 --dry-run   # preview only\n" +
+        "  acp trade --side long --token BTC --amount-usdc 100 --take-profit 130000 --stop-loss 80000   # open with TP/SL\n" +
+        "  acp trade --side long --token BTC --stop-loss 80000                    # set a stop on an existing long\n" +
         "  acp trade --amount-in 25 --chain-out hyperliquid                       # deposit (alias)\n" +
         "  acp trade --token AAPL --amount-usdc 50                          # buy tokenized AAPL with USDC on Ethereum\n" +
         "  acp trade --token AAPL --token-in eth --chain-in 8453 --amount-in 0.02  # buy AAPL, funded by ETH on Base\n" +
@@ -324,6 +326,16 @@ export function registerTradeCommands(program: Command): void {
     .option("--leverage <n>", "Set leverage for this token before a perp order")
     .option("--isolated", "Use isolated margin when setting leverage", false)
     .option("--reduce-only", "Only reduce an existing perp position", false)
+    .option(
+      "--take-profit <price>",
+      "Perp take-profit trigger price. With --size/--amount-usdc it attaches to the entry; alone it attaches to an existing position. Market close unless --take-profit-limit is set."
+    )
+    .option("--take-profit-limit <price>", "Rest the take-profit as a limit at this price instead of a market close")
+    .option(
+      "--stop-loss <price>",
+      "Perp stop-loss trigger price. With --size/--amount-usdc it attaches to the entry; alone it attaches to an existing position. Market close unless --stop-loss-limit is set."
+    )
+    .option("--stop-loss-limit <price>", "Rest the stop-loss as a limit at this price instead of a market close")
     .option("--dry-run", "Preview the trade (route, size, margin, fees) without signing or submitting anything", false)
     .option(
       "--accept-impact",
@@ -449,6 +461,12 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   fwd("amountShares", opts.amountShares);
   fwd("protocol", opts.protocol);
   fwd("chain", opts.chain);
+  // Perp TP/SL triggers. commander camelCases --take-profit → takeProfit, etc.
+  // The backend names them *Price / *LimitPrice.
+  fwd("takeProfitPrice", opts.takeProfit);
+  fwd("takeProfitLimitPrice", opts.takeProfitLimit);
+  fwd("stopLossPrice", opts.stopLoss);
+  fwd("stopLossLimitPrice", opts.stopLossLimit);
   if (opts.postOnly) body.postOnly = true;
   if (opts.reduceOnly) body.reduceOnly = true;
   if (opts.isolated) body.isolated = true;
