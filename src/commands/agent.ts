@@ -1850,9 +1850,9 @@ export function registerAgentCommands(program: Command): void {
       }
 
       const provider = client.getProvider();
-      const supportedChainIds = new Set(await provider.getSupportedChainIds());
+      const providerChainIds = new Set(await provider.getSupportedChainIds());
       const erc8004Chains = EVM_CHAINS.filter((c) =>
-        supportedChainIds.has(c.id),
+        providerChainIds.has(c.id),
       ).map((c) => ({ id: c.id, name: c.name }));
 
       // Step 1: Select agent

@@ -8,11 +8,14 @@ import {
 } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { registerJob, isLegacyJob, getLegacyJobChainId } from "../lib/config";
+import { isSolanaChainId } from "../lib/chains";
 import { CliError } from "../lib/errors";
 import { c } from "../lib/color";
 import { PriceType } from "@virtuals-protocol/acp-node";
 import { getClient } from "../lib/api/client";
 import { getActiveAgentId } from "../lib/activeAgent";
+
+const SOLANA_DEFAULT_ADDRESS = "11111111111111111111111111111111";
 
 export function registerClientCommands(program: Command): void {
   const client = program
@@ -153,7 +156,12 @@ export function registerClientCommands(program: Command): void {
           packageId = Number(opts.packageId);
         }
 
-        const evaluator = opts.evaluator ?? (await agent.getAddress());
+        const evaluator =
+          opts.evaluator ??
+          (isSolanaChainId(chainId)
+            ? SOLANA_DEFAULT_ADDRESS
+            : await agent.getAddress("evm"));
+
         const jobId = await agent.createJobFromOffering(
           chainId,
           offering,
@@ -238,8 +246,11 @@ export function registerClientCommands(program: Command): void {
 
         // Default: v2 flow
         const agent = await createAgentFromConfig();
-        const clientAddress = await agent.getAddress();
-        const evaluator = opts.evaluator ?? clientAddress;
+        const evaluator =
+          opts.evaluator ??
+          (isSolanaChainId(chainId)
+            ? SOLANA_DEFAULT_ADDRESS
+            : await agent.getAddress("evm"));
         const expiredAt =
           Math.floor(Date.now() / 1000) + Number(opts.expiredIn);
         const params = {
@@ -360,9 +371,8 @@ export function registerClientCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
+        const chainId = Number(opts.chainId);
         if (isLegacyJob(opts.jobId)) {
-          const legacyChainId =
-            getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
           const adapter = await createLegacyBuyerAdapter();
           await adapter.completeJob(Number(opts.jobId), opts.reason);
           outputResult(json, {
@@ -378,7 +388,7 @@ export function registerClientCommands(program: Command): void {
         const agent = await createAgentFromConfig();
         await agent.start();
         try {
-          const session = agent.getSession(Number(opts.chainId), opts.jobId);
+          const session = agent.getSession(chainId, opts.jobId);
           if (!session) {
             throw new CliError(
               `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
@@ -419,9 +429,8 @@ export function registerClientCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
+        const chainId = Number(opts.chainId);
         if (isLegacyJob(opts.jobId)) {
-          const legacyChainId =
-            getLegacyJobChainId(opts.jobId) ?? Number(opts.chainId);
           const adapter = await createLegacyBuyerAdapter();
           await adapter.rejectJob(Number(opts.jobId), opts.reason);
           outputResult(json, {
@@ -437,7 +446,7 @@ export function registerClientCommands(program: Command): void {
         const agent = await createAgentFromConfig();
         await agent.start();
         try {
-          const session = agent.getSession(Number(opts.chainId), opts.jobId);
+          const session = agent.getSession(chainId, opts.jobId);
           if (!session) {
             throw new CliError(
               `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,

@@ -11,6 +11,9 @@ import {
   SseTransport,
   AcpApiClient,
   PrivySolanaProviderAdapter,
+  getEvmChainByChainId,
+  SOLANA_DEVNET_CHAIN_ID,
+  SOLANA_MAINNET_CHAIN_ID,
 } from "@virtuals-protocol/acp-node-v2";
 import type {
   IEvmProviderAdapter,
@@ -33,16 +36,9 @@ import {
   type LegacyJobEventHandler,
 } from "./compat/legacyBuyerAdapter";
 import { CliError } from "./errors";
-import { Chain } from "viem";
-import {
-  base,
-  baseSepolia,
-  mainnet,
-  arbitrum,
-  optimism,
-  polygon,
-  bsc,
-} from "viem/chains";
+import { base, baseSepolia } from "viem/chains";
+
+type EvmChain = (typeof EVM_MAINNET_CHAINS)[number];
 
 export async function getWalletIdByAddress(
   walletAddress: string,
@@ -81,10 +77,14 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
   const chains = isTestnet ? EVM_TESTNET_CHAINS : EVM_MAINNET_CHAINS;
   const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
   const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
+  const solanaChainId = isTestnet
+    ? SOLANA_DEVNET_CHAIN_ID
+    : SOLANA_MAINNET_CHAIN_ID;
 
   return AcpAgent.create({
     contractAddresses: ACP_CONTRACT_ADDRESSES,
     evmProvider: await createProviderFromConfig(chains, serverUrl, privyAppId),
+    solanaProvider: await createSolanaProviderAdapter(solanaChainId),
     api: new AcpApiClient({ serverUrl }),
     transport: new SseTransport({ serverUrl }),
   });
@@ -94,7 +94,7 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
  * Create a provider adapter from config — shared between v2 agent and v1 adapter.
  */
 async function createProviderFromConfig(
-  chains: Chain[],
+  chains: EvmChain[],
   serverUrl: string,
   privyAppId: string,
 ): Promise<IEvmProviderAdapter> {
@@ -152,7 +152,11 @@ export async function createLegacyBuyerAdapter(options?: {
   onNewTask?: LegacyJobEventHandler;
 }): Promise<LegacyBuyerAdapter> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  const chain = isTestnet ? baseSepolia : base;
+  const chainId = isTestnet ? baseSepolia.id : base.id;
+  const chain = getEvmChainByChainId(chainId);
+  if (!chain) {
+    throw new CliError(`Unsupported chain id: ${chainId}`, "VALIDATION_ERROR");
+  }
   const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
   const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
 
