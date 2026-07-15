@@ -180,6 +180,19 @@ interface PreviewAction {
   summary: string;
   legs?: unknown[];
 }
+// Pre-execution stop: the trade is viable but loses more value than the
+// server's price-impact warn threshold. Nothing was signed or submitted.
+// Re-plan the same request with `acceptImpactBps` echoed back to proceed.
+// Mirrors trading-agent's ConfirmAction.
+interface ConfirmAction {
+  kind: "confirm";
+  code: string;
+  message: string;
+  valueLossBps: number;
+  provider?: string;
+  acceptImpactBps: number;
+  retryable: boolean;
+}
 type Action =
   | SendAction
   | SendBatchAction
@@ -187,7 +200,8 @@ type Action =
   | WaitAction
   | DoneAction
   | ErrorAction
-  | PreviewAction;
+  | PreviewAction
+  | ConfirmAction;
 
 interface PlanResponse {
   tradeId: string;
@@ -282,6 +296,11 @@ export function registerTradeCommands(program: Command): void {
     .option("--isolated", "Use isolated margin when setting leverage", false)
     .option("--reduce-only", "Only reduce an existing perp position", false)
     .option("--dry-run", "Preview the trade (route, size, margin, fees) without signing or submitting anything", false)
+    .option(
+      "--accept-impact",
+      "Proceed through the server's high price-impact warning (re-plans with the echoed acceptImpactBps)",
+      false
+    )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -443,7 +462,28 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
     }
   }
 
-  const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
+  let plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
+  // High price-impact gate: the server plans nothing and asks for explicit
+  // opt-in. With --accept-impact, re-plan once echoing acceptImpactBps;
+  // otherwise surface the warning as a clean error instead of "Unknown action".
+  if (plan.action.kind === "confirm") {
+    const confirm = plan.action;
+    if (!opts.acceptImpact) {
+      throw new CliError(
+        confirm.message,
+        "PRICE_IMPACT_HIGH",
+        "Re-run with --accept-impact to proceed anyway, or lower the amount."
+      );
+    }
+    progress(
+      json,
+      `High price impact (~${(confirm.valueLossBps / 100).toFixed(1)}%) accepted — re-planning`
+    );
+    plan = await post(apiUrl, token, "/trade/plan", {
+      ...body,
+      acceptImpactBps: confirm.acceptImpactBps,
+    });
+  }
   progress(
     json,
     `Trade ${plan.tradeId.slice(0, 8)}` +
@@ -695,11 +735,11 @@ async function post<T>(
   const base = baseUrl.replace(/\/$/, "");
   // Calldata to sign flows back over this connection, so refuse plaintext: a
   // downgraded/MITM'd hop could feed the signer malicious transactions.
-  if (!/^https:\/\//i.test(base)) {
+  if (!/^https:\/\//i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(base)) {
     throw new CliError(
       `Refusing to call a non-https trade endpoint: ${base}`,
       "VALIDATION_ERROR",
-      "The ACP API base URL must be https://."
+      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
     );
   }
   let tok = token;
@@ -776,11 +816,11 @@ async function post<T>(
 // guard and error-body parsing so failures read the same to the caller.
 async function get<T>(baseUrl: string, token: string, path: string): Promise<T> {
   const base = baseUrl.replace(/\/$/, "");
-  if (!/^https:\/\//i.test(base)) {
+  if (!/^https:\/\//i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(base)) {
     throw new CliError(
       `Refusing to call a non-https trade endpoint: ${base}`,
       "VALIDATION_ERROR",
-      "The ACP API base URL must be https://."
+      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
     );
   }
   let res: Response;
