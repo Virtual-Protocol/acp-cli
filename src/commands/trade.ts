@@ -368,10 +368,13 @@ export function registerTradeCommands(program: Command): void {
             chainOut: opts.toChain ?? 42161,
             amountIn: opts.amount,
             recipient: opts.destination,
-            // The parent `trade` command also declares --dry-run, and commander
-            // assigns the flag to the parent even when it appears after the
-            // subcommand — read the merged view or the preview silently runs live.
+            // The parent `trade` command also declares --dry-run and
+            // --accept-impact, and commander assigns such flags to the parent
+            // even when they appear after the subcommand — read the merged
+            // view or the preview silently runs live / the impact opt-in is
+            // silently dropped.
             dryRun: cmd.optsWithGlobals().dryRun,
+            acceptImpact: cmd.optsWithGlobals().acceptImpact,
           },
           json
         );
@@ -464,15 +467,24 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
 
   let plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
   // High price-impact gate: the server plans nothing and asks for explicit
-  // opt-in. With --accept-impact, re-plan once echoing acceptImpactBps;
-  // otherwise surface the warning as a clean error instead of "Unknown action".
-  if (plan.action.kind === "confirm") {
+  // opt-in. With --accept-impact, re-plan echoing acceptImpactBps; the fresh
+  // quote can come back with a WORSE loss (another confirm), so loop a few
+  // times before giving up — and always exit cleanly rather than letting a
+  // confirm fall into the trade loop ("Unknown action kind: confirm").
+  for (let attempt = 0; plan.action.kind === "confirm"; attempt++) {
     const confirm = plan.action;
     if (!opts.acceptImpact) {
       throw new CliError(
         confirm.message,
         "PRICE_IMPACT_HIGH",
         "Re-run with --accept-impact to proceed anyway, or lower the amount."
+      );
+    }
+    if (attempt >= 2) {
+      throw new CliError(
+        `Price impact kept worsening across re-quotes (now ~${(confirm.valueLossBps / 100).toFixed(1)}%): ${confirm.message}`,
+        "PRICE_IMPACT_HIGH",
+        "The route is losing more on every quote — lower the amount or try again later."
       );
     }
     progress(
