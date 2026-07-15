@@ -211,7 +211,11 @@ export async function getAgentApi(): Promise<AgentApi> {
  */
 export async function getApiContext(): Promise<{ apiUrl: string; token: string }> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
-  const token = await resolveToken(apiUrl);
+  const realUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  // Resolve/refresh the bearer against the REAL ACP server so auth always works.
+  const token = await resolveToken(realUrl);
+  // LOCAL TEST ONLY: route /trade/* to a local proxy shim when set, leaving
+  // token resolution untouched. Unset in normal use → real ACP backend.
+  const apiUrl = process.env.ACP_TRADE_BASE_URL?.trim() || realUrl;
   return { apiUrl, token };
 }
