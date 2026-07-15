@@ -739,6 +739,31 @@ const TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
 // (e.g. a LiFi quote inside /trade/next) but bounded.
 const REQUEST_TIMEOUT_MS = 120_000;
 
+// Calldata to sign flows back over trade connections, so refuse plaintext to
+// any host except genuine local loopback. Parse with URL rather than a prefix
+// regex: `http://127.0.0.1:80@evil.com` starts with an allowed prefix but the
+// "127.0.0.1:80" is userinfo — fetch would connect to evil.com in the clear.
+function assertTrustedTradeEndpoint(base: string): void {
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    throw new CliError(
+      `Trade endpoint is not a valid URL: ${base}`,
+      "VALIDATION_ERROR",
+      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
+    );
+  }
+  const isLoopback = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopback)) {
+    throw new CliError(
+      `Refusing to call a non-https trade endpoint: ${base}`,
+      "VALIDATION_ERROR",
+      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
+    );
+  }
+}
+
 async function post<T>(
   baseUrl: string,
   token: string,
@@ -752,13 +777,7 @@ async function post<T>(
   const base = baseUrl.replace(/\/$/, "");
   // Calldata to sign flows back over this connection, so refuse plaintext: a
   // downgraded/MITM'd hop could feed the signer malicious transactions.
-  if (!/^https:\/\//i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(base)) {
-    throw new CliError(
-      `Refusing to call a non-https trade endpoint: ${base}`,
-      "VALIDATION_ERROR",
-      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
-    );
-  }
+  assertTrustedTradeEndpoint(base);
   let tok = token;
   let refreshedAuth = false;
   for (let attempt = 0; ; attempt++) {
@@ -833,13 +852,7 @@ async function post<T>(
 // guard and error-body parsing so failures read the same to the caller.
 async function get<T>(baseUrl: string, token: string, path: string): Promise<T> {
   const base = baseUrl.replace(/\/$/, "");
-  if (!/^https:\/\//i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(base)) {
-    throw new CliError(
-      `Refusing to call a non-https trade endpoint: ${base}`,
-      "VALIDATION_ERROR",
-      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
-    );
-  }
+  assertTrustedTradeEndpoint(base);
   let res: Response;
   try {
     res = await fetch(base + path, {
