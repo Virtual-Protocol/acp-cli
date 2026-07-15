@@ -359,6 +359,11 @@ export function registerTradeCommands(program: Command): void {
     .option("--destination <addr>", "Destination address (default: active wallet)")
     .option("--to-chain <id>", "Final chain (default: Arbitrum). Others withdraw to Arbitrum, then bridge.")
     .option("--dry-run", "Preview the withdrawal without submitting it", false)
+    .option(
+      "--accept-impact",
+      "Proceed through the server's high price-impact warning on the bridge leg",
+      false
+    )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
