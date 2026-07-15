@@ -180,6 +180,19 @@ interface PreviewAction {
   summary: string;
   legs?: unknown[];
 }
+// Pre-execution stop: the trade is viable but loses more value than the
+// server's price-impact warn threshold. Nothing was signed or submitted.
+// Re-plan the same request with `acceptImpactBps` echoed back to proceed.
+// Mirrors trading-agent's ConfirmAction.
+interface ConfirmAction {
+  kind: "confirm";
+  code: string;
+  message: string;
+  valueLossBps: number;
+  provider?: string;
+  acceptImpactBps: number;
+  retryable: boolean;
+}
 type Action =
   | SendAction
   | SendBatchAction
@@ -187,7 +200,8 @@ type Action =
   | WaitAction
   | DoneAction
   | ErrorAction
-  | PreviewAction;
+  | PreviewAction
+  | ConfirmAction;
 
 interface PlanResponse {
   tradeId: string;
@@ -282,6 +296,11 @@ export function registerTradeCommands(program: Command): void {
     .option("--isolated", "Use isolated margin when setting leverage", false)
     .option("--reduce-only", "Only reduce an existing perp position", false)
     .option("--dry-run", "Preview the trade (route, size, margin, fees) without signing or submitting anything", false)
+    .option(
+      "--accept-impact",
+      "Proceed through the server's high price-impact warning (re-plans with the echoed acceptImpactBps)",
+      false
+    )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -340,6 +359,11 @@ export function registerTradeCommands(program: Command): void {
     .option("--destination <addr>", "Destination address (default: active wallet)")
     .option("--to-chain <id>", "Final chain (default: Arbitrum). Others withdraw to Arbitrum, then bridge.")
     .option("--dry-run", "Preview the withdrawal without submitting it", false)
+    .option(
+      "--accept-impact",
+      "Proceed through the server's high price-impact warning on the bridge leg",
+      false
+    )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -349,10 +373,13 @@ export function registerTradeCommands(program: Command): void {
             chainOut: opts.toChain ?? 42161,
             amountIn: opts.amount,
             recipient: opts.destination,
-            // The parent `trade` command also declares --dry-run, and commander
-            // assigns the flag to the parent even when it appears after the
-            // subcommand — read the merged view or the preview silently runs live.
+            // The parent `trade` command also declares --dry-run and
+            // --accept-impact, and commander assigns such flags to the parent
+            // even when they appear after the subcommand — read the merged
+            // view or the preview silently runs live / the impact opt-in is
+            // silently dropped.
             dryRun: cmd.optsWithGlobals().dryRun,
+            acceptImpact: cmd.optsWithGlobals().acceptImpact,
           },
           json
         );
@@ -443,7 +470,37 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
     }
   }
 
-  const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
+  let plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
+  // High price-impact gate: the server plans nothing and asks for explicit
+  // opt-in. With --accept-impact, re-plan echoing acceptImpactBps; the fresh
+  // quote can come back with a WORSE loss (another confirm), so loop a few
+  // times before giving up — and always exit cleanly rather than letting a
+  // confirm fall into the trade loop ("Unknown action kind: confirm").
+  for (let attempt = 0; plan.action.kind === "confirm"; attempt++) {
+    const confirm = plan.action;
+    if (!opts.acceptImpact) {
+      throw new CliError(
+        confirm.message,
+        "PRICE_IMPACT_HIGH",
+        "Re-run with --accept-impact to proceed anyway, or lower the amount."
+      );
+    }
+    if (attempt >= 2) {
+      throw new CliError(
+        `Price impact kept worsening across re-quotes (now ~${(confirm.valueLossBps / 100).toFixed(1)}%): ${confirm.message}`,
+        "PRICE_IMPACT_HIGH",
+        "The route is losing more on every quote — lower the amount or try again later."
+      );
+    }
+    progress(
+      json,
+      `High price impact (~${(confirm.valueLossBps / 100).toFixed(1)}%) accepted — re-planning`
+    );
+    plan = await post(apiUrl, token, "/trade/plan", {
+      ...body,
+      acceptImpactBps: confirm.acceptImpactBps,
+    });
+  }
   progress(
     json,
     `Trade ${plan.tradeId.slice(0, 8)}` +
@@ -682,6 +739,31 @@ const TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
 // (e.g. a LiFi quote inside /trade/next) but bounded.
 const REQUEST_TIMEOUT_MS = 120_000;
 
+// Calldata to sign flows back over trade connections, so refuse plaintext to
+// any host except genuine local loopback. Parse with URL rather than a prefix
+// regex: `http://127.0.0.1:80@evil.com` starts with an allowed prefix but the
+// "127.0.0.1:80" is userinfo — fetch would connect to evil.com in the clear.
+function assertTrustedTradeEndpoint(base: string): void {
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    throw new CliError(
+      `Trade endpoint is not a valid URL: ${base}`,
+      "VALIDATION_ERROR",
+      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
+    );
+  }
+  const isLoopback = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopback)) {
+    throw new CliError(
+      `Refusing to call a non-https trade endpoint: ${base}`,
+      "VALIDATION_ERROR",
+      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
+    );
+  }
+}
+
 async function post<T>(
   baseUrl: string,
   token: string,
@@ -695,13 +777,7 @@ async function post<T>(
   const base = baseUrl.replace(/\/$/, "");
   // Calldata to sign flows back over this connection, so refuse plaintext: a
   // downgraded/MITM'd hop could feed the signer malicious transactions.
-  if (!/^https:\/\//i.test(base)) {
-    throw new CliError(
-      `Refusing to call a non-https trade endpoint: ${base}`,
-      "VALIDATION_ERROR",
-      "The ACP API base URL must be https://."
-    );
-  }
+  assertTrustedTradeEndpoint(base);
   let tok = token;
   let refreshedAuth = false;
   for (let attempt = 0; ; attempt++) {
@@ -776,13 +852,7 @@ async function post<T>(
 // guard and error-body parsing so failures read the same to the caller.
 async function get<T>(baseUrl: string, token: string, path: string): Promise<T> {
   const base = baseUrl.replace(/\/$/, "");
-  if (!/^https:\/\//i.test(base)) {
-    throw new CliError(
-      `Refusing to call a non-https trade endpoint: ${base}`,
-      "VALIDATION_ERROR",
-      "The ACP API base URL must be https://."
-    );
-  }
+  assertTrustedTradeEndpoint(base);
   let res: Response;
   try {
     res = await fetch(base + path, {

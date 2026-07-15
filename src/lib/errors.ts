@@ -12,7 +12,8 @@ export type ErrorCode =
   | "TIMEOUT"
   | "SLIPPAGE_TOO_LOW"
   | "INSUFFICIENT_GAS"
-  | "APPROVAL_REQUIRED";
+  | "APPROVAL_REQUIRED"
+  | "PRICE_IMPACT_HIGH";
 
 export class CliError extends Error {
   code: ErrorCode;
