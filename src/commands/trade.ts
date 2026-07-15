@@ -143,6 +143,23 @@ function isSolanaChainRef(v: unknown): boolean {
   );
 }
 
+// A TOKEN reference that means a Solana asset — so a swap that spends from or
+// delivers to Solana attaches solWallet even when no Solana CHAIN ref was passed
+// (e.g. `--token-out sol` with no --chain-out: the destination is Solana but
+// chainOut is omitted, so isSolanaChainRef alone misses it and the backend then
+// rejects with "recipient is required for non-EVM destinations"). Matches the
+// native-SOL symbol aliases and a base58 mint address — a Solana pubkey is
+// base58 in the 32–44 char range and, unlike an EVM address, is never
+// 0x-prefixed. Bare EVM tickers (short) and 0x addresses never match.
+function isSolanaTokenRef(v: unknown): boolean {
+  if (v === undefined) return false;
+  const s = String(v).trim();
+  const lower = s.toLowerCase();
+  if (lower === "sol" || lower === "wsol") return true;
+  if (s.startsWith("0x")) return false;
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s);
+}
+
 // Minimal base58 decode (Solana alphabet) — the adapter returns base58
 // signatures but the trade wire format is base64 of the raw bytes.
 const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -463,7 +480,9 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   const solanaExplicit =
     isSolanaChainRef(opts.chain) ||
     isSolanaChainRef(opts.chainIn) ||
-    isSolanaChainRef(opts.chainOut);
+    isSolanaChainRef(opts.chainOut) ||
+    isSolanaTokenRef(opts.tokenIn) ||
+    isSolanaTokenRef(opts.tokenOut);
   const couldRouteViaSolana = solanaExplicit || isUnpinnedTokenBuy;
   if (couldRouteViaSolana) {
     try {
@@ -594,13 +613,22 @@ export async function runTradeLoop(
     if (action.kind === "send") {
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
-        const txHash = await requireSigner().sendTransaction(action.chainId, {
-          to: action.to as `0x${string}`,
-          data: action.data as `0x${string}`,
-          ...(action.value && action.value !== "0"
-            ? { value: BigInt(action.value) }
-            : {}),
-        });
+        // Route through sendCalls (EIP-5792), NOT sendTransaction: sendCalls uses
+        // the app-sponsored gas client (Alchemy Gas Manager pays), whereas
+        // sendTransaction uses the ERC-20 paymaster that bills the user's USDC —
+        // which fails on any source chain where the wallet holds no USDC (e.g. a
+        // BNB→SOL swap originating on BSC). Sponsorship is the whole point of the
+        // fee model, so every trade leg must take the sponsored path.
+        const result = await requireSigner().sendCalls(action.chainId, [
+          {
+            to: action.to as `0x${string}`,
+            data: action.data as `0x${string}`,
+            ...(action.value && action.value !== "0"
+              ? { value: BigInt(action.value) }
+              : {}),
+          },
+        ]);
+        const txHash = Array.isArray(result) ? result[0] : result;
         nextBody = { tradeId: plan.tradeId, step, txHash };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -612,13 +640,14 @@ export async function runTradeLoop(
       }
     } else if (action.kind === "sendBatch") {
       // Atomic bundle (e.g. [approve, swap]): one signature, one on-chain tx.
-      // sendTransaction accepts Call[] and folds them into a single UserOp via
-      // the same ERC-20-gas/paymaster client as a plain send, waits for
-      // inclusion, and returns the bundle's ONE tx hash; the server settles
-      // every batched leg off that hash, so post it back like a single send.
+      // sendCalls folds the calls into a single UserOp on the app-sponsored gas
+      // client (Alchemy Gas Manager pays the gas), waits for inclusion, and
+      // returns the bundle's ONE tx hash; the server settles every batched leg
+      // off that hash, so post it back like a single send. (Was sendTransaction,
+      // which used the ERC-20 paymaster that bills the user's USDC — unsponsored.)
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
-        const txHash = await requireSigner().sendTransaction(
+        const result = await requireSigner().sendCalls(
           action.chainId,
           action.calls.map((c) => ({
             to: c.to as `0x${string}`,
@@ -626,6 +655,7 @@ export async function runTradeLoop(
             ...(c.value && c.value !== "0" ? { value: BigInt(c.value) } : {}),
           }))
         );
+        const txHash = Array.isArray(result) ? result[0] : result;
         nextBody = { tradeId: plan.tradeId, step, txHash };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
