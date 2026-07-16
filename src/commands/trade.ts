@@ -265,6 +265,7 @@ export function registerTradeCommands(program: Command): void {
         "  acp trade --token AAPL --amount-usdc 50                          # buy tokenized AAPL with USDC on Ethereum\n" +
         "  acp trade --token AAPL --token-in eth --chain-in 8453 --amount-in 0.02  # buy AAPL, funded by ETH on Base\n" +
         "  acp trade --token AAPL --amount-shares 0.1                       # sell 0.1 tokenized AAPL shares (Treasures)\n" +
+        "  acp trade --token AAPL --amount-shares 3 --chain eth --token-out usdc --chain-out 8453  # sell AAPL → proceeds as USDC on Base\n" +
         "  acp trade hl-status                                                  # HL account only; use `acp wallet balance` for on-chain balances\n"
     )
     // -- Swap / deposit / HL spot / HL withdraw (token-pair shape) --------
