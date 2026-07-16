@@ -761,7 +761,7 @@ The command **blocks until the bridge settles** — it signs the source-chain tx
 
 **Tokenized stocks (spot buy/sell):**
 
-Buy or sell real tokenized equities. Spot — you receive the share token, no leverage or funding. The backend auto-routes the venue and chain; you never specify one. Buys can spend USDC you already hold or be funded from another chain (it bridges first). Sells need an explicit `--chain eth|sol` (the server can't see which chain holds your shares).
+Buy or sell real tokenized equities. Spot — you receive the share token, no leverage or funding. The backend auto-routes the venue and chain; you never specify one. Buys can spend USDC you already hold or be funded from another chain (it bridges first). Sells need an explicit `--chain eth|sol` (the server can't see which chain holds your shares). A sell settles as USDC on Ethereum by default; to land the proceeds elsewhere, add `--token-out`/`--chain-out` and the `eth` venue bridges the USDC onward in the same command (a non-USDC `--token-out` requires `--chain-out`). Onward delivery is eth-venue only — a `--chain sol` sell delivers USDC to your Solana wallet and stays there.
 
 ```bash
 # Buy $5 of AAPL with USDC you hold (venue auto-picked)
@@ -772,6 +772,11 @@ acp trade --token AAPL --token-in virtual --chain-in 8453 --amount-in 8
 
 # Sell 0.01 AAPL shares (delivers USDC; --chain required on sells)
 acp trade --token AAPL --amount-shares 0.01 --chain sol
+
+# Sell 3 AAPL shares, receive the proceeds as USDC on Base (eth venue bridges onward)
+acp trade --token AAPL --amount-shares 3 --chain eth --token-out usdc --chain-out 8453
+# ...or as ETH on Arbitrum — a non-USDC --token-out requires --chain-out (chain never guessed)
+acp trade --token AAPL --amount-shares 3 --chain eth --token-out eth --chain-out 42161
 ```
 
 **Hyperliquid — perps:**
