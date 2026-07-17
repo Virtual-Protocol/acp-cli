@@ -1,6 +1,7 @@
 import { CliError } from "../errors";
 import { outputError } from "../output";
 import { ApiClient } from "./client";
+import type { Web3Instruction } from "../solana";
 
 export interface AddSignerResponse {
   message: string;
@@ -1267,8 +1268,7 @@ export class AgentApi {
     return res.data;
   }
 
-  async prepareLaunch(
-    agentId: string,
+  private buildPrepareLaunchPayload(
     chainId: number,
     symbol: string,
     antiSniperTaxType?: number,
@@ -1277,7 +1277,7 @@ export class AgentApi {
     airdropPercent?: number,
     isRobotics?: boolean,
     prebuyAmount?: string
-  ): Promise<PrepareLaunchResponse> {
+  ): Record<string, unknown> {
     const payload: Record<string, unknown> = {
       chainId,
       symbol,
@@ -1297,7 +1297,61 @@ export class AgentApi {
       payload.prebuyAmount = prebuyAmount;
     }
 
+    return payload;
+  }
+
+  async prepareLaunch(
+    agentId: string,
+    chainId: number,
+    symbol: string,
+    antiSniperTaxType?: number,
+    needAcf?: boolean,
+    isProject60days?: boolean,
+    airdropPercent?: number,
+    isRobotics?: boolean,
+    prebuyAmount?: string
+  ): Promise<PrepareLaunchResponse> {
+    const payload = this.buildPrepareLaunchPayload(
+      chainId,
+      symbol,
+      antiSniperTaxType,
+      needAcf,
+      isProject60days,
+      airdropPercent,
+      isRobotics,
+      prebuyAmount
+    );
+
     const res = await this.client.post<{ data: PrepareLaunchResponse }>(
+      `/agents/${agentId}/prepare-launch`,
+      payload
+    );
+    return res.data;
+  }
+
+  async prepareSolanaLaunch(
+    agentId: string,
+    chainId: number,
+    symbol: string,
+    antiSniperTaxType?: number,
+    needAcf?: boolean,
+    isProject60days?: boolean,
+    airdropPercent?: number,
+    isRobotics?: boolean,
+    prebuyAmount?: string
+  ): Promise<SolanaPrepareLaunchResponse> {
+    const payload = this.buildPrepareLaunchPayload(
+      chainId,
+      symbol,
+      antiSniperTaxType,
+      needAcf,
+      isProject60days,
+      airdropPercent,
+      isRobotics,
+      prebuyAmount
+    );
+
+    const res = await this.client.post<{ data: SolanaPrepareLaunchResponse }>(
       `/agents/${agentId}/prepare-launch`,
       payload
     );
@@ -1344,4 +1398,20 @@ export interface PrepareLaunchResponse {
   launchFee: string;
   approveCalldata: string;
   preLaunchCalldata: string;
+}
+
+export interface SolanaPrepareLaunchResponse {
+  chain: "SOLANA";
+  virtualId: number;
+  programId: string;
+  quoteMint: string;
+  baseMint: string;
+  launchPda: string;
+  escrowQuoteAta: string;
+  creatorQuoteAta: string;
+  nonce: string;
+  launchFee: string;
+  purchaseAmount: string;
+  instructions: Web3Instruction[];
+  launchInfo: Record<string, unknown>;
 }

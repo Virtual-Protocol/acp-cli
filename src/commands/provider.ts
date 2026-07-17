@@ -1,10 +1,33 @@
 import type { Command } from "commander";
+import type { AcpAgent } from "@virtuals-protocol/acp-node-v2";
 import { AssetToken } from "@virtuals-protocol/acp-node-v2";
 import { createAgentFromConfig } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { CliError } from "../lib/errors";
+import { isSolanaChainId } from "../lib/chains";
 import { c } from "../lib/color";
 import { resolveSubscriptionAddon } from "../lib/subscription";
+
+async function resolveTransferAsset(
+  agent: AcpAgent,
+  chainId: number,
+  amount: number,
+  tokenAddress?: string
+): Promise<AssetToken> {
+  if (!tokenAddress) return AssetToken.usdc(amount, chainId);
+  if (isSolanaChainId(chainId)) {
+    const decimals = await agent
+      .getClient(chainId)
+      .getTokenDecimals(chainId, tokenAddress);
+    // @ts-ignore
+    return AssetToken.create(tokenAddress, "SPL", decimals, amount);
+  }
+  return agent.resolveAssetToken(
+    tokenAddress as `0x${string}`,
+    amount,
+    chainId
+  );
+}
 
 export function registerProviderCommands(program: Command): void {
   const provider = program
@@ -95,7 +118,7 @@ export function registerProviderCommands(program: Command): void {
     )
     .option(
       "--transfer-token <address>",
-      "ERC-20 token contract address for the fund transfer (defaults to USDC)"
+      "Token address for the fund transfer — ERC-20 contract (EVM) or SPL mint (Solana); defaults to USDC"
     )
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
     .option("--package-id <id>", "Package ID")
@@ -114,13 +137,12 @@ export function registerProviderCommands(program: Command): void {
               "Run `acp job list` to see your active jobs."
             );
           }
-          const transferToken = opts.transferToken
-            ? await agent.resolveAssetToken(
-                opts.transferToken as `0x${string}`,
-                Number(opts.transferAmount),
-                chainId
-              )
-            : AssetToken.usdc(Number(opts.transferAmount), chainId);
+          const transferToken = await resolveTransferAsset(
+            agent,
+            chainId,
+            Number(opts.transferAmount),
+            opts.transferToken
+          );
 
           const { subscription, totalBudget } = await resolveSubscriptionAddon(
             agent,
@@ -189,7 +211,7 @@ export function registerProviderCommands(program: Command): void {
     )
     .option(
       "--transfer-token <address>",
-      "ERC-20 token contract address for the transfer (defaults to USDC)"
+      "Token address for the transfer — ERC-20 contract (EVM) or SPL mint (Solana); defaults to USDC"
     )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -214,13 +236,12 @@ export function registerProviderCommands(program: Command): void {
             );
           }
           const transferToken = opts.transferAmount
-            ? opts.transferToken
-              ? await agent.resolveAssetToken(
-                  opts.transferToken as `0x${string}`,
-                  Number(opts.transferAmount),
-                  chainId
-                )
-              : AssetToken.usdc(Number(opts.transferAmount), chainId)
+            ? await resolveTransferAsset(
+                agent,
+                chainId,
+                Number(opts.transferAmount),
+                opts.transferToken
+              )
             : undefined;
           await session.submit(opts.deliverable, transferToken);
           if (json) {

@@ -43,14 +43,20 @@ import {
   createAgentFromConfig,
   createProviderAdapter,
 } from "../lib/agentFactory";
-import { EVM_CHAINS, EvmAcpClient } from "@virtuals-protocol/acp-node-v2";
 import {
-  checkVirtualBalance,
-  sendApprove,
-  sendPreLaunch,
+  EvmAcpClient,
+  EVM_CHAINS,
+  SOLANA_DEVNET_CHAIN_ID,
+  SOLANA_MAINNET_CHAIN_ID,
+} from "@virtuals-protocol/acp-node-v2";
+import {
+  tokenizeOnSolana,
+  tokenizeOnEvm,
+  convertPrebuyVirtual,
 } from "../lib/tokenize";
+import * as viemChains from "viem/chains";
+import { formatChainId, solanaChainId, isSolanaChainId } from "../lib/chains";
 import { formatEther, parseEther } from "viem";
-import { formatChainId } from "../lib/chains";
 
 // In --json mode the signer approval URL goes to stdout as JSON for machine
 // parsing, but many agent harnesses buffer or suppress stdout while passing
@@ -59,7 +65,7 @@ import { formatChainId } from "../lib/chains";
 // relays the JSON. Does not affect the stdout JSON contract.
 function emitSignerUrlToStderr(url: string): void {
   process.stderr.write(
-    `\n>>> Open this URL to approve the signer:\n\n    ${url}\n\n`
+    `\n>>> Open this URL to approve the signer:\n\n    ${url}\n\n`,
   );
 }
 
@@ -75,7 +81,7 @@ function parseLegacyId(raw: string, json: boolean): number | null {
 async function resolveAgent(
   agentApi: AgentApi,
   opts: { walletAddress?: string; agentId?: string },
-  json: boolean
+  json: boolean,
 ): Promise<Agent | null> {
   if (opts.agentId) {
     try {
@@ -85,7 +91,7 @@ async function resolveAgent(
         json,
         `Failed to fetch agent: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
       process.exit(1);
     }
@@ -94,12 +100,12 @@ async function resolveAgent(
     try {
       const result = await agentApi.list();
       const match = result.data.find(
-        (a) => a.walletAddress === opts.walletAddress
+        (a) => a.walletAddress === opts.walletAddress,
       );
       if (!match) {
         outputError(
           json,
-          `No agent found with wallet address: ${opts.walletAddress}`
+          `No agent found with wallet address: ${opts.walletAddress}`,
         );
         process.exit(1);
       }
@@ -109,7 +115,7 @@ async function resolveAgent(
         json,
         `Failed to fetch agents: ${
           err instanceof Error ? err.message : String(err)
-        }`
+        }`,
       );
       process.exit(1);
     }
@@ -134,7 +140,7 @@ async function startAddSignerFlow(
   json: boolean,
   agent: Agent,
   open: boolean,
-  policy: string = "restricted"
+  policy: string = "restricted",
 ): Promise<{ publicKey: string; signerUrl: string; requestId: string } | null> {
   let publicKey: string;
   try {
@@ -145,7 +151,7 @@ async function startAddSignerFlow(
       json,
       `Failed to generate key pair: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return null;
   }
@@ -161,7 +167,7 @@ async function startAddSignerFlow(
       json,
       `Failed to add signer: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return null;
   }
@@ -174,10 +180,10 @@ async function startAddSignerFlow(
 function persistSigner(
   json: boolean,
   agent: Agent,
-  publicKey: string
+  publicKey: string,
 ): boolean {
   const evmProvider = agent.walletProviders.find(
-    (wp) => (wp.chainType ?? "EVM") === "EVM"
+    (wp) => (wp.chainType ?? "EVM") === "EVM",
   );
   if (!evmProvider?.metadata.walletId) {
     outputError(json, "EVM wallet provider not found for this agent.");
@@ -196,7 +202,7 @@ type SignerCheck =
 async function checkSignerStatus(
   api: AgentApi,
   agentId: string,
-  requestId: string
+  requestId: string,
 ): Promise<SignerCheck> {
   try {
     const statusRes = await api.getSignerStatus(agentId, requestId);
@@ -216,7 +222,7 @@ async function completeAddSignerFlow(
   agent: Agent,
   publicKey: string,
   requestId: string,
-  timeoutMs: number = SIGNER_TIMEOUT_MS
+  timeoutMs: number = SIGNER_TIMEOUT_MS,
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -252,7 +258,7 @@ async function runAddSignerFlow(
   api: AgentApi,
   json: boolean,
   agent: Agent,
-  policy: string = "restricted"
+  policy: string = "restricted",
 ): Promise<boolean> {
   const started = await startAddSignerFlow(api, json, agent, !json, policy);
   if (!started) return false;
@@ -264,7 +270,7 @@ async function runAddSignerFlow(
   } else {
     console.log(`\nPublic Key: ${publicKey}`);
     console.log(
-      `\nOpening browser to verify the public key and approve the signer...`
+      `\nOpening browser to verify the public key and approve the signer...`,
     );
     console.log(`\n  ${signerUrl}\n`);
     console.log(`This link expires in 5 minutes.\n`);
@@ -279,7 +285,7 @@ async function runRegisterErc8004Flow(
   json: boolean,
   agent: Agent,
   chainId: number,
-  chainName: string
+  chainName: string,
 ): Promise<boolean> {
   let registerData: Erc8004RegisterTx;
   try {
@@ -289,7 +295,7 @@ async function runRegisterErc8004Flow(
       json,
       `Failed to prepare ERC-8004 registration: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return false;
   }
@@ -347,7 +353,7 @@ async function runRegisterErc8004Flow(
 
       const signature = await walletProvider.signTypedData(
         chainId,
-        typedDataArgs
+        typedDataArgs,
       );
 
       payload.signature = signature;
@@ -362,7 +368,7 @@ async function runRegisterErc8004Flow(
       json,
       `Failed to register on ERC-8004: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return false;
   } finally {
@@ -378,7 +384,7 @@ async function runRegisterErc8004Flow(
       json,
       `Registration finalization failed: ${
         err instanceof Error ? err.message : String(err)
-      }`
+      }`,
     );
     return false;
   }
@@ -400,10 +406,10 @@ export function registerAgentCommands(program: Command): void {
       "--policy <policy>",
       "Authorization policy for the signer set up after creation — set this explicitly when using --signer. " +
         SIGNER_POLICIES.map(
-          (p) => `${p}: ${SIGNER_POLICY_DESCRIPTIONS[p]}`
+          (p) => `${p}: ${SIGNER_POLICY_DESCRIPTIONS[p]}`,
         ).join("; ") +
         ". Or pass a custom policy id from `acp policy list`.",
-      "restricted"
+      "restricted",
     )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -419,9 +425,9 @@ export function registerAgentCommands(program: Command): void {
             "Policy cannot be empty.",
             "VALIDATION_ERROR",
             `Use a preset (${SIGNER_POLICIES.join(
-              ", "
-            )}) or a custom policy id from \`acp policy list\`.`
-          )
+              ", ",
+            )}) or a custom policy id from \`acp policy list\`.`,
+          ),
         );
         return;
       }
@@ -448,8 +454,8 @@ export function registerAgentCommands(program: Command): void {
             new CliError(
               "Agent name is required",
               "VALIDATION_ERROR",
-              'Pass --name in non-interactive mode, e.g. acp agent create --name "My Agent" --description "..." --json'
-            )
+              'Pass --name in non-interactive mode, e.g. acp agent create --name "My Agent" --description "..." --json',
+            ),
           );
           return;
         }
@@ -459,8 +465,8 @@ export function registerAgentCommands(program: Command): void {
             new CliError(
               "Agent description is required",
               "VALIDATION_ERROR",
-              'Pass --description in non-interactive mode. --image is OPTIONAL: omit it (or pass --image "") to create the agent without one.'
-            )
+              'Pass --description in non-interactive mode. --image is OPTIONAL: omit it (or pass --image "") to create the agent without one.',
+            ),
           );
           return;
         }
@@ -497,7 +503,7 @@ export function registerAgentCommands(program: Command): void {
             const imageInput = (
               await prompt(
                 rl,
-                "Agent image URL (optional, press Enter to skip): "
+                "Agent image URL (optional, press Enter to skip): ",
               )
             ).trim();
             if (imageInput) {
@@ -517,7 +523,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to create agent: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -548,13 +554,14 @@ export function registerAgentCommands(program: Command): void {
       }
 
       console.log(
-        `\n${c.green(`${created.name} has been created successfully!`)}\n`
+        `\n${c.green(`${created.name} has been created successfully!`)}\n`,
       );
 
       const tableRows: [string, string][] = [
         ["Name", created.name],
         ["Description", created.description],
         ["Wallet Address", created.walletAddress ?? "N/A"],
+        ["Sol Wallet Address", created.solWalletAddress ?? "N/A"],
       ];
       if (emailAddress) tableRows.push(["Email", emailAddress]);
       printTable(tableRows);
@@ -562,12 +569,12 @@ export function registerAgentCommands(program: Command): void {
       if (emailAddress) {
         console.log(
           `\n${c.green(
-            "An email identity has been created for this agent:"
-          )} ${c.cyan(emailAddress)}`
+            "An email identity has been created for this agent:",
+          )} ${c.cyan(emailAddress)}`,
         );
       } else if (emailError) {
         console.log(
-          `\n${c.yellow("Could not provision email identity:")} ${emailError}`
+          `\n${c.yellow("Could not provision email identity:")} ${emailError}`,
         );
       }
 
@@ -581,8 +588,8 @@ export function registerAgentCommands(program: Command): void {
         const answer = await new Promise<string>((resolve) =>
           signerRl.question(
             "\nWould you like to set up a signer for this agent? (y/N) ",
-            resolve
-          )
+            resolve,
+          ),
         );
         signerRl.close();
         setupSigner = answer.toLowerCase() === "y";
@@ -596,7 +603,7 @@ export function registerAgentCommands(program: Command): void {
         policy = await selectOption(
           "\nSelect the signer's policy:",
           SIGNER_POLICIES,
-          (p) => `${p} — ${SIGNER_POLICY_DESCRIPTIONS[p]}`
+          (p) => `${p} — ${SIGNER_POLICY_DESCRIPTIONS[p]}`,
         );
       }
 
@@ -605,32 +612,37 @@ export function registerAgentCommands(program: Command): void {
 
       try {
         const acpAgent = await createAgentFromConfig();
-        const client = acpAgent.getClient();
+
+        // Deploy for base chain only
+        const baseChainId = process.env.IS_TESTNET
+          ? viemChains.baseSepolia.id
+          : viemChains.base.id;
+
+        const chainIds = acpAgent.getSupportedChainIds();
+        if (chainIds.length === 0) return;
+        if (!chainIds.includes(baseChainId)) return;
+
+        const client = acpAgent.getClient(baseChainId);
         if (!(client instanceof EvmAcpClient)) return;
 
-        const chainIds = await client.getProvider().getSupportedChainIds();
-        if (chainIds.length === 0) return;
-
-        const firstChainId = chainIds[0];
         const chainById = new Map<number, string>(
-          EVM_CHAINS.map((c) => [c.id, c.name])
+          EVM_CHAINS.map((c) => [c.id, c.name]),
         );
-        const chainName =
-          chainById.get(firstChainId) ?? `Chain ${firstChainId}`;
+        const chainName = chainById.get(baseChainId) ?? `Chain ${baseChainId}`;
 
         await runRegisterErc8004Flow(
           agentApi,
           json,
           created,
-          firstChainId,
-          chainName
+          baseChainId,
+          chainName,
         );
       } catch (err) {
         outputError(
           json,
           `Failed to auto-register on ERC-8004: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
       }
     });
@@ -672,14 +684,14 @@ export function registerAgentCommands(program: Command): void {
             console.log(`  ${c.bold("Description:")}    ${a.description}`);
             console.log(`  ${c.bold("Role:")}           ${a.role}`);
             console.log(
-              `  ${c.bold("Wallet:")}         ${c.dim(a.walletAddress)}`
+              `  ${c.bold("Wallet:")}         ${c.dim(a.walletAddress)}`,
             );
             console.log(`  ${c.bold("Created:")}        ${c.dim(a.createdAt)}`);
           }
           console.log(
             `\n${c.dim(
-              `Page ${meta.pagination.page} of ${meta.pagination.pageCount} (${meta.pagination.total} total)`
-            )}`
+              `Page ${meta.pagination.page} of ${meta.pagination.pageCount} (${meta.pagination.total} total)`,
+            )}`,
           );
         } else {
           console.log("ID\tNAME\tROLE\tWALLET");
@@ -692,7 +704,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to list agents: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
       }
     });
@@ -717,7 +729,7 @@ export function registerAgentCommands(program: Command): void {
             json,
             `Failed to fetch agents: ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
           return;
         }
@@ -729,7 +741,7 @@ export function registerAgentCommands(program: Command): void {
 
         selected = await selectFromList(
           "Choose the agent to set as active:",
-          agents
+          agents,
         );
       }
 
@@ -749,22 +761,22 @@ export function registerAgentCommands(program: Command): void {
       "Add a signer to an agent. ALWAYS choose an explicit --policy that matches how much you want the " +
         "signer to be able to do on its own — don't rely on the default. " +
         `Policies: ${SIGNER_POLICIES.map(
-          (p) => `${p} (${SIGNER_POLICY_DESCRIPTIONS[p]})`
-        ).join("; ")}.`
+          (p) => `${p} (${SIGNER_POLICY_DESCRIPTIONS[p]})`,
+        ).join("; ")}.`,
     )
     .option("--agent-id <id>", "Agent ID")
     .option(
       "--policy <policy>",
       "Authorization policy for the signer — set this explicitly, don't depend on the default. " +
         SIGNER_POLICIES.map(
-          (p) => `${p}: ${SIGNER_POLICY_DESCRIPTIONS[p]}`
+          (p) => `${p}: ${SIGNER_POLICY_DESCRIPTIONS[p]}`,
         ).join("; ") +
         ". Or pass a custom policy id from `acp policy list`.",
-      "restricted"
+      "restricted",
     )
     .option(
       "--no-wait",
-      "Agent-friendly: generate the key, print {signerUrl, requestId, publicKey} and exit immediately instead of blocking. Finish with `acp agent signer-status`."
+      "Agent-friendly: generate the key, print {signerUrl, requestId, publicKey} and exit immediately instead of blocking. Finish with `acp agent signer-status`.",
     )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
@@ -779,9 +791,9 @@ export function registerAgentCommands(program: Command): void {
             "Policy cannot be empty.",
             "VALIDATION_ERROR",
             `Use a preset (${SIGNER_POLICIES.join(
-              ", "
-            )}) or a custom policy id from \`acp policy list\`.`
-          )
+              ", ",
+            )}) or a custom policy id from \`acp policy list\`.`,
+          ),
         );
         return;
       }
@@ -800,7 +812,7 @@ export function registerAgentCommands(program: Command): void {
             json,
             `Failed to fetch agents: ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
           return;
         }
@@ -817,15 +829,15 @@ export function registerAgentCommands(program: Command): void {
             new CliError(
               "Multiple agents found and no TTY to choose from.",
               "NO_ACTIVE_AGENT",
-              "Pass --agent-id <id> (see `acp agent list --json`), or set an active agent with `acp agent use`."
-            )
+              "Pass --agent-id <id> (see `acp agent list --json`), or set an active agent with `acp agent use`.",
+            ),
           );
           return;
         }
 
         selected = await selectFromList(
           "Choose the agent you wish to add a new signer:",
-          agents
+          agents,
         );
       }
 
@@ -840,7 +852,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           selected,
           false,
-          policy
+          policy,
         );
         if (!started) return;
         outputResult(json, {
@@ -860,24 +872,24 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("signer-status")
     .description(
-      "Complete a split `add-signer --no-wait` flow: check approval and persist the signer. Returns {status:'pending'} until approved."
+      "Complete a split `add-signer --no-wait` flow: check approval and persist the signer. Returns {status:'pending'} until approved.",
     )
     .requiredOption(
       "--request-id <requestId>",
-      "The requestId returned by `acp agent add-signer --no-wait`"
+      "The requestId returned by `acp agent add-signer --no-wait`",
     )
     .requiredOption(
       "--public-key <publicKey>",
-      "The publicKey returned by `acp agent add-signer --no-wait`"
+      "The publicKey returned by `acp agent add-signer --no-wait`",
     )
     .option("--agent-id <id>", "Agent ID (defaults to the active agent)")
     .option(
       "--wait",
-      "Block and keep polling until approved or timeout, instead of a single check"
+      "Block and keep polling until approved or timeout, instead of a single check",
     )
     .option(
       "--timeout <seconds>",
-      "With --wait, maximum seconds to wait (default 300)"
+      "With --wait, maximum seconds to wait (default 300)",
     )
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
@@ -890,8 +902,8 @@ export function registerAgentCommands(program: Command): void {
           new CliError(
             "No agent resolved.",
             "NO_ACTIVE_AGENT",
-            "Pass --agent-id <id> or set an active agent with `acp agent use`."
-          )
+            "Pass --agent-id <id> or set an active agent with `acp agent use`.",
+          ),
         );
         return;
       }
@@ -909,7 +921,7 @@ export function registerAgentCommands(program: Command): void {
           selected,
           publicKey,
           requestId,
-          timeoutMs
+          timeoutMs,
         );
         return;
       }
@@ -934,7 +946,7 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("signer-policy")
     .description(
-      "Show which wallet policy the active agent's signer is currently using."
+      "Show which wallet policy the active agent's signer is currently using.",
     )
     .option("--agent-id <id>", "Agent ID (defaults to the active agent)")
     .action(async (opts, cmd) => {
@@ -956,8 +968,8 @@ export function registerAgentCommands(program: Command): void {
             new CliError(
               "No active agent set.",
               "NO_ACTIVE_AGENT",
-              "Pass --agent-id <id> or set an active agent with `acp agent use`."
-            )
+              "Pass --agent-id <id> or set an active agent with `acp agent use`.",
+            ),
           );
           return;
         }
@@ -968,8 +980,8 @@ export function registerAgentCommands(program: Command): void {
             new CliError(
               "Agent ID not found for active wallet.",
               "NO_ACTIVE_AGENT",
-              "Run `acp agent list` or `acp agent use` to populate it."
-            )
+              "Run `acp agent list` or `acp agent use` to populate it.",
+            ),
           );
           return;
         }
@@ -984,7 +996,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to fetch signers: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -999,10 +1011,10 @@ export function registerAgentCommands(program: Command): void {
           policyApi.getGlobalPolicies(),
         ]);
         (custom.data ?? []).forEach((p: Policy) =>
-          nameById.set(p.policyId, p.name)
+          nameById.set(p.policyId, p.name),
         );
         (global.data ?? []).forEach((g: GlobalPolicy) =>
-          nameById.set(g.policyId, g.name)
+          nameById.set(g.policyId, g.name),
         );
       } catch {
         // Name resolution is a nicety; raw ids are still meaningful.
@@ -1020,7 +1032,9 @@ export function registerAgentCommands(program: Command): void {
       const mine =
         (publicKey &&
           signers.find((s) =>
-            (s.authorization_keys ?? []).some((k) => k.public_key === publicKey)
+            (s.authorization_keys ?? []).some(
+              (k) => k.public_key === publicKey,
+            ),
           )) ||
         (signers.length === 1 ? signers[0] : undefined);
 
@@ -1058,8 +1072,8 @@ export function registerAgentCommands(program: Command): void {
       }
       console.log(
         `\n${c.yellow(
-          "Could not match this CLI's signer key; showing all signers:"
-        )}\n`
+          "Could not match this CLI's signer key; showing all signers:",
+        )}\n`,
       );
       printTable(signers.map((s) => [s.display_name || s.id, describe(s)]));
     });
@@ -1067,7 +1081,7 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("set-signer-policy")
     .description(
-      "Change or remove the active signer's policy (opens the dashboard — requires wallet-owner approval)."
+      "Change or remove the active signer's policy (opens the dashboard — requires wallet-owner approval).",
     )
     .option("--agent-id <id>", "Agent ID (defaults to the active agent)")
     .option("--open", "Also open the dashboard in a browser")
@@ -1090,10 +1104,10 @@ export function registerAgentCommands(program: Command): void {
       }
       console.log(
         `\n${c.yellow(
-          "Changing a signer's policy requires wallet-owner approval."
+          "Changing a signer's policy requires wallet-owner approval.",
         )}\n` +
           `This signs with your wallet owner's session, which only the dashboard can do.\n\n` +
-          `Open it here:\n\n    ${url}\n`
+          `Open it here:\n\n    ${url}\n`,
       );
       if (opts.open === true) openBrowser(url);
     });
@@ -1101,7 +1115,7 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("generate-signer-key")
     .description(
-      "Generate a P-256 signer keypair locally. The private key stays in the keystore; the public key is printed for partner-side agent provisioning."
+      "Generate a P-256 signer keypair locally. The private key stays in the keystore; the public key is printed for partner-side agent provisioning.",
     )
     .action((_opts, cmd) => {
       const json = isJson(cmd);
@@ -1112,7 +1126,7 @@ export function registerAgentCommands(program: Command): void {
         } else {
           console.log(`\nPublic Key: ${publicKey}\n`);
           console.log(
-            "Send this public key to your partner provisioning API. Keep using this CLI on the same machine to retain access to the private key."
+            "Send this public key to your partner provisioning API. Keep using this CLI on the same machine to retain access to the private key.",
           );
         }
       } catch (err) {
@@ -1120,7 +1134,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to generate key pair: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
       }
     });
@@ -1128,22 +1142,22 @@ export function registerAgentCommands(program: Command): void {
   agent
     .command("link")
     .description(
-      "Link an existing local signer keypair to an agent that was provisioned externally (e.g. by a partner backend)."
+      "Link an existing local signer keypair to an agent that was provisioned externally (e.g. by a partner backend).",
     )
     .requiredOption("--agent-id <id>", "Agent ID returned by the partner")
     .requiredOption(
       "--wallet <address>",
-      "Agent's wallet address returned by the partner"
+      "Agent's wallet address returned by the partner",
     )
     .requiredOption(
       "--signer-public-key <key>",
-      "Public key previously emitted by `acp agent generate-signer-key`"
+      "Public key previously emitted by `acp agent generate-signer-key`",
     )
     .option("--wallet-id <id>", "Privy wallet ID (optional)")
     .option(
       "--make-active",
       "Also set this agent as the currently active one",
-      false
+      false,
     )
     .action((opts, cmd) => {
       const json = isJson(cmd);
@@ -1164,7 +1178,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to link agent: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
       }
     });
@@ -1183,8 +1197,8 @@ export function registerAgentCommands(program: Command): void {
           new CliError(
             "No active agent set.",
             "NO_ACTIVE_AGENT",
-            "Run `acp agent use` to set an active agent."
-          )
+            "Run `acp agent use` to set an active agent.",
+          ),
         );
         return;
       }
@@ -1196,8 +1210,8 @@ export function registerAgentCommands(program: Command): void {
           new CliError(
             "Agent ID not found for active wallet.",
             "NO_ACTIVE_AGENT",
-            "Run `acp agent list` or `acp agent use` to populate it."
-          )
+            "Run `acp agent list` or `acp agent use` to populate it.",
+          ),
         );
         return;
       }
@@ -1210,7 +1224,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to fetch agent: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -1224,14 +1238,14 @@ export function registerAgentCommands(program: Command): void {
         const agentChains = agentData.chains ?? [];
 
         const supportedChains = await createProviderAdapter().then((provider) =>
-          provider.getSupportedChainIds()
+          provider.getSupportedChainIds(),
         );
 
         let tokenRows: [string, string][] = [];
 
         for (const chainId of supportedChains) {
           const selectedChain = agentChains.find(
-            (ch) => ch.chainId === chainId
+            (ch) => ch.chainId === chainId,
           );
           const tokenAddress = selectedChain?.tokenAddress;
           const erc8004AgentId = selectedChain?.erc8004AgentId;
@@ -1296,7 +1310,7 @@ export function registerAgentCommands(program: Command): void {
         console.log(
           `${agentData.name}\t${agentData.role}\t${
             agentData.walletAddress ?? "N/A"
-          }\t${agentData.id}`
+          }\t${agentData.id}`,
         );
       }
     });
@@ -1319,7 +1333,7 @@ export function registerAgentCommands(program: Command): void {
       if (!name && !description && imageUrl === undefined) {
         outputError(
           json,
-          "Provide at least one of --name, --description, or --image to update."
+          "Provide at least one of --name, --description, or --image to update.",
         );
         return;
       }
@@ -1331,8 +1345,8 @@ export function registerAgentCommands(program: Command): void {
           new CliError(
             "No active agent set.",
             "NO_ACTIVE_AGENT",
-            "Run `acp agent use` to set an active agent."
-          )
+            "Run `acp agent use` to set an active agent.",
+          ),
         );
         return;
       }
@@ -1344,8 +1358,8 @@ export function registerAgentCommands(program: Command): void {
           new CliError(
             "Agent ID not found for active wallet.",
             "NO_ACTIVE_AGENT",
-            "Run `acp agent list` or `acp agent use` to populate it."
-          )
+            "Run `acp agent list` or `acp agent use` to populate it.",
+          ),
         );
         return;
       }
@@ -1363,7 +1377,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to update agent: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -1379,7 +1393,7 @@ export function registerAgentCommands(program: Command): void {
       }
 
       console.log(
-        `\n${c.green(`${updated.name} has been updated successfully!`)}\n`
+        `\n${c.green(`${updated.name} has been updated successfully!`)}\n`,
       );
       printTable([
         ["Name", updated.name],
@@ -1395,23 +1409,23 @@ export function registerAgentCommands(program: Command): void {
     .option("--symbol <symbol>", "Token symbol")
     .option(
       "--anti-sniper <type>",
-      "Anti-sniper protection: 0 (none), 1 (60s), 2 (98min)"
+      "Anti-sniper protection: 0 (none), 1 (60s), 2 (98min)",
     )
     .option(
       "--prebuy <virtuals>",
-      "Pre-buy amount in VIRTUAL tokens to spend at launch (e.g. 100 = 100 VIRTUAL)"
+      "Pre-buy amount in VIRTUAL tokens to spend at launch (e.g. 100 = 100 VIRTUAL)",
     )
     .option(
       "--acf",
-      "Enable Agent Capital Formation (higher launch fee; enables dev allocation + sell wall)"
+      "Enable Agent Capital Formation (higher launch fee; enables dev allocation + sell wall)",
     )
     .option(
       "--60-days",
-      "Enable 60 Days Experiment mode (reversible launch; 60-day cliff on pre-buy; Vibes tokenomics)"
+      "Enable 60 Days Experiment mode (reversible launch; 60-day cliff on pre-buy; Vibes tokenomics)",
     )
     .option(
       "--airdrop-percent <percent>",
-      "Airdrop allocation to veVIRTUAL holders (0–5%, e.g. 1.25)"
+      "Airdrop allocation to veVIRTUAL holders (0–5%, e.g. 1.25)",
     )
     .option("--robotics", "Mark as a Robotics (Eastworld-eligible) launch")
     .option("--configure", "Show advanced launch configuration options")
@@ -1427,8 +1441,8 @@ export function registerAgentCommands(program: Command): void {
           new CliError(
             "No active agent set.",
             "NO_ACTIVE_AGENT",
-            "Run `acp agent use` to set an active agent."
-          )
+            "Run `acp agent use` to set an active agent.",
+          ),
         );
         return;
       }
@@ -1440,8 +1454,8 @@ export function registerAgentCommands(program: Command): void {
           new CliError(
             "No signer configured for the active agent.",
             "NO_SIGNER",
-            "Run `acp agent add-signer` to register a signing key before tokenizing."
-          )
+            "Run `acp agent add-signer` to register a signing key before tokenizing.",
+          ),
         );
         return;
       }
@@ -1453,8 +1467,8 @@ export function registerAgentCommands(program: Command): void {
           new CliError(
             "Agent ID not found for active wallet.",
             "NO_ACTIVE_AGENT",
-            "Run `acp agent list` or `acp agent use` to populate it."
-          )
+            "Run `acp agent list` or `acp agent use` to populate it.",
+          ),
         );
         return;
       }
@@ -1467,7 +1481,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to fetch agent: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -1481,31 +1495,40 @@ export function registerAgentCommands(program: Command): void {
             `Agent ${
               selected.name
             } is already tokenized on chain ${formatChainId(
-              existingToken.chainId
+              existingToken.chainId,
             )}.`,
             "ALREADY_TOKENIZED",
-            "Each agent can only be tokenized once on a single chain."
-          )
+            "Each agent can only be tokenized once on a single chain.",
+          ),
         );
         return;
       }
 
-      // Step 3: Resolve chain options from the EVM provider
+      // Step 3: Resolve chain options from the EVM & Solana provider
       let providerChains: { id: number; name: string }[];
       try {
         const provider = await createProviderAdapter();
         const supportedChainIds = new Set(
-          await provider.getSupportedChainIds()
+          await provider.getSupportedChainIds(),
         );
+
         providerChains = EVM_CHAINS.filter((c) =>
-          supportedChainIds.has(c.id)
+          supportedChainIds.has(c.id),
         ).map((c) => ({ id: c.id, name: c.name }));
+
+        const hasSolana = selected.walletProviders.some(
+          (wp) => wp.chainType === "SOLANA",
+        );
+
+        if (hasSolana) {
+          providerChains.push({ id: solanaChainId(), name: "Solana" });
+        }
       } catch (err) {
         outputError(
           json,
           `Failed to load provider chains: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -1518,14 +1541,14 @@ export function registerAgentCommands(program: Command): void {
       let selectedChain: (typeof providerChains)[number];
       if (opts.chainId) {
         const match = providerChains.find(
-          (c) => c.id.toString() === opts.chainId
+          (c) => c.id.toString() === opts.chainId,
         );
         if (!match) {
           outputError(
             json,
             `Unsupported chain ID: ${opts.chainId}. Supported: ${providerChains
               .map((c) => `${c.name} (${c.id})`)
-              .join(", ")}`
+              .join(", ")}`,
           );
           return;
         }
@@ -1536,7 +1559,7 @@ export function registerAgentCommands(program: Command): void {
         selectedChain = await selectOption(
           "\nChoose a chain to tokenize on:",
           providerChains,
-          (chain) => chain.name
+          (chain) => chain.name,
         );
       }
 
@@ -1555,7 +1578,12 @@ export function registerAgentCommands(program: Command): void {
         });
 
         try {
-          symbol = (await prompt(rl, "\nEnter token symbol: "))
+          symbol = (
+            await prompt(
+              rl,
+              "\nEnter token symbol, [only alphanumeric letters allowed]: ",
+            )
+          )
             .trim()
             .toUpperCase();
           if (!symbol) {
@@ -1574,7 +1602,7 @@ export function registerAgentCommands(program: Command): void {
         if (![0, 1, 2].includes(parsed)) {
           outputError(
             json,
-            `Invalid anti-sniper type: ${opts.antiSniper}. Must be 0, 1, or 2.`
+            `Invalid anti-sniper type: ${opts.antiSniper}. Must be 0, 1, or 2.`,
           );
           return;
         }
@@ -1587,34 +1615,26 @@ export function registerAgentCommands(program: Command): void {
             { value: 0, label: "None (0 seconds)" },
             { value: 2, label: "98 minutes" },
           ],
-          (opt) => opt.label
+          (opt) => opt.label,
         );
         antiSniperTaxType = antiSniperChoice.value;
       }
 
       // Step 5: Pre-buy amount (VIRTUAL to spend at launch)
-      let prebuyVirtualWei = 0n;
-      const parsePrebuy = (raw: string): bigint | null => {
-        const trimmed = raw.trim();
-        if (!trimmed) return 0n;
-        if (!/^\d*\.?\d+$/.test(trimmed)) return null;
-        try {
-          const wei = parseEther(trimmed as `${number}`);
-          return wei < 0n ? null : wei;
-        } catch {
-          return null;
-        }
-      };
+      let prebuyVirtualBaseUnit = 0n;
       if (opts.prebuy !== undefined) {
-        const wei = parsePrebuy(String(opts.prebuy));
-        if (wei === null) {
+        const baseUnit = convertPrebuyVirtual(
+          String(opts.prebuy),
+          selectedChain.id,
+        );
+        if (baseUnit === null) {
           outputError(
             json,
-            `Invalid --prebuy value: ${opts.prebuy}. Must be a non-negative number of VIRTUAL tokens.`
+            `Invalid --prebuy value: ${opts.prebuy}. Must be a non-negative number of VIRTUAL tokens.`,
           );
           return;
         }
-        prebuyVirtualWei = wei;
+        prebuyVirtualBaseUnit = baseUnit;
       } else if (opts.configure && !json) {
         const rl = readline.createInterface({
           input: process.stdin,
@@ -1623,17 +1643,17 @@ export function registerAgentCommands(program: Command): void {
         try {
           const raw = await prompt(
             rl,
-            "\nPre-buy amount in VIRTUAL tokens (blank to skip): "
+            "\nPre-buy amount in VIRTUAL tokens (blank to skip): ",
           );
-          const wei = parsePrebuy(raw);
-          if (wei === null) {
+          const base = convertPrebuyVirtual(raw, selectedChain.id);
+          if (base === null) {
             outputError(
               json,
-              `Invalid pre-buy value: ${raw}. Must be a non-negative number.`
+              `Invalid pre-buy value: ${raw}. Must be a non-negative number.`,
             );
             return;
           }
-          prebuyVirtualWei = wei;
+          prebuyVirtualBaseUnit = base;
         } finally {
           rl.close();
         }
@@ -1662,66 +1682,75 @@ export function registerAgentCommands(program: Command): void {
 
       // Step 6b: 60 Days Experiment toggle
       let isProject60days = false;
-      if (opts["60Days"]) {
-        isProject60days = true;
-      } else if (opts.configure && !json) {
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
-        try {
-          const raw = (await prompt(rl, "\nEnable 60 Days Experiment? (y/N): "))
-            .trim()
-            .toLowerCase();
-          isProject60days = raw === "y" || raw === "yes";
-        } finally {
-          rl.close();
-        }
-      }
-
-      // Step 6c: Airdrop percent (0–5%)
       let airdropPercent = 0;
-      const parseAirdropPercent = (raw: string): number | null => {
-        const trimmed = raw.trim();
-        if (!trimmed) return 0;
-        if (!/^\d*\.?\d+$/.test(trimmed)) return null;
-        const n = Number(trimmed);
-        if (!Number.isFinite(n) || n < 0 || n > 5) return null;
-        return n;
-      };
-      if (opts.airdropPercent !== undefined) {
-        const n = parseAirdropPercent(String(opts.airdropPercent));
-        if (n === null) {
-          outputError(
-            json,
-            `Invalid --airdrop-percent value: ${opts.airdropPercent}. Must be a number between 0 and 5.`
-          );
-          return;
+
+      if (
+        selectedChain.id !== SOLANA_DEVNET_CHAIN_ID &&
+        selectedChain.id !== SOLANA_MAINNET_CHAIN_ID
+      ) {
+        if (opts["60Days"]) {
+          isProject60days = true;
+        } else if (opts.configure && !json) {
+          const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+          try {
+            const raw = (
+              await prompt(rl, "\nEnable 60 Days Experiment? (y/N): ")
+            )
+              .trim()
+              .toLowerCase();
+            isProject60days = raw === "y" || raw === "yes";
+          } finally {
+            rl.close();
+          }
         }
-        airdropPercent = n;
-      } else if (opts.configure && !json) {
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
-        try {
-          const raw = await prompt(
-            rl,
-            "\nAirdrop percentage to veVIRTUAL holders (0–5, blank to skip): "
-          );
-          const n = parseAirdropPercent(raw);
+
+        // Step 6c: Airdrop percent (0–5%)
+        const parseAirdropPercent = (raw: string): number | null => {
+          const trimmed = raw.trim();
+          if (!trimmed) return 0;
+          if (!/^\d*\.?\d+$/.test(trimmed)) return null;
+          const n = Number(trimmed);
+          if (!Number.isFinite(n) || n < 0 || n > 5) return null;
+          return n;
+        };
+        if (opts.airdropPercent !== undefined) {
+          const n = parseAirdropPercent(String(opts.airdropPercent));
           if (n === null) {
             outputError(
               json,
-              `Invalid airdrop percent: ${raw}. Must be a number between 0 and 5.`
+              `Invalid --airdrop-percent value: ${opts.airdropPercent}. Must be a number between 0 and 5.`,
             );
             return;
           }
           airdropPercent = n;
-        } finally {
-          rl.close();
+        } else if (opts.configure && !json) {
+          const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+          try {
+            const raw = await prompt(
+              rl,
+              "\nAirdrop percentage to veVIRTUAL holders (0–5, blank to skip): ",
+            );
+            const n = parseAirdropPercent(raw);
+            if (n === null) {
+              outputError(
+                json,
+                `Invalid airdrop percent: ${raw}. Must be a number between 0 and 5.`,
+              );
+              return;
+            }
+            airdropPercent = n;
+          } finally {
+            rl.close();
+          }
         }
       }
+
       // Step 6d: Robotics Launch
       let isRobotics = false;
       if (opts.robotics) {
@@ -1735,7 +1764,7 @@ export function registerAgentCommands(program: Command): void {
           const raw = (
             await prompt(
               rl,
-              "\nMark as Robotics (Eastworld-eligible) launch? (y/N): "
+              "\nMark as Robotics (Eastworld-eligible) launch? (y/N): ",
             )
           )
             .trim()
@@ -1746,126 +1775,49 @@ export function registerAgentCommands(program: Command): void {
         }
       }
 
-      // Step 7: Prepare launch (backend creates virtual + saves launchInfo)
-      let prepareLaunchResponse: Awaited<
-        ReturnType<typeof agentApi.prepareLaunch>
-      >;
-      try {
-        if (!json) console.log(`\nPreparing token launch...`);
+      const onProgress = json ? undefined : (m: string) => console.log(m);
 
-        prepareLaunchResponse = await agentApi.prepareLaunch(
-          selected.id,
-          selectedChain.id,
+      let result: Awaited<ReturnType<typeof tokenizeOnEvm>>;
+      try {
+        const tokenizeParams = {
+          agentId: selected.id,
+          chainId: selectedChain.id,
           symbol,
           antiSniperTaxType,
           needAcf,
           isProject60days,
           airdropPercent,
           isRobotics,
-          prebuyVirtualWei > 0n ? prebuyVirtualWei.toString() : undefined
-        );
+          prebuyVirtualBaseUnit,
+          walletAddress: selected.walletAddress,
+          onProgress,
+        };
+
+        result = isSolanaChainId(selectedChain.id)
+          ? await tokenizeOnSolana(agentApi, tokenizeParams, json)
+          : await tokenizeOnEvm(agentApi, tokenizeParams, json);
       } catch (err) {
-        outputError(
-          json,
-          `Failed to prepare launch: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
-        return;
-      }
-
-      const {
-        virtualId,
-        contracts,
-        launchFee,
-        approveCalldata,
-        preLaunchCalldata,
-      } = prepareLaunchResponse;
-
-      const launchFeeWei = BigInt(launchFee);
-      const totalApprovalWei = launchFeeWei + prebuyVirtualWei;
-
-      // Step 8: On-chain — approve VIRTUAL token + call preLaunch
-      let preLaunchTxHash: string;
-      try {
-        await checkVirtualBalance(
-          selectedChain.id,
-          contracts.virtualToken,
-          selected.walletAddress,
-          totalApprovalWei.toString()
-        );
-        if (!json && needAcf) {
-          console.log(
-            `Launch fee (with ACF): ${formatEther(launchFeeWei)} VIRTUAL`
-          );
-        }
-        if (!json && isProject60days) {
-          console.log(
-            `60 Days Experiment enabled — pre-buy tokens will follow a 60-day cliff.`
-          );
-        }
-        if (!json && airdropPercent > 0) {
-          console.log(
-            `Airdrop: allocating ${airdropPercent}% of supply to veVIRTUAL holders.`
-          );
-        }
-        if (!json && isRobotics) {
-          console.log(`Robotics Launch: enabled (Eastworld eligibility).`);
-        }
-        if (!json && prebuyVirtualWei > 0n) {
-          console.log(
-            `Pre-buying ${formatEther(prebuyVirtualWei)} VIRTUAL of $${symbol}`
-          );
-        }
-        if (!json) console.log(`Approving VIRTUAL token...`);
-
-        await sendApprove(
-          selectedChain.id,
-          contracts.virtualToken,
-          approveCalldata
-        );
-
-        if (!json) console.log(`Calling preLaunch contract...`);
-        preLaunchTxHash = await sendPreLaunch(
-          selectedChain.id,
-          contracts.bondingV5,
-          preLaunchCalldata
-        );
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const hints: string[] = [];
-        if (needAcf && prebuyVirtualWei > 0n) {
-          hints.push("with ACF enabled, pre-buy must be ≤50% of LP");
-        }
-        if (airdropPercent > 0 && prebuyVirtualWei > 0n) {
-          hints.push(
-            `airdrop reserves ${airdropPercent}% of supply before LP, reducing pre-buy headroom`
-          );
-        }
-        const hint = hints.length
-          ? ` Hint: ${hints.join("; ")}; reduce --prebuy and retry.`
-          : "";
-        outputError(json, `Failed to launch token: ${msg}${hint}`);
+        outputError(json, err instanceof Error ? err : String(err));
         return;
       }
 
       if (!json) {
         console.log(
-          `\nAgent ${selected.name} tokenized successfully as $${symbol}`
+          `\nAgent ${selected.name} tokenized successfully as $${symbol}`,
         );
-        console.log(`Transaction: ${preLaunchTxHash}`);
+        console.log(`Transaction: ${result.txHash}`);
       } else {
         outputResult(json, {
           success: true,
           agentId: selected.id,
           agentName: selected.name,
-          virtualId,
-          txHash: preLaunchTxHash,
+          virtualId: result.virtualId,
+          txHash: result.txHash,
           needAcf,
           isProject60days,
           airdropPercent,
           isRobotics,
-          launchFee: launchFeeWei.toString(),
+          launchFee: result.launchFee,
         });
       }
     });
@@ -1880,20 +1832,27 @@ export function registerAgentCommands(program: Command): void {
       const json = isJson(cmd);
 
       const acpAgent = await createAgentFromConfig();
-      const client = acpAgent.getClient();
+
+      const supportedChainIds = acpAgent.getSupportedChainIds();
+      if (supportedChainIds.length === 0) {
+        outputError(json, "No supported chains configured for this agent.");
+        return;
+      }
+
+      const client = acpAgent.getClient(supportedChainIds[0]);
 
       if (!(client instanceof EvmAcpClient)) {
         outputError(
           json,
-          "Only EVM chains are supported for ERC-8004 registration."
+          "Only EVM chains are supported for ERC-8004 registration.",
         );
         return;
       }
 
       const provider = client.getProvider();
-      const supportedChainIds = new Set(await provider.getSupportedChainIds());
+      const providerChainIds = new Set(await provider.getSupportedChainIds());
       const erc8004Chains = EVM_CHAINS.filter((c) =>
-        supportedChainIds.has(c.id)
+        providerChainIds.has(c.id),
       ).map((c) => ({ id: c.id, name: c.name }));
 
       // Step 1: Select agent
@@ -1909,7 +1868,7 @@ export function registerAgentCommands(program: Command): void {
             json,
             `Failed to fetch agents: ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
           return;
         }
@@ -1921,7 +1880,7 @@ export function registerAgentCommands(program: Command): void {
 
         selected = await selectFromList(
           "Choose the agent to register on ERC-8004:",
-          agents
+          agents,
         );
       }
 
@@ -1929,14 +1888,14 @@ export function registerAgentCommands(program: Command): void {
       let selectedChain: { id: number; name: string };
       if (opts.chainId) {
         const match = erc8004Chains.find(
-          (c) => c.id.toString() === opts.chainId
+          (c) => c.id.toString() === opts.chainId,
         );
         if (!match) {
           outputError(
             json,
             `Unsupported chain ID: ${opts.chainId}. Supported: ${erc8004Chains
               .map((c) => `${c.name} (${c.id})`)
-              .join(", ")}`
+              .join(", ")}`,
           );
           return;
         }
@@ -1945,7 +1904,7 @@ export function registerAgentCommands(program: Command): void {
         selectedChain = await selectOption(
           "\nChoose a chain to register on:",
           erc8004Chains,
-          (chain) => chain.name
+          (chain) => chain.name,
         );
       }
 
@@ -1955,7 +1914,7 @@ export function registerAgentCommands(program: Command): void {
         json,
         selected,
         selectedChain.id,
-        selectedChain.name
+        selectedChain.name,
       );
       if (!success) return;
 
@@ -1974,7 +1933,7 @@ export function registerAgentCommands(program: Command): void {
     .option("--agent-id <id>", "Agent ID")
     .option("--complete", "Complete a migration")
     .description(
-      "Migrate a legacy agent to ACP SDK 2.0, or complete an in-progress migration"
+      "Migrate a legacy agent to ACP SDK 2.0, or complete an in-progress migration",
     )
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
@@ -1985,7 +1944,7 @@ export function registerAgentCommands(program: Command): void {
         if (!opts.agentId) {
           outputError(
             json,
-            "Please provide the agent ID to complete migration."
+            "Please provide the agent ID to complete migration.",
           );
           return;
         }
@@ -2000,7 +1959,7 @@ export function registerAgentCommands(program: Command): void {
             json,
             `Failed to fetch legacy agents: ${
               err instanceof Error ? err.message : String(err)
-            }`
+            }`,
           );
           return;
         }
@@ -2009,7 +1968,7 @@ export function registerAgentCommands(program: Command): void {
         if (!match) {
           outputError(
             json,
-            `Agent with ID ${numericId} not found in legacy agents.`
+            `Agent with ID ${numericId} not found in legacy agents.`,
           );
           return;
         }
@@ -2020,13 +1979,13 @@ export function registerAgentCommands(program: Command): void {
           case MigrationStatus.PENDING:
             outputError(
               json,
-              `Agent "${match.name}" is not yet created. Run ${startMigrationCommand} to start migrating the agent.`
+              `Agent "${match.name}" is not yet created. Run ${startMigrationCommand} to start migrating the agent.`,
             );
             return;
           case MigrationStatus.COMPLETED:
             outputError(
               json,
-              `Agent "${match.name}" has already been migrated.`
+              `Agent "${match.name}" has already been migrated.`,
             );
             return;
           case MigrationStatus.IN_PROGRESS:
@@ -2034,20 +1993,20 @@ export function registerAgentCommands(program: Command): void {
           default:
             outputError(
               json,
-              `Agent "${match.name}" has an unexpected migration status: ${match.migrationStatus}.`
+              `Agent "${match.name}" has an unexpected migration status: ${match.migrationStatus}.`,
             );
             return;
         }
 
         const agents = await agentApi.list();
         const selectedAgent = agents.data.find((a) =>
-          a.chains.find((c) => c.acpV2AgentId === numericId)
+          a.chains.find((c) => c.acpV2AgentId === numericId),
         );
 
         if (!selectedAgent) {
           outputError(
             json,
-            `No migrated agent found linked to legacy agent ID ${numericId}.`
+            `No migrated agent found linked to legacy agent ID ${numericId}.`,
           );
           return;
         }
@@ -2065,7 +2024,7 @@ export function registerAgentCommands(program: Command): void {
           });
         } else {
           console.log(
-            `\nAgent "${match.name}" has been migrated successfully! This is your active agent now.`
+            `\nAgent "${match.name}" has been migrated successfully! This is your active agent now.`,
           );
         }
         return;
@@ -2080,7 +2039,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to fetch legacy agents: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -2101,7 +2060,7 @@ export function registerAgentCommands(program: Command): void {
         if (!found) {
           outputError(
             json,
-            `Agent with ID ${opts.agentId} not found in legacy agents.`
+            `Agent with ID ${opts.agentId} not found in legacy agents.`,
           );
           return;
         }
@@ -2111,7 +2070,7 @@ export function registerAgentCommands(program: Command): void {
           "Select an agent to migrate:",
           legacyAgents,
           (a) =>
-            `${a.name} ${maskAddress(a.walletAddress)} [${a.migrationStatus}]`
+            `${a.name} ${maskAddress(a.walletAddress)} [${a.migrationStatus}]`,
         );
       }
 
@@ -2121,13 +2080,13 @@ export function registerAgentCommands(program: Command): void {
         case MigrationStatus.IN_PROGRESS:
           outputError(
             json,
-            `Agent "${selected.name}" migration is in progress. Run ${completeMigrationCommand} to complete the migration.`
+            `Agent "${selected.name}" migration is in progress. Run ${completeMigrationCommand} to complete the migration.`,
           );
           return;
         case MigrationStatus.COMPLETED:
           outputError(
             json,
-            `Agent "${selected.name}" has already been migrated.`
+            `Agent "${selected.name}" has already been migrated.`,
           );
           return;
         case MigrationStatus.PENDING:
@@ -2135,7 +2094,7 @@ export function registerAgentCommands(program: Command): void {
         default:
           outputError(
             json,
-            `Agent "${selected.name}" has an unexpected migration status: ${selected.migrationStatus}.`
+            `Agent "${selected.name}" has an unexpected migration status: ${selected.migrationStatus}.`,
           );
           return;
       }
@@ -2152,7 +2111,7 @@ export function registerAgentCommands(program: Command): void {
           json,
           `Failed to migrate agent: ${
             err instanceof Error ? err.message : String(err)
-          }`
+          }`,
         );
         return;
       }
@@ -2166,7 +2125,7 @@ export function registerAgentCommands(program: Command): void {
 
       if (!json) {
         console.log(
-          `Your agent has been created. ${instructions}\n\nWhen you are ready to activate this agent, run:\n\n  ${completeMigrationCommand}`
+          `Your agent has been created. ${instructions}\n\nWhen you are ready to activate this agent, run:\n\n  ${completeMigrationCommand}`,
         );
       } else {
         outputResult(json, {

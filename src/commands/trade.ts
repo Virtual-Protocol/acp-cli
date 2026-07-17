@@ -98,6 +98,13 @@ interface SignAction {
   txBase64?: string; // solana-tx
   expectedSignKind?: string;
   timeoutMs?: number;
+  // Consolidated Solana gas sponsorship (EVM-paymaster parity): when true on a
+  // `solana-tx` leg, the CLI SPONSORS + SUBMITS it via the adapter's
+  // sendSponsoredSignedTransaction (Alchemy fee payer → Privy co-sign →
+  // broadcast, using acp-node-v2's own sponsorship) and posts the ON-CHAIN
+  // signature back as `txHash` — the server does NOT broadcast. Absent/false →
+  // legacy path (sign, server broadcasts).
+  sponsoredSubmit?: boolean;
 }
 
 // The methods the trade loop needs from the Privy Solana adapter. They exist
@@ -106,6 +113,10 @@ interface SignAction {
 type SolanaTradeSigner = {
   signMessage(message: string): Promise<string>; // base58-encoded signature
   signTransactionViaPrivy(txBase64: string): Promise<string>; // signed tx, base64
+  // Consolidated sponsorship: sponsor (Alchemy fee payer) + co-sign + broadcast
+  // a server-built tx using acp-node-v2's own gas sponsorship; resolves to the
+  // ON-CHAIN signature. Throws on sponsor failure (sponsorship-only, no self-pay).
+  sendSponsoredSignedTransaction(txBase64: string): Promise<string>;
 };
 
 // Solana Privy chain ids. Trade legs are always mainnet — Treasures staging
@@ -633,7 +644,8 @@ export async function runTradeLoop(
       // proofs + orders) and Solana-source LiFi bridges.
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
-        let signature: string;
+        let signature: string | undefined;
+        let sponsoredTxHash: string | undefined;
         if (action.sigType === "solana-message" || action.sigType === "solana-tx") {
           solSigner ??= (await createSolanaProviderAdapter(
             SOLANA_MAINNET_PRIVY_CHAIN_ID
@@ -643,6 +655,15 @@ export async function runTradeLoop(
             // base58 but the wire contract is base64 of the raw signature.
             const b58 = await solSigner.signMessage(action.message ?? "");
             signature = Buffer.from(base58Decode(b58)).toString("base64");
+          } else if (action.sponsoredSubmit) {
+            // Consolidated gas sponsorship (EVM-paymaster parity): the adapter
+            // swaps in the Alchemy fee payer, co-signs, and BROADCASTS via
+            // acp-node-v2's own sponsorship, then returns the on-chain
+            // signature — posted back as txHash so the server records it
+            // without re-broadcasting. Throws on sponsor failure (no self-pay).
+            sponsoredTxHash = await solSigner.sendSponsoredSignedTransaction(
+              action.txBase64 ?? ""
+            );
           } else {
             // Sign the serialized versioned tx WITHOUT broadcasting — the
             // server (LiFi legs) or the venue (Treasures) broadcasts it.
@@ -653,7 +674,9 @@ export async function runTradeLoop(
         } else {
           signature = await requireSigner().signMessage(action.chainId, action.message ?? "");
         }
-        nextBody = { tradeId: plan.tradeId, step, signature };
+        nextBody = sponsoredTxHash
+          ? { tradeId: plan.tradeId, step, txHash: sponsoredTxHash }
+          : { tradeId: plan.tradeId, step, signature };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         nextBody = {

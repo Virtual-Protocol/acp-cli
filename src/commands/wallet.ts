@@ -5,8 +5,7 @@ import {
   buildSolTransferIx,
   buildSplTransferInstructions,
   getSplTokenBalance,
-  AccountRole,
-  type SolanaInstructionLike,
+  type ISolanaProviderAdapter,
 } from "@virtuals-protocol/acp-node-v2";
 import { isJson, outputResult, outputError, isTTY } from "../lib/output";
 import { getWalletAddress, getSolanaWalletAddress } from "../lib/agentFactory";
@@ -32,19 +31,14 @@ import {
 import { c } from "../lib/color";
 import { openBrowser } from "../lib/browser";
 import { selectOption, prompt } from "../lib/prompt";
-import { withApprovalGate, withSolanaWallet } from "../lib/walletGate";
+import { withApprovalGate } from "../lib/walletGate";
+import {
+  deserializeSolanaInstructions,
+  signSolanaMessage,
+  type SerializedSolanaInstruction,
+  type SolAddr,
+} from "../lib/solana";
 import qrcode from "qrcode-terminal";
-
-// Address type accepted by the SDK Solana helpers (branded), derived without a
-// direct @solana/kit import.
-type SolAddr = Parameters<typeof buildSolTransferIx>[0];
-
-const ACCOUNT_ROLE_BY_NAME: Record<string, AccountRole> = {
-  writable_signer: AccountRole.WRITABLE_SIGNER,
-  writable: AccountRole.WRITABLE,
-  readonly_signer: AccountRole.READONLY_SIGNER,
-  readonly: AccountRole.READONLY,
-};
 
 // Render Treasures tokenized-stock holdings as a table beneath the on-chain
 // token list. `usd_value` is precomputed by Treasures, so prefer it; fall back
@@ -235,14 +229,6 @@ function printHyperliquid(hl?: HyperliquidBalanceSummary | null): void {
   console.log("");
 }
 
-// Instruction data accepts hex (0x…) or base64.
-function decodeIxData(data: string): Uint8Array {
-  const buf = data.startsWith("0x")
-    ? Buffer.from(data.slice(2), "hex")
-    : Buffer.from(data, "base64");
-  return Uint8Array.from(buf);
-}
-
 // In --json mode the funding URL goes to stdout as JSON for machine parsing,
 // but many agent harnesses buffer or suppress stdout while passing stderr
 // through to the human. Mirroring a plain, copy-pasteable line to stderr
@@ -275,11 +261,11 @@ function formatToken(
 } {
   const isNative = t.tokenAddress === null;
   const symbol =
-    t.tokenMetadata.symbol ?? (isNative ? native?.symbol ?? "ETH" : "???");
+    t.tokenMetadata.symbol ?? (isNative ? (native?.symbol ?? "ETH") : "???");
   const name =
-    t.tokenMetadata.name ?? (isNative ? native?.name ?? "Ether" : "");
+    t.tokenMetadata.name ?? (isNative ? (native?.name ?? "Ether") : "");
   const decimals =
-    t.tokenMetadata.decimals ?? (isNative ? native?.decimals ?? 18 : 18);
+    t.tokenMetadata.decimals ?? (isNative ? (native?.decimals ?? 18) : 18);
   const balance = formatUnits(BigInt(t.tokenBalance), decimals);
   const unitPrice = parseFloat(t.tokenPrices?.[0]?.value ?? "0");
   const value = unitPrice * parseFloat(balance);
@@ -432,10 +418,13 @@ function renderBalances(opts: {
   } else {
     console.log("NETWORK\tTOKEN\tNAME\tBALANCE\tUSD\tCONTRACT");
     for (const t of tokens) {
-      const { symbol, name, balance, usd: usdValue, contract } = formatToken(
-        t,
-        nativeFor(t.network)
-      );
+      const {
+        symbol,
+        name,
+        balance,
+        usd: usdValue,
+        contract,
+      } = formatToken(t, nativeFor(t.network));
       console.log(
         `${t.network}\t${symbol}\t${name}\t${balance}\t${usdValue}\t${contract}`
       );
@@ -503,7 +492,8 @@ export function registerWalletCommands(program: Command): void {
       const json = isJson(cmd);
       try {
         const signature = await withApprovalGate(
-          (provider) => provider.signMessage(Number(opts.chainId), opts.message),
+          (provider) =>
+            provider.signMessage(Number(opts.chainId), opts.message),
           { json }
         );
         outputResult(json, { signature });
@@ -951,8 +941,9 @@ export function registerWalletCommands(program: Command): void {
       const json = isJson(cmd);
       try {
         const chainId = solanaChainId(opts.cluster);
-        const signature = await withSolanaWallet(chainId, (p) =>
-          p.signMessage(opts.message)
+        const signature = await withApprovalGate(
+          (p: ISolanaProviderAdapter) => signSolanaMessage(p, opts.message),
+          { chainId }
         );
         outputResult(json, { signature });
       } catch (err) {
@@ -971,29 +962,35 @@ export function registerWalletCommands(program: Command): void {
       const json = isJson(cmd);
       try {
         const chainId = solanaChainId(opts.cluster);
-        const signature = await withSolanaWallet(chainId, async (provider) => {
-          const me = (await provider.getAddress()) as SolAddr;
-          const to = opts.to as SolAddr;
-          if (opts.token) {
-            const mint = opts.token as SolAddr;
-            const { decimals } = await getSplTokenBalance(
-              provider.getRpc(),
-              me,
-              mint
-            );
-            const amount = parseUnits(opts.amount, decimals);
-            const ixs = await buildSplTransferInstructions({
-              owner: me,
-              recipient: to,
-              mint,
-              amount,
-              payer: me,
-            });
-            return provider.sendInstructions(ixs);
-          }
-          const lamports = parseUnits(opts.amount, 9);
-          return provider.sendInstructions([buildSolTransferIx(me, to, lamports)]);
-        });
+        const signature = await withApprovalGate(
+          async (provider: ISolanaProviderAdapter) => {
+            const me = (await provider.getAddress()) as SolAddr;
+            const to = opts.to as SolAddr;
+            if (opts.token) {
+              const mint = opts.token as SolAddr;
+              const { decimals } = await getSplTokenBalance(
+                provider.getRpc(),
+                me,
+                mint
+              );
+              const amount = parseUnits(opts.amount, decimals);
+              const ixs = await buildSplTransferInstructions({
+                owner: me,
+                recipient: to,
+                mint,
+                amount,
+                decimals,
+                payer: me,
+              });
+              return provider.sendInstructions(ixs);
+            }
+            const lamports = parseUnits(opts.amount, 9);
+            return provider.sendInstructions([
+              buildSolTransferIx(me, to, lamports),
+            ]);
+          },
+          { chainId }
+        );
         outputResult(json, { signature });
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
@@ -1005,35 +1002,20 @@ export function registerWalletCommands(program: Command): void {
     .description("Send a raw Solana instruction set (advanced)")
     .requiredOption(
       "--instructions <json>",
-      'JSON array: [{ programAddress, accounts: [{ address, role }], data }]'
+      "JSON array: [{ programAddress, accounts: [{ address, role }], data }]"
     )
     .option("--cluster <name>", "devnet | mainnet (default from env)")
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
         const chainId = solanaChainId(opts.cluster);
-        const parsed = JSON.parse(opts.instructions) as Array<{
-          programAddress: string;
-          accounts: { address: string; role: string }[];
-          data: string;
-        }>;
-        const ixs: SolanaInstructionLike[] = parsed.map((ix) => ({
-          programAddress: ix.programAddress as SolAddr,
-          accounts: ix.accounts.map((a) => {
-            const role = ACCOUNT_ROLE_BY_NAME[a.role.toLowerCase()];
-            if (role === undefined) {
-              throw new CliError(
-                `Unknown account role "${a.role}".`,
-                "VALIDATION_ERROR",
-                "Use writable_signer | writable | readonly_signer | readonly."
-              );
-            }
-            return { address: a.address as SolAddr, role };
-          }),
-          data: decodeIxData(ix.data),
-        }));
-        const signature = await withSolanaWallet(chainId, (p) =>
-          p.sendInstructions(ixs)
+        const parsed = JSON.parse(
+          opts.instructions
+        ) as SerializedSolanaInstruction[];
+        const ixs = deserializeSolanaInstructions(parsed);
+        const signature = await withApprovalGate(
+          (p: ISolanaProviderAdapter) => p.sendInstructions(ixs),
+          { chainId }
         );
         outputResult(json, { signature });
       } catch (err) {
