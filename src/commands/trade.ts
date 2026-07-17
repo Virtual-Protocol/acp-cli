@@ -105,6 +105,12 @@ interface SignAction {
   // signature back as `txHash` — the server does NOT broadcast. Absent/false →
   // legacy path (sign, server broadcasts).
   sponsoredSubmit?: boolean;
+  // Expiry height of the blockhash baked into `txBase64`, decimal string —
+  // present when the server built the tx itself (tax skim, Relay SVM legs).
+  // Forwarded to sendSponsoredSignedTransaction so a dropped tx is declared
+  // expired at its TRUE height; absent (provider-prebuilt txs) the adapter
+  // falls back to a safe upper bound.
+  lastValidBlockHeight?: string;
 }
 
 // The methods the trade loop needs from the Privy Solana adapter. They exist
@@ -116,7 +122,12 @@ type SolanaTradeSigner = {
   // Consolidated sponsorship: sponsor (Alchemy fee payer) + co-sign + broadcast
   // a server-built tx using acp-node-v2's own gas sponsorship; resolves to the
   // ON-CHAIN signature. Throws on sponsor failure (sponsorship-only, no self-pay).
-  sendSponsoredSignedTransaction(txBase64: string): Promise<string>;
+  // lastValidBlockHeight bounds confirmation at the tx blockhash's true expiry;
+  // omitted, the adapter uses the current tip's window (safe upper bound).
+  sendSponsoredSignedTransaction(
+    txBase64: string,
+    options?: { lastValidBlockHeight?: bigint }
+  ): Promise<string>;
 };
 
 // Solana Privy chain ids. Trade legs are always mainnet — Treasures staging
@@ -721,8 +732,16 @@ export async function runTradeLoop(
             // acp-node-v2's own sponsorship, then returns the on-chain
             // signature — posted back as txHash so the server records it
             // without re-broadcasting. Throws on sponsor failure (no self-pay).
+            // The digits guard keeps a malformed server value from throwing in
+            // BigInt() and failing the leg — worst case we just fall back to
+            // the adapter's own confirmation bound.
+            const lvbh =
+              action.lastValidBlockHeight && /^\d+$/.test(action.lastValidBlockHeight)
+                ? { lastValidBlockHeight: BigInt(action.lastValidBlockHeight) }
+                : undefined;
             sponsoredTxHash = await solSigner.sendSponsoredSignedTransaction(
-              action.txBase64 ?? ""
+              action.txBase64 ?? "",
+              lvbh
             );
           } else {
             // Sign the serialized versioned tx WITHOUT broadcasting — the
