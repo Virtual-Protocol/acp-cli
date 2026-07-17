@@ -4,8 +4,8 @@ import { AssetToken } from "@virtuals-protocol/acp-node-v2";
 import {
   createAgentFromConfig,
   createLegacyBuyerAdapter,
-  createProviderAdapter,
 } from "../lib/agentFactory";
+import { withApprovalGate } from "../lib/walletGate";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { registerJob, isLegacyJob, getLegacyJobChainId } from "../lib/config";
 import { isSolanaChainId } from "../lib/chains";
@@ -25,18 +25,18 @@ export function registerClientCommands(program: Command): void {
   client
     .command("create-job")
     .description(
-      "Create a job from a provider's offering (validates requirements, auto-calculates expiry)"
+      "Create a job from a provider's offering (validates requirements, auto-calculates expiry)",
     )
     .requiredOption("--provider <address>", "Provider wallet address")
     .requiredOption("--offering-name <name>", "Offering name")
     .requiredOption(
       "--requirements <json>",
-      "Requirements JSON matching the offering schema"
+      "Requirements JSON matching the offering schema",
     )
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
     .option(
       "--evaluator <address>",
-      "Evaluator wallet address (defaults to your own)"
+      "Evaluator wallet address (defaults to your own)",
     )
     .option("--package-id <id>", "Package ID")
     .option("--legacy", "Target a legacy (openclaw-cli) provider")
@@ -60,11 +60,11 @@ export function registerClientCommands(program: Command): void {
           const legacyAgent = await adapter.getAgent(opts.provider);
           if (!legacyAgent) {
             throw new Error(
-              `No legacy agent found for wallet address: ${opts.provider}`
+              `No legacy agent found for wallet address: ${opts.provider}`,
             );
           }
           const matches = legacyAgent.jobOfferings.filter(
-            (o) => o.name === opts.offeringName
+            (o) => o.name === opts.offeringName,
           );
           if (matches.length === 0) {
             const available = legacyAgent.jobOfferings
@@ -73,12 +73,12 @@ export function registerClientCommands(program: Command): void {
             throw new Error(
               `Offering "${opts.offeringName}" not found. Available: ${
                 available || "none"
-              }`
+              }`,
             );
           }
           if (matches.length > 1) {
             throw new Error(
-              `Multiple offerings named "${opts.offeringName}" found for this provider.`
+              `Multiple offerings named "${opts.offeringName}" found for this provider.`,
             );
           }
           const legacyOffering = matches[0];
@@ -90,7 +90,7 @@ export function registerClientCommands(program: Command): void {
             priceValue: Number(legacyOffering.price),
             evaluatorAddress: opts.evaluator,
             expiredAt: new Date(
-              Date.now() + (legacyOffering.slaMinutes || 60) * 60 * 1000
+              Date.now() + (legacyOffering.slaMinutes || 60) * 60 * 1000,
             ),
             offeringName: legacyOffering.name,
           });
@@ -113,15 +113,15 @@ export function registerClientCommands(program: Command): void {
         const clientAgentId = getActiveAgentId(json);
         if (!clientAgentId) return;
         const providerAgent = await agent.getAgentByWalletAddress(
-          opts.provider
+          opts.provider,
         );
         if (!providerAgent) {
           throw new Error(
-            `No agent found for wallet address: ${opts.provider}`
+            `No agent found for wallet address: ${opts.provider}`,
           );
         }
         const matches = providerAgent.offerings.filter(
-          (o: AcpAgentOffering) => o.name === opts.offeringName
+          (o: AcpAgentOffering) => o.name === opts.offeringName,
         );
         if (matches.length === 0) {
           const available = providerAgent.offerings
@@ -130,12 +130,12 @@ export function registerClientCommands(program: Command): void {
           throw new Error(
             `Offering "${opts.offeringName}" not found. Available: ${
               available || "none"
-            }`
+            }`,
           );
         }
         if (matches.length > 1) {
           throw new Error(
-            `Multiple offerings named "${opts.offeringName}" found for this provider.`
+            `Multiple offerings named "${opts.offeringName}" found for this provider.`,
           );
         }
         const offering = matches[0];
@@ -146,7 +146,7 @@ export function registerClientCommands(program: Command): void {
             clientAgentId,
             opts.provider,
             Number(opts.chainId),
-            offering.name
+            offering.name,
           );
 
           if (activeSubscription) {
@@ -162,16 +162,20 @@ export function registerClientCommands(program: Command): void {
             ? SOLANA_DEFAULT_ADDRESS
             : await agent.getAddress("evm"));
 
-        const jobId = await agent.createJobFromOffering(
-          chainId,
-          offering,
-          opts.provider,
-          requirements,
-          {
-            evaluatorAddress: evaluator,
-            hookAddress: opts.hook ?? undefined,
-            packageId,
-          }
+        const jobId = await withApprovalGate(
+          () =>
+            agent.createJobFromOffering(
+              chainId,
+              offering,
+              opts.provider,
+              requirements,
+              {
+                evaluatorAddress: evaluator,
+                hookAddress: opts.hook ?? undefined,
+                packageId,
+              },
+            ),
+          { json },
         );
 
         registerJob(jobId.toString(), false, chainId);
@@ -188,8 +192,8 @@ export function registerClientCommands(program: Command): void {
         } else {
           console.log(
             `\n${c.green(
-              `Job #${jobId} created from offering "${offering.name}"`
-            )}`
+              `Job #${jobId} created from offering "${offering.name}"`,
+            )}`,
           );
           console.log(`  Provider: ${c.dim(maskAddress(opts.provider))}`);
           console.log(`  Chain:    ${opts.chainId}`);
@@ -205,7 +209,7 @@ export function registerClientCommands(program: Command): void {
     .requiredOption("--provider <address>", "Provider wallet address")
     .option(
       "--evaluator <address>",
-      "Evaluator wallet address (defaults to your own)"
+      "Evaluator wallet address (defaults to your own)",
     )
     .requiredOption("--description <text>", "Job description")
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
@@ -213,7 +217,7 @@ export function registerClientCommands(program: Command): void {
     .option("--hook <address>", "Hook address")
     .option(
       "--fund-transfer",
-      "Use fund transfer hook (defaults to chain hook address)"
+      "Use fund transfer hook (defaults to chain hook address)",
     )
     .option("--legacy", "Target a legacy (openclaw-cli) provider")
     .action(async (opts, cmd) => {
@@ -261,9 +265,13 @@ export function registerClientCommands(program: Command): void {
           hookAddress: opts.hook,
         };
 
-        const jobId = opts.fundTransfer
-          ? await agent.createFundTransferJob(chainId, params)
-          : await agent.createJob(chainId, params);
+        const jobId = await withApprovalGate(
+          () =>
+            opts.fundTransfer
+              ? agent.createFundTransferJob(chainId, params)
+              : agent.createJob(chainId, params),
+          { json },
+        );
 
         registerJob(jobId.toString(), false, chainId);
 
@@ -306,7 +314,7 @@ export function registerClientCommands(program: Command): void {
           const adapter = await createLegacyBuyerAdapter();
           await adapter.fundJob(
             Number(opts.jobId),
-            opts.amount ? `Funded ${opts.amount} USDC` : `Funded`
+            opts.amount ? `Funded ${opts.amount} USDC` : `Funded`,
           );
           outputResult(json, {
             success: true,
@@ -327,7 +335,7 @@ export function registerClientCommands(program: Command): void {
             throw new CliError(
               `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
               "SESSION_NOT_FOUND",
-              "Run `acp job list` to see your active jobs."
+              "Run `acp job list` to see your active jobs.",
             );
           }
 
@@ -335,7 +343,7 @@ export function registerClientCommands(program: Command): void {
           await session.fund(
             opts.amount
               ? AssetToken.usdc(Number(opts.amount), chainId)
-              : undefined
+              : undefined,
           );
           if (json) {
             outputResult(json, {
@@ -350,8 +358,8 @@ export function registerClientCommands(program: Command): void {
               `\n${c.green(
                 opts.amount
                   ? `Job #${opts.jobId} funded with ${opts.amount} USDC`
-                  : `Job #${opts.jobId} funded`
-              )}`
+                  : `Job #${opts.jobId} funded`,
+              )}`,
             );
           }
         } finally {
@@ -393,7 +401,7 @@ export function registerClientCommands(program: Command): void {
             throw new CliError(
               `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
               "SESSION_NOT_FOUND",
-              "Run `acp job list` to see your active jobs."
+              "Run `acp job list` to see your active jobs.",
             );
           }
           await session.complete(opts.reason);
@@ -408,8 +416,8 @@ export function registerClientCommands(program: Command): void {
           } else {
             console.log(
               `\n${c.green(
-                `Job #${opts.jobId} completed`
-              )} — escrow released to provider`
+                `Job #${opts.jobId} completed`,
+              )} — escrow released to provider`,
             );
           }
         } finally {
@@ -451,7 +459,7 @@ export function registerClientCommands(program: Command): void {
             throw new CliError(
               `No session found for job ${opts.jobId}. The job may not exist or you may not be a participant.`,
               "SESSION_NOT_FOUND",
-              "Run `acp job list` to see your active jobs."
+              "Run `acp job list` to see your active jobs.",
             );
           }
           await session.reject(opts.reason);
@@ -466,8 +474,8 @@ export function registerClientCommands(program: Command): void {
           } else {
             console.log(
               `\n${c.red(
-                `Job #${opts.jobId} rejected`
-              )} — escrow returned to client`
+                `Job #${opts.jobId} rejected`,
+              )} — escrow returned to client`,
             );
             if (opts.reason !== "Rejected") {
               console.log(`  Reason: ${opts.reason}`);
@@ -484,7 +492,7 @@ export function registerClientCommands(program: Command): void {
   client
     .command("review")
     .description(
-      "Leave a review on a completed job (rating 1-5, optional text)"
+      "Leave a review on a completed job (rating 1-5, optional text)",
     )
     .requiredOption("--job-id <id>", "On-chain job ID")
     .requiredOption("--chain-id <id>", "Chain ID", "8453")
@@ -515,7 +523,7 @@ export function registerClientCommands(program: Command): void {
           chainId,
           opts.jobId,
           rating,
-          review
+          review,
         );
 
         if (!txData.txData) {
@@ -532,32 +540,36 @@ export function registerClientCommands(program: Command): void {
           } else {
             console.log(
               `\n${c.green(
-                `Review recorded for Job #${opts.jobId}`
-              )} — rating ${rating}/5`
+                `Review recorded for Job #${opts.jobId}`,
+              )} — rating ${rating}/5`,
             );
             if (review) console.log(`  Review: ${review}`);
             console.log(
               `  ${c.dim(
-                "No on-chain transaction required (provider is not registered on the ERC-8004 reputation registry)."
-              )}`
+                "No on-chain transaction required (provider is not registered on the ERC-8004 reputation registry).",
+              )}`,
             );
           }
           return;
         }
 
-        const provider = await createProviderAdapter();
-        const result = await provider.sendCalls(chainId, [
-          {
-            to: txData.txData.to as `0x${string}`,
-            data: txData.txData.data as `0x${string}`,
-          },
-        ]);
+        const feedbackTx = txData.txData;
+        const result = await withApprovalGate(
+          (provider) =>
+            provider.sendCalls(chainId, [
+              {
+                to: feedbackTx.to as `0x${string}`,
+                data: feedbackTx.data as `0x${string}`,
+              },
+            ]),
+          { json },
+        );
         const txnHash = Array.isArray(result) ? result[0] : result;
 
         const message = await agentApi.confirmJobFeedback(
           chainId,
           opts.jobId,
-          txnHash
+          txnHash,
         );
 
         if (json) {
@@ -575,8 +587,8 @@ export function registerClientCommands(program: Command): void {
         } else {
           console.log(
             `\n${c.green(
-              `Review submitted for Job #${opts.jobId}`
-            )} — rating ${rating}/5`
+              `Review submitted for Job #${opts.jobId}`,
+            )} — rating ${rating}/5`,
           );
           if (review) console.log(`  Review: ${review}`);
           console.log(`  Tx:     ${c.dim(txnHash)}`);
