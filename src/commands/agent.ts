@@ -1839,9 +1839,14 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      const client = acpAgent.getClient(supportedChainIds[0]);
+      // The agent may also support Solana chains; ERC-8004 registration is
+      // EVM-only, so pick the first chain whose client is an EvmAcpClient
+      // instead of blindly taking supportedChainIds[0].
+      const client = supportedChainIds
+        .map((id) => acpAgent.getClient(id))
+        .find((c): c is EvmAcpClient => c instanceof EvmAcpClient);
 
-      if (!(client instanceof EvmAcpClient)) {
+      if (!client) {
         outputError(
           json,
           "Only EVM chains are supported for ERC-8004 registration.",

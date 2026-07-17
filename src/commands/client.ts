@@ -5,6 +5,7 @@ import {
   createAgentFromConfig,
   createLegacyBuyerAdapter,
   createProviderAdapter,
+  getSolanaWalletAddress,
 } from "../lib/agentFactory";
 import { isJson, outputResult, outputError, maskAddress } from "../lib/output";
 import { registerJob, isLegacyJob, getLegacyJobChainId } from "../lib/config";
@@ -14,8 +15,6 @@ import { c } from "../lib/color";
 import { PriceType } from "@virtuals-protocol/acp-node";
 import { getClient } from "../lib/api/client";
 import { getActiveAgentId } from "../lib/activeAgent";
-
-const SOLANA_DEFAULT_ADDRESS = "11111111111111111111111111111111";
 
 export function registerClientCommands(program: Command): void {
   const client = program
@@ -159,7 +158,7 @@ export function registerClientCommands(program: Command): void {
         const evaluator =
           opts.evaluator ??
           (isSolanaChainId(chainId)
-            ? SOLANA_DEFAULT_ADDRESS
+            ? await getSolanaWalletAddress()
             : await agent.getAddress("evm"));
 
         const jobId = await agent.createJobFromOffering(
@@ -249,7 +248,7 @@ export function registerClientCommands(program: Command): void {
         const evaluator =
           opts.evaluator ??
           (isSolanaChainId(chainId)
-            ? SOLANA_DEFAULT_ADDRESS
+            ? await getSolanaWalletAddress()
             : await agent.getAddress("evm"));
         const expiredAt =
           Math.floor(Date.now() / 1000) + Number(opts.expiredIn);
