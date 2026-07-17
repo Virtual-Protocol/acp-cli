@@ -1,6 +1,9 @@
 import type { Command } from "commander";
 import type { AcpAgentOffering } from "@virtuals-protocol/acp-node-v2";
-import { AssetToken } from "@virtuals-protocol/acp-node-v2";
+import {
+  AssetToken,
+  SOLANA_NO_EVALUATOR_ADDRESS,
+} from "@virtuals-protocol/acp-node-v2";
 import {
   createAgentFromConfig,
   createLegacyBuyerAdapter,
@@ -158,7 +161,7 @@ export function registerClientCommands(program: Command): void {
         const evaluator =
           opts.evaluator ??
           (isSolanaChainId(chainId)
-            ? await getSolanaWalletAddress()
+            ? SOLANA_NO_EVALUATOR_ADDRESS
             : await agent.getAddress("evm"));
 
         const jobId = await withApprovalGate(
@@ -252,7 +255,7 @@ export function registerClientCommands(program: Command): void {
         const evaluator =
           opts.evaluator ??
           (isSolanaChainId(chainId)
-            ? await getSolanaWalletAddress()
+            ? SOLANA_NO_EVALUATOR_ADDRESS
             : await agent.getAddress("evm"));
         const expiredAt =
           Math.floor(Date.now() / 1000) + Number(opts.expiredIn);
