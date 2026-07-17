@@ -18,10 +18,17 @@ export type ErrorCode =
 export class CliError extends Error {
   code: ErrorCode;
   recovery?: string;
+  details?: Record<string, string | number | boolean>;
 
-  constructor(message: string, code: ErrorCode, recovery?: string) {
+  constructor(
+    message: string,
+    code: ErrorCode,
+    recovery?: string,
+    details?: Record<string, string | number | boolean>
+  ) {
     super(message);
     this.code = code;
     this.recovery = recovery;
+    this.details = details;
   }
 }

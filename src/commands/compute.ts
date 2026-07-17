@@ -126,12 +126,20 @@ export function registerComputeCommands(program: Command): void {
         });
 
         const agentAddress = getWalletAddress();
-        const result = await agentApi.computeTopUp(
-          agentId,
-          agentAddress,
-          amount,
-          txnHash
-        );
+        try {
+          await agentApi.computeTopUp(agentId, agentAddress, amount, txnHash);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new CliError(
+            `Backend confirmation failed after compute top-up transaction was broadcast. Tx hash: ${txnHash}. ${message}`,
+            "API_ERROR",
+            "The on-chain transaction was already sent. Keep the Tx Hash and retry or contact support with it.",
+            {
+              action: "compute top-up",
+              txnHash,
+            }
+          );
+        }
 
         if (json) {
           outputResult(json, {
