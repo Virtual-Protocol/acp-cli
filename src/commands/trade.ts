@@ -501,12 +501,18 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
     opts.side === undefined &&
     opts.amountShares === undefined &&
     opts.chain === undefined;
+  // A SOL token ref only signals Solana when its own leg's chain flag doesn't
+  // pin it elsewhere: `--token-in wsol --chain-in base` is an EVM trade of a
+  // wrapped-SOL token (the chain pin wins), so it must not demand a Solana
+  // wallet from an EVM-only agent. With no chain flag, the token ref decides.
+  const chainAllowsSolana = (chain: unknown): boolean =>
+    chain === undefined || isSolanaChainRef(chain);
   const solanaExplicit =
     isSolanaChainRef(opts.chain) ||
     isSolanaChainRef(opts.chainIn) ||
     isSolanaChainRef(opts.chainOut) ||
-    isSolanaTokenRef(opts.tokenIn) ||
-    isSolanaTokenRef(opts.tokenOut);
+    (isSolanaTokenRef(opts.tokenIn) && chainAllowsSolana(opts.chainIn)) ||
+    (isSolanaTokenRef(opts.tokenOut) && chainAllowsSolana(opts.chainOut));
   const couldRouteViaSolana = solanaExplicit || isUnpinnedTokenBuy;
   if (couldRouteViaSolana) {
     try {
