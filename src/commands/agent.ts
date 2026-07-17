@@ -43,12 +43,7 @@ import {
   createAgentFromConfig,
   createProviderAdapter,
 } from "../lib/agentFactory";
-import {
-  EvmAcpClient,
-  EVM_CHAINS,
-  SOLANA_DEVNET_CHAIN_ID,
-  SOLANA_MAINNET_CHAIN_ID,
-} from "@virtuals-protocol/acp-node-v2";
+import { EvmAcpClient, EVM_CHAINS } from "@virtuals-protocol/acp-node-v2";
 import {
   tokenizeOnSolana,
   tokenizeOnEvm,
@@ -1680,14 +1675,13 @@ export function registerAgentCommands(program: Command): void {
         }
       }
 
-      // Step 6b: 60 Days Experiment toggle
+      // Step 6b: 60 Days Experiment toggle + airdrop percent. Applies to every
+      // venue — tokenizeOnSolana forwards both fields the same as tokenizeOnEvm,
+      // so Solana launches must not skip the flag parsing/validation.
       let isProject60days = false;
       let airdropPercent = 0;
 
-      if (
-        selectedChain.id !== SOLANA_DEVNET_CHAIN_ID &&
-        selectedChain.id !== SOLANA_MAINNET_CHAIN_ID
-      ) {
+      {
         if (opts["60Days"]) {
           isProject60days = true;
         } else if (opts.configure && !json) {

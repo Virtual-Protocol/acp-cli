@@ -82,10 +82,20 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
     ? SOLANA_DEVNET_CHAIN_ID
     : SOLANA_MAINNET_CHAIN_ID;
 
+  // Solana is optional: EVM-only agents (no Privy Solana wallet) must keep
+  // working, so a missing Solana wallet omits the provider instead of failing
+  // the whole agent. Any other construction error still propagates.
+  let solanaProvider: ISolanaProviderAdapter | undefined;
+  try {
+    solanaProvider = await createSolanaProviderAdapter(solanaChainId);
+  } catch (err) {
+    if (!(err instanceof CliError && err.code === "NO_SOLANA_WALLET")) throw err;
+  }
+
   return AcpAgent.create({
     contractAddresses: ACP_CONTRACT_ADDRESSES,
     evmProvider: await createProviderFromConfig(chains, serverUrl, privyAppId),
-    solanaProvider: await createSolanaProviderAdapter(solanaChainId),
+    solanaProvider,
     api: new AcpApiClient({ serverUrl }),
     transport: new SseTransport({ serverUrl }),
   });
