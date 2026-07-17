@@ -205,13 +205,28 @@ export async function getAgentApi(): Promise<AgentApi> {
 }
 
 /**
+ * forceTokenRefresh against the REAL ACP auth server — the pair of
+ * getApiContext(): its apiUrl may point at a local trade shim
+ * (ACP_TRADE_BASE_URL), which cannot mint tokens, so a mid-trade 401 must
+ * refresh here, not against the URL the trade calls travel on.
+ */
+export async function forceApiTokenRefresh(): Promise<string> {
+  const isTestnet = process.env.IS_TESTNET === "true";
+  return forceTokenRefresh(isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL);
+}
+
+/**
  * Resolve the ACP API base URL + a valid bearer token for direct calls that
  * aren't covered by AgentApi/AuthApi (e.g. the `/trade/*` proxy). Reuses the
  * same testnet switch and token-refresh logic as getClient().
  */
 export async function getApiContext(): Promise<{ apiUrl: string; token: string }> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
-  const token = await resolveToken(apiUrl);
+  const realUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  // Resolve/refresh the bearer against the REAL ACP server so auth always works.
+  const token = await resolveToken(realUrl);
+  // LOCAL TEST ONLY: route /trade/* to a local proxy shim when set, leaving
+  // token resolution untouched. Unset in normal use → real ACP backend.
+  const apiUrl = process.env.ACP_TRADE_BASE_URL?.trim() || realUrl;
   return { apiUrl, token };
 }
