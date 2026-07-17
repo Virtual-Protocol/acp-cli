@@ -613,10 +613,13 @@ export function registerAgentCommands(program: Command): void {
       try {
         const acpAgent = await createAgentFromConfig();
 
-        // Deploy for base chain only
-        const baseChainId = process.env.IS_TESTNET
-          ? viemChains.baseSepolia.id
-          : viemChains.base.id;
+        // Deploy for base chain only. Strict "true" check — IS_TESTNET=false
+        // is truthy and would pick Base Sepolia, then silently skip
+        // registration when the mainnet agent doesn't carry that chain.
+        const baseChainId =
+          process.env.IS_TESTNET === "true"
+            ? viemChains.baseSepolia.id
+            : viemChains.base.id;
 
         const chainIds = acpAgent.getSupportedChainIds();
         if (chainIds.length === 0) return;
