@@ -1240,9 +1240,16 @@ export function registerAgentCommands(program: Command): void {
       if (isTTY()) {
         const agentChains = agentData.chains ?? [];
 
-        const supportedChains = await createProviderAdapter().then((provider) =>
-          provider.getSupportedChainIds(),
-        );
+        // Show Token/ERC-8004 status for the chains the agent can actually
+        // tokenize/register on — the execution set createAgentFromConfig
+        // serves, NOT createProviderAdapter's ERC20-sponsored trade superset,
+        // which would print "Not tokenized" rows for chains (and testnets)
+        // the agent never runs on.
+        const supportedChains = (
+          process.env.IS_TESTNET === "true"
+            ? EVM_TESTNET_CHAINS
+            : EVM_MAINNET_CHAINS
+        ).map((c) => c.id);
 
         let tokenRows: [string, string][] = [];
 
@@ -1263,6 +1270,17 @@ export function registerAgentCommands(program: Command): void {
             `${
               erc8004AgentId ? `ID ${erc8004AgentId}` : "Not registered"
             } [${formatChainId(chainId)}]`,
+          ]);
+        }
+
+        // Solana tokenization exists too; ERC-8004 does not (EVM-only
+        // registry), so Solana gets only a Token row.
+        if (agentData.solWalletAddress) {
+          const solId = solanaChainId();
+          const solChain = agentChains.find((ch) => ch.chainId === solId);
+          tokenRows.push([
+            "Token",
+            `${solChain?.tokenAddress ?? "Not tokenized"} [${formatChainId(solId)}]`,
           ]);
         }
 

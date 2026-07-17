@@ -48,7 +48,7 @@ import type { Command } from "commander";
 import type { Address } from "viem";
 import { isJson, isTTY, outputError, outputResult } from "../lib/output";
 import { CliError, type ErrorCode } from "../lib/errors";
-import { getApiContext, forceTokenRefresh } from "../lib/api/client";
+import { getApiContext, forceApiTokenRefresh } from "../lib/api/client";
 import {
   createProviderAdapter,
   createSolanaProviderAdapter,
@@ -606,7 +606,9 @@ export async function runTradeLoop(
   // because the token expired mid-flight.
   let currentToken = token;
   const onAuthRefresh = async (): Promise<string> => {
-    currentToken = await forceTokenRefresh(url);
+    // Refresh against the real auth server, not `url` — that may be the
+    // ACP_TRADE_BASE_URL shim, which can't mint tokens.
+    currentToken = await forceApiTokenRefresh();
     return currentToken;
   };
   // Any branch that actually signs/broadcasts requires the signer; a dry run
