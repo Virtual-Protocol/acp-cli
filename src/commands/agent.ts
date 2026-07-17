@@ -43,7 +43,12 @@ import {
   createAgentFromConfig,
   createProviderAdapter,
 } from "../lib/agentFactory";
-import { EvmAcpClient, EVM_CHAINS } from "@virtuals-protocol/acp-node-v2";
+import {
+  EvmAcpClient,
+  EVM_CHAINS,
+  EVM_MAINNET_CHAINS,
+  EVM_TESTNET_CHAINS,
+} from "@virtuals-protocol/acp-node-v2";
 import {
   tokenizeOnSolana,
   tokenizeOnEvm,
@@ -1507,9 +1512,19 @@ export function registerAgentCommands(program: Command): void {
           await provider.getSupportedChainIds(),
         );
 
-        providerChains = EVM_CHAINS.filter((c) =>
-          supportedChainIds.has(c.id),
-        ).map((c) => ({ id: c.id, name: c.name }));
+        // Offer only chains the EXECUTION path can serve: tokenization runs
+        // through createAgentFromConfig, whose EVM client is built from
+        // EVM_MAINNET_CHAINS / EVM_TESTNET_CHAINS — while createProviderAdapter
+        // registers the wider ERC20-sponsored-gas set for trades (on mainnet
+        // that superset includes Base Sepolia, which getClient() would then
+        // reject after the user picked it).
+        const executionChains =
+          process.env.IS_TESTNET === "true"
+            ? EVM_TESTNET_CHAINS
+            : EVM_MAINNET_CHAINS;
+        providerChains = executionChains
+          .filter((c) => supportedChainIds.has(c.id))
+          .map((c) => ({ id: c.id, name: c.name }));
 
         const hasSolana = selected.walletProviders.some(
           (wp) => wp.chainType === "SOLANA",
