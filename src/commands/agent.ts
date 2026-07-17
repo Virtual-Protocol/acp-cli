@@ -1547,9 +1547,16 @@ export function registerAgentCommands(program: Command): void {
           .filter((c) => supportedChainIds.has(c.id))
           .map((c) => ({ id: c.id, name: c.name }));
 
-        const hasSolana = selected.walletProviders.some(
-          (wp) => wp.chainType === "SOLANA",
-        );
+        // Offer Solana only when the launch path can actually run: it
+        // resolves the wallet via getSolanaWalletInfo, which needs BOTH a
+        // populated solWalletAddress and the provider's Privy walletId — a
+        // bare SOLANA provider record without them would fail late with a
+        // confusing wallet error after the user picked Solana.
+        const hasSolana =
+          Boolean(selected.solWalletAddress) &&
+          selected.walletProviders.some(
+            (wp) => wp.chainType === "SOLANA" && wp.metadata?.walletId,
+          );
 
         if (hasSolana) {
           providerChains.push({ id: solanaChainId(), name: "Solana" });
