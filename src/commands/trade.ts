@@ -48,7 +48,7 @@ import type { Command } from "commander";
 import type { Address } from "viem";
 import { isJson, isTTY, outputError, outputResult } from "../lib/output";
 import { CliError, type ErrorCode } from "../lib/errors";
-import { getApiContext, forceTokenRefresh } from "../lib/api/client";
+import { getApiContext, forceApiTokenRefresh } from "../lib/api/client";
 import {
   createProviderAdapter,
   createSolanaProviderAdapter,
@@ -105,6 +105,12 @@ interface SignAction {
   // signature back as `txHash` — the server does NOT broadcast. Absent/false →
   // legacy path (sign, server broadcasts).
   sponsoredSubmit?: boolean;
+  // Expiry height of the blockhash baked into `txBase64`, decimal string —
+  // present when the server built the tx itself (tax skim, Relay SVM legs).
+  // Forwarded to sendSponsoredSignedTransaction so a dropped tx is declared
+  // expired at its TRUE height; absent (provider-prebuilt txs) the adapter
+  // falls back to a safe upper bound.
+  lastValidBlockHeight?: string;
 }
 
 // The methods the trade loop needs from the Privy Solana adapter. They exist
@@ -116,7 +122,12 @@ type SolanaTradeSigner = {
   // Consolidated sponsorship: sponsor (Alchemy fee payer) + co-sign + broadcast
   // a server-built tx using acp-node-v2's own gas sponsorship; resolves to the
   // ON-CHAIN signature. Throws on sponsor failure (sponsorship-only, no self-pay).
-  sendSponsoredSignedTransaction(txBase64: string): Promise<string>;
+  // lastValidBlockHeight bounds confirmation at the tx blockhash's true expiry;
+  // omitted, the adapter uses the current tip's window (safe upper bound).
+  sendSponsoredSignedTransaction(
+    txBase64: string,
+    options?: { lastValidBlockHeight?: bigint }
+  ): Promise<string>;
 };
 
 // Solana Privy chain ids. Trade legs are always mainnet — Treasures staging
@@ -141,6 +152,23 @@ function isSolanaChainRef(v: unknown): boolean {
     s === String(SOLANA_MAINNET_PRIVY_CHAIN_ID) ||
     s === String(SOLANA_DEVNET_PRIVY_CHAIN_ID)
   );
+}
+
+// A TOKEN reference that means a Solana asset — so a swap that spends from or
+// delivers to Solana attaches solWallet even when no Solana CHAIN ref was passed
+// (e.g. `--token-out sol` with no --chain-out: the destination is Solana but
+// chainOut is omitted, so isSolanaChainRef alone misses it and the backend then
+// rejects with "recipient is required for non-EVM destinations"). Matches the
+// native-SOL symbol aliases and a base58 mint address — a Solana pubkey is
+// base58 in the 32–44 char range and, unlike an EVM address, is never
+// 0x-prefixed. Bare EVM tickers (short) and 0x addresses never match.
+function isSolanaTokenRef(v: unknown): boolean {
+  if (v === undefined) return false;
+  const s = String(v).trim();
+  const lower = s.toLowerCase();
+  if (lower === "sol" || lower === "wsol") return true;
+  if (s.startsWith("0x")) return false;
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s);
 }
 
 // Minimal base58 decode (Solana alphabet) — the adapter returns base58
@@ -191,6 +219,19 @@ interface PreviewAction {
   summary: string;
   legs?: unknown[];
 }
+// Pre-execution stop: the trade is viable but loses more value than the
+// server's price-impact warn threshold. Nothing was signed or submitted.
+// Re-plan the same request with `acceptImpactBps` echoed back to proceed.
+// Mirrors trading-agent's ConfirmAction.
+interface ConfirmAction {
+  kind: "confirm";
+  code: string;
+  message: string;
+  valueLossBps: number;
+  provider?: string;
+  acceptImpactBps: number;
+  retryable: boolean;
+}
 type Action =
   | SendAction
   | SendBatchAction
@@ -198,7 +239,8 @@ type Action =
   | WaitAction
   | DoneAction
   | ErrorAction
-  | PreviewAction;
+  | PreviewAction
+  | ConfirmAction;
 
 interface PlanResponse {
   tradeId: string;
@@ -258,10 +300,13 @@ export function registerTradeCommands(program: Command): void {
         "  acp trade withdraw-from-hl --amount 25                                                       # withdraw to Arbitrum\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5\n" +
         "  acp trade --side long --token BTC --size 0.01 --leverage 5 --dry-run   # preview only\n" +
+        "  acp trade --side long --token BTC --amount-usdc 100 --take-profit 130000 --stop-loss 80000   # open with TP/SL\n" +
+        "  acp trade --side long --token BTC --stop-loss 80000                    # set a stop on an existing long\n" +
         "  acp trade --amount-in 25 --chain-out hyperliquid                       # deposit (alias)\n" +
         "  acp trade --token AAPL --amount-usdc 50                          # buy tokenized AAPL with USDC on Ethereum\n" +
         "  acp trade --token AAPL --token-in eth --chain-in 8453 --amount-in 0.02  # buy AAPL, funded by ETH on Base\n" +
         "  acp trade --token AAPL --amount-shares 0.1                       # sell 0.1 tokenized AAPL shares (Treasures)\n" +
+        "  acp trade --token AAPL --amount-shares 3 --chain eth --token-out usdc --chain-out 8453  # sell AAPL → proceeds as USDC on Base\n" +
         "  acp trade hl-status                                                  # HL account only; use `acp wallet balance` for on-chain balances\n"
     )
     // -- Swap / deposit / HL spot / HL withdraw (token-pair shape) --------
@@ -291,8 +336,29 @@ export function registerTradeCommands(program: Command): void {
     .option("--size <size>", "Perp order size in token units")
     .option("--leverage <n>", "Set leverage for this token before a perp order")
     .option("--isolated", "Use isolated margin when setting leverage", false)
-    .option("--reduce-only", "Only reduce an existing perp position", false)
+    .option(
+      "--reduce-only",
+      "Close/shrink an existing perp position. --side must be the OPPOSITE of the position " +
+        "(close a long with --side short, close a short with --side long). " +
+        "Never set this when opening or adding to a position — HL rejects it.",
+      false
+    )
+    .option(
+      "--take-profit <price>",
+      "Perp take-profit trigger price. With --size/--amount-usdc it attaches to the entry; alone it attaches to an existing position. Market close unless --take-profit-limit is set."
+    )
+    .option("--take-profit-limit <price>", "Rest the take-profit as a limit at this price instead of a market close")
+    .option(
+      "--stop-loss <price>",
+      "Perp stop-loss trigger price. With --size/--amount-usdc it attaches to the entry; alone it attaches to an existing position. Market close unless --stop-loss-limit is set."
+    )
+    .option("--stop-loss-limit <price>", "Rest the stop-loss as a limit at this price instead of a market close")
     .option("--dry-run", "Preview the trade (route, size, margin, fees) without signing or submitting anything", false)
+    .option(
+      "--accept-impact",
+      "Proceed through the server's high price-impact warning (re-plans with the echoed acceptImpactBps)",
+      false
+    )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -351,6 +417,11 @@ export function registerTradeCommands(program: Command): void {
     .option("--destination <addr>", "Destination address (default: active wallet)")
     .option("--to-chain <id>", "Final chain (default: Arbitrum). Others withdraw to Arbitrum, then bridge.")
     .option("--dry-run", "Preview the withdrawal without submitting it", false)
+    .option(
+      "--accept-impact",
+      "Proceed through the server's high price-impact warning on the bridge leg",
+      false
+    )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -360,10 +431,13 @@ export function registerTradeCommands(program: Command): void {
             chainOut: opts.toChain ?? 42161,
             amountIn: opts.amount,
             recipient: opts.destination,
-            // The parent `trade` command also declares --dry-run, and commander
-            // assigns the flag to the parent even when it appears after the
-            // subcommand — read the merged view or the preview silently runs live.
+            // The parent `trade` command also declares --dry-run and
+            // --accept-impact, and commander assigns such flags to the parent
+            // even when they appear after the subcommand — read the merged
+            // view or the preview silently runs live / the impact opt-in is
+            // silently dropped.
             dryRun: cmd.optsWithGlobals().dryRun,
+            acceptImpact: cmd.optsWithGlobals().acceptImpact,
           },
           json
         );
@@ -404,6 +478,12 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   fwd("amountShares", opts.amountShares);
   fwd("protocol", opts.protocol);
   fwd("chain", opts.chain);
+  // Perp TP/SL triggers. commander camelCases --take-profit → takeProfit, etc.
+  // The backend names them *Price / *LimitPrice.
+  fwd("takeProfitPrice", opts.takeProfit);
+  fwd("takeProfitLimitPrice", opts.takeProfitLimit);
+  fwd("stopLossPrice", opts.stopLoss);
+  fwd("stopLossLimitPrice", opts.stopLossLimit);
   if (opts.postOnly) body.postOnly = true;
   if (opts.reduceOnly) body.reduceOnly = true;
   if (opts.isolated) body.isolated = true;
@@ -432,10 +512,18 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
     opts.side === undefined &&
     opts.amountShares === undefined &&
     opts.chain === undefined;
+  // A SOL token ref only signals Solana when its own leg's chain flag doesn't
+  // pin it elsewhere: `--token-in wsol --chain-in base` is an EVM trade of a
+  // wrapped-SOL token (the chain pin wins), so it must not demand a Solana
+  // wallet from an EVM-only agent. With no chain flag, the token ref decides.
+  const chainAllowsSolana = (chain: unknown): boolean =>
+    chain === undefined || isSolanaChainRef(chain);
   const solanaExplicit =
     isSolanaChainRef(opts.chain) ||
     isSolanaChainRef(opts.chainIn) ||
-    isSolanaChainRef(opts.chainOut);
+    isSolanaChainRef(opts.chainOut) ||
+    (isSolanaTokenRef(opts.tokenIn) && chainAllowsSolana(opts.chainIn)) ||
+    (isSolanaTokenRef(opts.tokenOut) && chainAllowsSolana(opts.chainOut));
   const couldRouteViaSolana = solanaExplicit || isUnpinnedTokenBuy;
   if (couldRouteViaSolana) {
     try {
@@ -454,7 +542,37 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
     }
   }
 
-  const plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
+  let plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
+  // High price-impact gate: the server plans nothing and asks for explicit
+  // opt-in. With --accept-impact, re-plan echoing acceptImpactBps; the fresh
+  // quote can come back with a WORSE loss (another confirm), so loop a few
+  // times before giving up — and always exit cleanly rather than letting a
+  // confirm fall into the trade loop ("Unknown action kind: confirm").
+  for (let attempt = 0; plan.action.kind === "confirm"; attempt++) {
+    const confirm = plan.action;
+    if (!opts.acceptImpact) {
+      throw new CliError(
+        confirm.message,
+        "PRICE_IMPACT_HIGH",
+        "Re-run with --accept-impact to proceed anyway, or lower the amount."
+      );
+    }
+    if (attempt >= 2) {
+      throw new CliError(
+        `Price impact kept worsening across re-quotes (now ~${(confirm.valueLossBps / 100).toFixed(1)}%): ${confirm.message}`,
+        "PRICE_IMPACT_HIGH",
+        "The route is losing more on every quote — lower the amount or try again later."
+      );
+    }
+    progress(
+      json,
+      `High price impact (~${(confirm.valueLossBps / 100).toFixed(1)}%) accepted — re-planning`
+    );
+    plan = await post(apiUrl, token, "/trade/plan", {
+      ...body,
+      acceptImpactBps: confirm.acceptImpactBps,
+    });
+  }
   progress(
     json,
     `Trade ${plan.tradeId.slice(0, 8)}` +
@@ -488,7 +606,9 @@ export async function runTradeLoop(
   // because the token expired mid-flight.
   let currentToken = token;
   const onAuthRefresh = async (): Promise<string> => {
-    currentToken = await forceTokenRefresh(url);
+    // Refresh against the real auth server, not `url` — that may be the
+    // ACP_TRADE_BASE_URL shim, which can't mint tokens.
+    currentToken = await forceApiTokenRefresh();
     return currentToken;
   };
   // Any branch that actually signs/broadcasts requires the signer; a dry run
@@ -536,13 +656,22 @@ export async function runTradeLoop(
     if (action.kind === "send") {
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
-        const txHash = await requireSigner().sendTransaction(action.chainId, {
-          to: action.to as `0x${string}`,
-          data: action.data as `0x${string}`,
-          ...(action.value && action.value !== "0"
-            ? { value: BigInt(action.value) }
-            : {}),
-        });
+        // Route through sendCalls (EIP-5792), NOT sendTransaction: sendCalls uses
+        // the app-sponsored gas client (Alchemy Gas Manager pays), whereas
+        // sendTransaction uses the ERC-20 paymaster that bills the user's USDC —
+        // which fails on any source chain where the wallet holds no USDC (e.g. a
+        // BNB→SOL swap originating on BSC). Sponsorship is the whole point of the
+        // fee model, so every trade leg must take the sponsored path.
+        const result = await requireSigner().sendCalls(action.chainId, [
+          {
+            to: action.to as `0x${string}`,
+            data: action.data as `0x${string}`,
+            ...(action.value && action.value !== "0"
+              ? { value: BigInt(action.value) }
+              : {}),
+          },
+        ]);
+        const txHash = Array.isArray(result) ? result[0] : result;
         nextBody = { tradeId: plan.tradeId, step, txHash };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -554,13 +683,14 @@ export async function runTradeLoop(
       }
     } else if (action.kind === "sendBatch") {
       // Atomic bundle (e.g. [approve, swap]): one signature, one on-chain tx.
-      // sendTransaction accepts Call[] and folds them into a single UserOp via
-      // the same ERC-20-gas/paymaster client as a plain send, waits for
-      // inclusion, and returns the bundle's ONE tx hash; the server settles
-      // every batched leg off that hash, so post it back like a single send.
+      // sendCalls folds the calls into a single UserOp on the app-sponsored gas
+      // client (Alchemy Gas Manager pays the gas), waits for inclusion, and
+      // returns the bundle's ONE tx hash; the server settles every batched leg
+      // off that hash, so post it back like a single send. (Was sendTransaction,
+      // which used the ERC-20 paymaster that bills the user's USDC — unsponsored.)
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
-        const txHash = await requireSigner().sendTransaction(
+        const result = await requireSigner().sendCalls(
           action.chainId,
           action.calls.map((c) => ({
             to: c.to as `0x${string}`,
@@ -568,6 +698,7 @@ export async function runTradeLoop(
             ...(c.value && c.value !== "0" ? { value: BigInt(c.value) } : {}),
           }))
         );
+        const txHash = Array.isArray(result) ? result[0] : result;
         nextBody = { tradeId: plan.tradeId, step, txHash };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -603,8 +734,16 @@ export async function runTradeLoop(
             // acp-node-v2's own sponsorship, then returns the on-chain
             // signature — posted back as txHash so the server records it
             // without re-broadcasting. Throws on sponsor failure (no self-pay).
+            // The digits guard keeps a malformed server value from throwing in
+            // BigInt() and failing the leg — worst case we just fall back to
+            // the adapter's own confirmation bound.
+            const lvbh =
+              action.lastValidBlockHeight && /^\d+$/.test(action.lastValidBlockHeight)
+                ? { lastValidBlockHeight: BigInt(action.lastValidBlockHeight) }
+                : undefined;
             sponsoredTxHash = await solSigner.sendSponsoredSignedTransaction(
-              action.txBase64 ?? ""
+              action.txBase64 ?? "",
+              lvbh
             );
           } else {
             // Sign the serialized versioned tx WITHOUT broadcasting — the
@@ -705,6 +844,31 @@ const TRANSIENT_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
 // (e.g. a LiFi quote inside /trade/next) but bounded.
 const REQUEST_TIMEOUT_MS = 120_000;
 
+// Calldata to sign flows back over trade connections, so refuse plaintext to
+// any host except genuine local loopback. Parse with URL rather than a prefix
+// regex: `http://127.0.0.1:80@evil.com` starts with an allowed prefix but the
+// "127.0.0.1:80" is userinfo — fetch would connect to evil.com in the clear.
+function assertTrustedTradeEndpoint(base: string): void {
+  let u: URL;
+  try {
+    u = new URL(base);
+  } catch {
+    throw new CliError(
+      `Trade endpoint is not a valid URL: ${base}`,
+      "VALIDATION_ERROR",
+      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
+    );
+  }
+  const isLoopback = u.hostname === "localhost" || u.hostname === "127.0.0.1";
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && isLoopback)) {
+    throw new CliError(
+      `Refusing to call a non-https trade endpoint: ${base}`,
+      "VALIDATION_ERROR",
+      "The ACP API base URL must be https:// (http allowed only for localhost, for local testing)."
+    );
+  }
+}
+
 async function post<T>(
   baseUrl: string,
   token: string,
@@ -718,14 +882,7 @@ async function post<T>(
   const base = baseUrl.replace(/\/$/, "");
   // Calldata to sign flows back over this connection, so refuse plaintext: a
   // downgraded/MITM'd hop could feed the signer malicious transactions.
-  // Loopback is exempt (local test shim): no network hop to MITM.
-  if (!/^https:\/\//i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(base)) {
-    throw new CliError(
-      `Refusing to call a non-https trade endpoint: ${base}`,
-      "VALIDATION_ERROR",
-      "The ACP API base URL must be https://."
-    );
-  }
+  assertTrustedTradeEndpoint(base);
   let tok = token;
   let refreshedAuth = false;
   for (let attempt = 0; ; attempt++) {
@@ -800,14 +957,7 @@ async function post<T>(
 // guard and error-body parsing so failures read the same to the caller.
 async function get<T>(baseUrl: string, token: string, path: string): Promise<T> {
   const base = baseUrl.replace(/\/$/, "");
-  // Loopback is exempt (local test shim): no network hop to MITM.
-  if (!/^https:\/\//i.test(base) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(base)) {
-    throw new CliError(
-      `Refusing to call a non-https trade endpoint: ${base}`,
-      "VALIDATION_ERROR",
-      "The ACP API base URL must be https://."
-    );
-  }
+  assertTrustedTradeEndpoint(base);
   let res: Response;
   try {
     res = await fetch(base + path, {

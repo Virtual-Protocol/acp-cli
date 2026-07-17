@@ -7,6 +7,7 @@ import {
   ACP_TESTNET_SERVER_URL,
   EVM_MAINNET_CHAINS,
   EVM_TESTNET_CHAINS,
+  ERC20_SPONSORED_CHAINS,
   TESTNET_PRIVY_APP_ID,
   SseTransport,
   AcpApiClient,
@@ -81,10 +82,20 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
     ? SOLANA_DEVNET_CHAIN_ID
     : SOLANA_MAINNET_CHAIN_ID;
 
+  // Solana is optional: EVM-only agents (no Privy Solana wallet) must keep
+  // working, so a missing Solana wallet omits the provider instead of failing
+  // the whole agent. Any other construction error still propagates.
+  let solanaProvider: ISolanaProviderAdapter | undefined;
+  try {
+    solanaProvider = await createSolanaProviderAdapter(solanaChainId);
+  } catch (err) {
+    if (!(err instanceof CliError && err.code === "NO_SOLANA_WALLET")) throw err;
+  }
+
   return AcpAgent.create({
     contractAddresses: ACP_CONTRACT_ADDRESSES,
     evmProvider: await createProviderFromConfig(chains, serverUrl, privyAppId),
-    solanaProvider: await createSolanaProviderAdapter(solanaChainId),
+    solanaProvider,
     api: new AcpApiClient({ serverUrl }),
     transport: new SseTransport({ serverUrl }),
   });
@@ -133,12 +144,17 @@ async function createProviderFromConfig(
     }
   }
 
+  // Local test override: point the wallet-RPC + agent-auth at a local
+  // agentic-commerce-be (ACP_WALLET_RPC_URL) instead of the hardcoded ACP
+  // server, so gas sponsorship (the /wallets/alchemy-rpc proxy + its filter)
+  // can be exercised end-to-end locally. Falls back to the normal serverUrl.
+  const walletRpcUrl = process.env.ACP_WALLET_RPC_URL?.trim() || serverUrl;
   return PrivyAlchemyEvmProviderAdapter.create({
     walletAddress: walletAddress as `0x${string}`,
     walletId,
     signFn,
     chains,
-    serverUrl,
+    serverUrl: walletRpcUrl,
     privyAppId,
     builderCode,
   });
@@ -177,7 +193,12 @@ export async function createProviderAdapter(): Promise<IEvmProviderAdapter> {
   const isTestnet = process.env.IS_TESTNET === "true";
   const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
   const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
-  const chains = isTestnet ? EVM_TESTNET_CHAINS : EVM_MAINNET_CHAINS;
+  // Use the full sponsored-chain set (not just Base): the adapter builds its
+  // app-sponsored gas clients (acpClients) from this list, so a trade whose
+  // source tx is on BSC/Arbitrum/etc. would otherwise fail "ACP not configured
+  // for chainId <n>" the moment it takes the sponsored sendCalls path. Mirrors
+  // the chains the ERC20 paymaster already covers.
+  const chains = isTestnet ? EVM_TESTNET_CHAINS : ERC20_SPONSORED_CHAINS;
   return createProviderFromConfig(chains, serverUrl, privyAppId);
 }
 

@@ -46,8 +46,8 @@ import {
 import {
   EvmAcpClient,
   EVM_CHAINS,
-  SOLANA_DEVNET_CHAIN_ID,
-  SOLANA_MAINNET_CHAIN_ID,
+  EVM_MAINNET_CHAINS,
+  EVM_TESTNET_CHAINS,
 } from "@virtuals-protocol/acp-node-v2";
 import {
   tokenizeOnSolana,
@@ -613,10 +613,13 @@ export function registerAgentCommands(program: Command): void {
       try {
         const acpAgent = await createAgentFromConfig();
 
-        // Deploy for base chain only
-        const baseChainId = process.env.IS_TESTNET
-          ? viemChains.baseSepolia.id
-          : viemChains.base.id;
+        // Deploy for base chain only. Strict "true" check — IS_TESTNET=false
+        // is truthy and would pick Base Sepolia, then silently skip
+        // registration when the mainnet agent doesn't carry that chain.
+        const baseChainId =
+          process.env.IS_TESTNET === "true"
+            ? viemChains.baseSepolia.id
+            : viemChains.base.id;
 
         const chainIds = acpAgent.getSupportedChainIds();
         if (chainIds.length === 0) return;
@@ -1237,9 +1240,16 @@ export function registerAgentCommands(program: Command): void {
       if (isTTY()) {
         const agentChains = agentData.chains ?? [];
 
-        const supportedChains = await createProviderAdapter().then((provider) =>
-          provider.getSupportedChainIds(),
-        );
+        // Show Token/ERC-8004 status for the chains the agent can actually
+        // tokenize/register on — the execution set createAgentFromConfig
+        // serves, NOT createProviderAdapter's ERC20-sponsored trade superset,
+        // which would print "Not tokenized" rows for chains (and testnets)
+        // the agent never runs on.
+        const supportedChains = (
+          process.env.IS_TESTNET === "true"
+            ? EVM_TESTNET_CHAINS
+            : EVM_MAINNET_CHAINS
+        ).map((c) => c.id);
 
         let tokenRows: [string, string][] = [];
 
@@ -1260,6 +1270,17 @@ export function registerAgentCommands(program: Command): void {
             `${
               erc8004AgentId ? `ID ${erc8004AgentId}` : "Not registered"
             } [${formatChainId(chainId)}]`,
+          ]);
+        }
+
+        // Solana tokenization exists too; ERC-8004 does not (EVM-only
+        // registry), so Solana gets only a Token row.
+        if (agentData.solWalletAddress) {
+          const solId = solanaChainId();
+          const solChain = agentChains.find((ch) => ch.chainId === solId);
+          tokenRows.push([
+            "Token",
+            `${solChain?.tokenAddress ?? "Not tokenized"} [${formatChainId(solId)}]`,
           ]);
         }
 
@@ -1512,13 +1533,30 @@ export function registerAgentCommands(program: Command): void {
           await provider.getSupportedChainIds(),
         );
 
-        providerChains = EVM_CHAINS.filter((c) =>
-          supportedChainIds.has(c.id),
-        ).map((c) => ({ id: c.id, name: c.name }));
+        // Offer only chains the EXECUTION path can serve: tokenization runs
+        // through createAgentFromConfig, whose EVM client is built from
+        // EVM_MAINNET_CHAINS / EVM_TESTNET_CHAINS — while createProviderAdapter
+        // registers the wider ERC20-sponsored-gas set for trades (on mainnet
+        // that superset includes Base Sepolia, which getClient() would then
+        // reject after the user picked it).
+        const executionChains =
+          process.env.IS_TESTNET === "true"
+            ? EVM_TESTNET_CHAINS
+            : EVM_MAINNET_CHAINS;
+        providerChains = executionChains
+          .filter((c) => supportedChainIds.has(c.id))
+          .map((c) => ({ id: c.id, name: c.name }));
 
-        const hasSolana = selected.walletProviders.some(
-          (wp) => wp.chainType === "SOLANA",
-        );
+        // Offer Solana only when the launch path can actually run: it
+        // resolves the wallet via getSolanaWalletInfo, which needs BOTH a
+        // populated solWalletAddress and the provider's Privy walletId — a
+        // bare SOLANA provider record without them would fail late with a
+        // confusing wallet error after the user picked Solana.
+        const hasSolana =
+          Boolean(selected.solWalletAddress) &&
+          selected.walletProviders.some(
+            (wp) => wp.chainType === "SOLANA" && wp.metadata?.walletId,
+          );
 
         if (hasSolana) {
           providerChains.push({ id: solanaChainId(), name: "Solana" });
@@ -1680,14 +1718,13 @@ export function registerAgentCommands(program: Command): void {
         }
       }
 
-      // Step 6b: 60 Days Experiment toggle
+      // Step 6b: 60 Days Experiment toggle + airdrop percent. Applies to every
+      // venue — tokenizeOnSolana forwards both fields the same as tokenizeOnEvm,
+      // so Solana launches must not skip the flag parsing/validation.
       let isProject60days = false;
       let airdropPercent = 0;
 
-      if (
-        selectedChain.id !== SOLANA_DEVNET_CHAIN_ID &&
-        selectedChain.id !== SOLANA_MAINNET_CHAIN_ID
-      ) {
+      {
         if (opts["60Days"]) {
           isProject60days = true;
         } else if (opts.configure && !json) {
@@ -1839,9 +1876,14 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      const client = acpAgent.getClient(supportedChainIds[0]);
+      // The agent may also support Solana chains; ERC-8004 registration is
+      // EVM-only, so pick the first chain whose client is an EvmAcpClient
+      // instead of blindly taking supportedChainIds[0].
+      const client = supportedChainIds
+        .map((id) => acpAgent.getClient(id))
+        .find((c): c is EvmAcpClient => c instanceof EvmAcpClient);
 
-      if (!(client instanceof EvmAcpClient)) {
+      if (!client) {
         outputError(
           json,
           "Only EVM chains are supported for ERC-8004 registration.",

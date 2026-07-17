@@ -13,6 +13,7 @@ import { getClient } from "../lib/api/client";
 import { getAgentId, getActiveWallet } from "../lib/config";
 import { CHAIN_NETWORK_MAP } from "../lib/api/agent";
 import type {
+  AgentAssetsResponse,
   StockPosition,
   TokenInfo,
   HyperliquidBalanceSummary,
@@ -55,6 +56,32 @@ function stockUsd(p: StockPosition): string {
     return `$${(parseFloat(p.tokens) * parseFloat(p.usd_per_token)).toFixed(2)}`;
   }
   return "—";
+}
+
+// The backend's Treasures (tokenized-stock) fetch is best-effort: when the
+// upstream portfolio call fails it degrades to empty positions with a null
+// asOf instead of failing the whole balance — indistinguishable here from
+// "holds no stock". Detect that signature so the fetch can be retried and the
+// renderer can flag it rather than silently omitting real holdings.
+function stocksFetchFailed(assets: AgentAssetsResponse): boolean {
+  const { positions, asOf } = assets.data.stocks;
+  return positions.length === 0 && asOf === null;
+}
+
+// Fetch agent assets, retrying when the stock-portfolio side degraded. The
+// upstream failure is transient (timeouts), so a couple of retries usually
+// recovers real positions; if they don't, the degraded response is returned
+// and the renderer warns.
+async function getAssetsRetryingStocks(
+  agentApi: Awaited<ReturnType<typeof getClient>>["agentApi"],
+  agentId: string,
+  networks: string[]
+): Promise<AgentAssetsResponse> {
+  let assets = await agentApi.getAgentAssets(agentId, networks);
+  for (let attempt = 0; attempt < 2 && stocksFetchFailed(assets); attempt++) {
+    assets = await agentApi.getAgentAssets(agentId, networks);
+  }
+  return assets;
 }
 
 // A nullable USD amount → "$12.34", or "—" when unknown (null ≠ 0).
@@ -277,6 +304,10 @@ function renderBalances(opts: {
   // Tokenized-stock holdings span both chains and aren't tied to a queried
   // network, so they render once, after the per-network token tables.
   stocks?: StockPosition[];
+  // True when the backend's stock-portfolio fetch failed (even after retries):
+  // positions may exist but couldn't be read, so say so instead of rendering
+  // nothing.
+  stocksUnavailable?: boolean;
   // Hyperliquid funds/positions live off-chain (account-wide), so they render
   // once, after the tokens + stocks — independent of the queried network.
   hyperliquid?: HyperliquidBalanceSummary | null;
@@ -289,6 +320,7 @@ function renderBalances(opts: {
     networkToChainId,
     tokens,
     stocks = [],
+    stocksUnavailable = false,
     hyperliquid = null,
     evmAddress,
     solAddress,
@@ -310,6 +342,7 @@ function renderBalances(opts: {
         address,
         tokens,
         stocks,
+        ...(stocksUnavailable ? { stocksUnavailable } : {}),
         hyperliquid,
       });
     } else {
@@ -322,6 +355,7 @@ function renderBalances(opts: {
         solanaAddress: solAddress,
         tokens,
         stocks,
+        ...(stocksUnavailable ? { stocksUnavailable } : {}),
         hyperliquid,
       });
     }
@@ -372,6 +406,13 @@ function renderBalances(opts: {
     }
     // Stocks span both chains — print the table once, after the token output.
     printStockPositions(stocks);
+    if (stocksUnavailable) {
+      console.log(
+        `  ${c.yellow(
+          "Tokenized-stock positions are temporarily unavailable (upstream fetch failed) — any stock you hold is not shown. Retry in a moment."
+        )}\n`
+      );
+    }
     // Hyperliquid is account-wide — render after the on-chain + stock tables.
     printHyperliquid(hyperliquid);
   } else {
@@ -393,6 +434,12 @@ function renderBalances(opts: {
         `${p.token_ticker ?? p.ticker}\t${p.ticker}\t${p.tokens}\t` +
           `${p.shares ?? "—"}\t${usd(p.usd_per_share)}\t${usd(p.usd_per_token)}\t` +
           `${usd(p.avg_entry_price_per_share)}\t${stockUsd(p)}\t${pnl(p.unrealized_pnl)}\tstock`
+      );
+    }
+    if (stocksUnavailable) {
+      // Stderr so the TSV on stdout stays parseable.
+      process.stderr.write(
+        "warning: tokenized-stock positions unavailable (upstream fetch failed) — stock rows omitted\n"
       );
     }
     if (hlHasData(hyperliquid)) {
@@ -647,7 +694,11 @@ export function registerWalletCommands(program: Command): void {
         }
 
         const { agentApi } = await getClient();
-        const assets = await agentApi.getAgentAssets(agentId, networks);
+        const assets = await getAssetsRetryingStocks(
+          agentApi,
+          agentId,
+          networks
+        );
         const tokens = assets.data.tokens;
         // The Treasures portfolio spans both chains and isn't tied to the
         // queried network, so surface every position regardless of chain-id.
@@ -659,6 +710,7 @@ export function registerWalletCommands(program: Command): void {
           networkToChainId,
           tokens,
           stocks,
+          stocksUnavailable: stocksFetchFailed(assets),
           hyperliquid: assets.data.hyperliquid ?? null,
           evmAddress: walletAddress,
           solAddress,
@@ -859,7 +911,9 @@ export function registerWalletCommands(program: Command): void {
         }
         const address = await getSolanaWalletAddress();
         const { agentApi } = await getClient();
-        const assets = await agentApi.getAgentAssets(agentId, [network]);
+        const assets = await getAssetsRetryingStocks(agentApi, agentId, [
+          network,
+        ]);
         const tokens = assets.data.tokens;
         const stocks = assets.data.stocks.positions;
 
@@ -869,6 +923,7 @@ export function registerWalletCommands(program: Command): void {
           networkToChainId: new Map([[network, chainId]]),
           tokens,
           stocks,
+          stocksUnavailable: stocksFetchFailed(assets),
           hyperliquid: assets.data.hyperliquid ?? null,
           solAddress: address,
         });
