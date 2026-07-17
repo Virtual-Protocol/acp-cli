@@ -1,7 +1,8 @@
-import { erc20Abi, formatEther, parseUnits } from "viem";
+import { erc20Abi, formatEther, formatUnits, parseUnits } from "viem";
 import { createAgentFromConfig } from "./agentFactory";
 import {
   EvmAcpClient,
+  getSplTokenBalance,
   type ISolanaProviderAdapter,
 } from "@virtuals-protocol/acp-node-v2";
 import type {
@@ -9,9 +10,10 @@ import type {
   PrepareLaunchResponse,
   SolanaPrepareLaunchResponse,
 } from "./api/agent";
-import { toSolanaInstructionLike } from "./solana";
+import { toSolanaInstructionLike, type SolAddr } from "./solana";
 import { isSolanaChainId } from "./chains";
 import { withApprovalGate } from "./walletGate";
+import { CliError } from "./errors";
 
 export interface TokenizeParams {
   agentId: string;
@@ -194,13 +196,39 @@ export async function tokenizeOnSolana(
 
     const ixs = solanaLaunch.instructions.map(toSolanaInstructionLike);
     const result = await withApprovalGate(
-      (provider: ISolanaProviderAdapter) => provider.sendInstructions(ixs),
+      async (provider: ISolanaProviderAdapter) => {
+        // Preflight parity with the EVM path's checkVirtualBalance: the
+        // wallet must cover launch fee + prebuy in the quote token (VIRTUAL,
+        // 9 decimals on Solana) BEFORE broadcasting, so an underfunded
+        // launch fails with a clear verdict instead of an on-chain error.
+        // A missing token account reads as zero.
+        const required =
+          BigInt(solanaLaunch.launchFee) + prebuyVirtualBaseUnit;
+        const owner = (await provider.getAddress()) as SolAddr;
+        const { amount, decimals } = await getSplTokenBalance(
+          provider.getRpc(),
+          owner,
+          solanaLaunch.quoteMint as SolAddr
+        );
+        if (amount < required) {
+          throw new CliError(
+            `Insufficient VIRTUAL balance. Need ${formatUnits(
+              required,
+              decimals
+            )}, have ${formatUnits(amount, decimals)}.`,
+            "VALIDATION_ERROR"
+          );
+        }
+        return provider.sendInstructions(ixs);
+      },
       { chainId, sponsored: false }
     );
 
     // last instruction for token launch result
     signature = Array.isArray(result) ? result[result.length - 1] : result;
   } catch (err) {
+    // Preflight verdicts are already user-facing; don't wrap them.
+    if (err instanceof CliError) throw err;
     throw new Error(`Failed to launch token: ${err}`);
   }
 
