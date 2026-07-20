@@ -139,6 +139,7 @@ function hlPosition(p: HyperliquidPerpPosition): {
   size: string | null;
   entry: string | null;
   value: string | null;
+  margin: string | null;
   upnl: string | null;
 } {
   const pos = (p.position ?? p) as Record<string, unknown>;
@@ -150,7 +151,10 @@ function hlPosition(p: HyperliquidPerpPosition): {
     const v = Math.abs(parseFloat(size)) * parseFloat(entry);
     if (Number.isFinite(v)) value = v.toFixed(2);
   }
-  return { coin, size, entry, value, upnl: hlNum(pos.unrealizedPnl) };
+  // Collateral locked against the position — explains why free/withdrawable USDC
+  // can be far below the account value.
+  const margin = hlNum(pos.marginUsed);
+  return { coin, size, entry, value, margin, upnl: hlNum(pos.unrealizedPnl) };
 }
 
 // A spot balance worth showing — a strictly positive total. Used as the single
@@ -215,14 +219,14 @@ function printHyperliquid(hl?: HyperliquidBalanceSummary | null): void {
     console.log(
       `  ${c.dim("COIN".padEnd(10))}${c.dim("SIZE".padEnd(16))}${c.dim(
         "ENTRY".padEnd(12)
-      )}${c.dim("VALUE".padEnd(12))}${c.dim("PnL")}`
+      )}${c.dim("VALUE".padEnd(12))}${c.dim("MARGIN".padEnd(12))}${c.dim("PnL")}`
     );
     for (const p of positions) {
-      const { coin, size, entry, value, upnl } = hlPosition(p);
+      const { coin, size, entry, value, margin, upnl } = hlPosition(p);
       console.log(
         `  ${c.cyan(coin.padEnd(10))}${clip(size ?? "—", 14).padEnd(16)}${usd(
           entry
-        ).padEnd(12)}${usd(value).padEnd(12)}${pnl(upnl)}`
+        ).padEnd(12)}${usd(value).padEnd(12)}${usd(margin).padEnd(12)}${pnl(upnl)}`
       );
     }
   }
