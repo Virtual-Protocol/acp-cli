@@ -11,6 +11,8 @@ import {
 
 interface ApprovalGateOptions {
   json?: boolean;
+  deferSocket?: boolean;
+  evmProvider?: Promise<IEvmProviderAdapter>;
 }
 
 interface SolanaApprovalGateOptions extends ApprovalGateOptions {
@@ -32,11 +34,16 @@ export async function withApprovalGate<T>(
   fn: (provider: any) => Promise<T>,
   opts: ApprovalGateOptions & { chainId?: number; sponsored?: boolean } = {}
 ): Promise<T> {
-  let transport: Awaited<ReturnType<typeof createSseTransport>> | undefined;
+  let transportPromise: ReturnType<typeof createSseTransport> | undefined;
   const restoreApprovalConsole = mirrorApprovalConsoleToStderr(opts);
   try {
-    const evmProvider = await createProviderAdapter();
-    transport = await createSseTransport(evmProvider, [STREAMS.WALLET]);
+    const evmProvider = await (opts.evmProvider ?? createProviderAdapter());
+    transportPromise = createSseTransport(evmProvider, [STREAMS.WALLET]);
+    if (opts.deferSocket) {
+      transportPromise.catch(() => {});
+    } else {
+      await transportPromise;
+    }
     const provider =
       opts.chainId === undefined
         ? evmProvider
@@ -45,8 +52,8 @@ export async function withApprovalGate<T>(
           });
     return await fn(provider);
   } finally {
-    if (transport) {
-      void Promise.resolve(transport.disconnect()).catch(() => {});
+    if (transportPromise) {
+      void transportPromise.then((t) => t.disconnect()).catch(() => {});
     }
     restoreApprovalConsole();
   }

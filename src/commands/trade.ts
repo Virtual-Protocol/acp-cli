@@ -80,7 +80,13 @@ interface SendBatchAction {
   kind: "sendBatch";
   label: string;
   chainId: number;
-  calls: { to: string; data: string; value: string; label: string; kind: string }[];
+  calls: {
+    to: string;
+    data: string;
+    value: string;
+    label: string;
+    kind: string;
+  }[];
   timeoutMs?: number;
 }
 interface SignAction {
@@ -177,7 +183,8 @@ function isSolanaTokenRef(v: unknown): boolean {
 
 // Minimal base58 decode (Solana alphabet) — the adapter returns base58
 // signatures but the trade wire format is base64 of the raw bytes.
-const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const B58_ALPHABET =
+  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 function base58Decode(s: string): Uint8Array {
   let n = 0n;
   for (const c of s) {
@@ -269,9 +276,9 @@ export function registerTradeCommands(program: Command): void {
     .command("trade")
     .description(
       "Buy, sell, swap tokens or trade perps — across any chain. " +
-      "Cross-chain is always supported: your funds can be on Ethereum, Arbitrum, or Base " +
-      "and the CLI will bridge them automatically. " +
-      "Hyperliquid (chain 1337) — " +
+        "Cross-chain is always supported: your funds can be on Ethereum, Arbitrum, or Base " +
+        "and the CLI will bridge them automatically. " +
+        "Hyperliquid (chain 1337) — " +
         "deposits, spot orders, withdrawals, and perps. Routes by the chains/params " +
         "you pass. See `acp trade --help`."
     )
@@ -316,21 +323,46 @@ export function registerTradeCommands(program: Command): void {
     )
     // -- Swap / deposit / HL spot / HL withdraw (token-pair shape) --------
     .option("--token-in <token>", "Input token (address or symbol)")
-    .option("--chain-in <id>", "Input chain ID — 1 (Ethereum), 42161 (Arbitrum), 8453 (Base), 1337 (Hyperliquid). Cross-chain bridging is automatic.")
-    .option("--amount-in <amount>", "Input amount in human units (USDC for an HL spot buy)")
+    .option(
+      "--chain-in <id>",
+      "Input chain ID — 1 (Ethereum), 42161 (Arbitrum), 8453 (Base), 1337 (Hyperliquid). Cross-chain bridging is automatic."
+    )
+    .option(
+      "--amount-in <amount>",
+      "Input amount in human units (USDC for an HL spot buy)"
+    )
     .option("--token-out <token>", "Output token (address or symbol)")
-    .option("--chain-out <id>", "Output chain ID — 1 (Ethereum), 42161 (Arbitrum), 8453 (Base), 1337 (Hyperliquid).")
+    .option(
+      "--chain-out <id>",
+      "Output chain ID — 1 (Ethereum), 42161 (Arbitrum), 8453 (Base), 1337 (Hyperliquid)."
+    )
     .option("--recipient <addr>", "Output recipient (default: active wallet)")
     .option("--deadline-secs <secs>", "BondingV5 deadline in seconds")
     .option("--price <price>", "HL spot limit price (omit for a market order)")
-    .option("--post-only", "HL post-only (Alo) limit order; rejects if it crosses", false)
-    .option("--slippage <pct>", "Max slippage as a percent, e.g. 5 = 5% (HL orders default to 5%; swaps/Treasures use the server default if omitted)")
+    .option(
+      "--post-only",
+      "HL post-only (Alo) limit order; rejects if it crosses",
+      false
+    )
+    .option(
+      "--slippage <pct>",
+      "Max slippage as a percent, e.g. 5 = 5% (HL orders default to 5%; swaps/Treasures use the server default if omitted)"
+    )
     // -- Treasures tokenized stock (USDC ↔ stock token swap) -------------
     // The asset is named with --token (below); these flags pick buy vs sell.
-    .option("--amount-usdc <amount>", "USDC to spend on a Treasures tokenized-stock buy (with --token)")
-    .option("--amount-shares <amount>", "Shares to liquidate on a Treasures tokenized-stock sell (with --token; requires --chain)")
+    .option(
+      "--amount-usdc <amount>",
+      "USDC to spend on a Treasures tokenized-stock buy (with --token)"
+    )
+    .option(
+      "--amount-shares <amount>",
+      "Shares to liquidate on a Treasures tokenized-stock sell (with --token; requires --chain)"
+    )
     .option("--protocol <name>", "Treasures protocol filter: ondo or xstocks")
-    .option("--chain <name>", "Treasures venue: eth or sol. REQUIRED on sells — the chain holding your shares (see stocks[] in `acp wallet balance --json`); optional on buys to pin the venue")
+    .option(
+      "--chain <name>",
+      "Treasures venue: eth or sol. REQUIRED on sells — the chain holding your shares (see stocks[] in `acp wallet balance --json`); optional on buys to pin the venue"
+    )
     // -- Hyperliquid perp (position shape) -------------------------------
     .option("--side <side>", "Perp side: long or short")
     .option(
@@ -352,13 +384,29 @@ export function registerTradeCommands(program: Command): void {
       "--take-profit <price>",
       "Perp take-profit trigger price. With --size/--amount-usdc it attaches to the entry; alone it attaches to an existing position. Market close unless --take-profit-limit is set."
     )
-    .option("--take-profit-limit <price>", "Rest the take-profit as a limit at this price instead of a market close")
+    .option(
+      "--take-profit-limit <price>",
+      "Rest the take-profit as a limit at this price instead of a market close"
+    )
     .option(
       "--stop-loss <price>",
       "Perp stop-loss trigger price. With --size/--amount-usdc it attaches to the entry; alone it attaches to an existing position. Market close unless --stop-loss-limit is set."
     )
-    .option("--stop-loss-limit <price>", "Rest the stop-loss as a limit at this price instead of a market close")
-    .option("--dry-run", "Preview the trade (route, size, margin, fees) without signing or submitting anything", false)
+    .option(
+      "--stop-loss-limit <price>",
+      "Rest the stop-loss as a limit at this price instead of a market close"
+    )
+    .option(
+      "--dry-run",
+      "Preview the trade (route, size, margin, fees) without signing or submitting anything",
+      false
+    )
+    .option(
+      "--preconf",
+      "EXPERIMENTAL: detect Base tx inclusion via Flashblocks preconfirmations" +
+        "The tx hash is posted onward as soon as the sequencer preconfirms it.",
+      false
+    )
     .option(
       "--accept-impact",
       "Proceed through the server's high price-impact warning (re-plans with the echoed acceptImpactBps)",
@@ -367,7 +415,12 @@ export function registerTradeCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
+        const startTime = Date.now();
+        console.log("start", startTime);
         await runTrade(opts, json);
+        const endTime = Date.now();
+        console.log("end", endTime);
+        console.log("time taken (ms)", endTime - startTime);
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
@@ -417,10 +470,18 @@ export function registerTradeCommands(program: Command): void {
   // the backend detects the withdraw, same as everything else.
   trade
     .command("withdraw-from-hl")
-    .description("Withdraw USDC from Hyperliquid (settles to Arbitrum; --to-chain bridges onward)")
+    .description(
+      "Withdraw USDC from Hyperliquid (settles to Arbitrum; --to-chain bridges onward)"
+    )
     .requiredOption("--amount <usdc>", "USDC amount to withdraw")
-    .option("--destination <addr>", "Destination address (default: active wallet)")
-    .option("--to-chain <id>", "Final chain (default: Arbitrum). Others withdraw to Arbitrum, then bridge.")
+    .option(
+      "--destination <addr>",
+      "Destination address (default: active wallet)"
+    )
+    .option(
+      "--to-chain <id>",
+      "Final chain (default: Arbitrum). Others withdraw to Arbitrum, then bridge."
+    )
     .option("--dry-run", "Preview the withdrawal without submitting it", false)
     .option(
       "--accept-impact",
@@ -455,7 +516,10 @@ export function registerTradeCommands(program: Command): void {
 // One trade path: forward every provided flag verbatim to the backend, which
 // detects the venue (swap / deposit / HL spot / HL perp / HL withdraw /
 // Treasures) and hands back the actions to sign. The CLI does no routing.
-async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<void> {
+async function runTrade(
+  opts: Record<string, unknown>,
+  json: boolean
+): Promise<void> {
   if (opts.amountShares !== undefined && opts.chain === undefined) {
     throw new CliError(
       "tokenized-stock sells require --chain eth|sol",
@@ -469,7 +533,10 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   // The wallet is a Privy 7702 smart wallet with EIP-5792 sendCalls, so always
   // advertise batching: the server then fuses approve+swap (and the platform
   // fee) into one atomic sendBatch — one signature instead of two or three.
-  const body: Record<string, unknown> = { walletAddress: owner, supportsBatch: true };
+  const body: Record<string, unknown> = {
+    walletAddress: owner,
+    supportsBatch: true,
+  };
   const fwd = (key: string, v: unknown) => {
     if (v !== undefined) body[key] = v;
   };
@@ -554,6 +621,9 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
     }
   }
 
+  if (opts.preconf) process.env.USE_PRECONF_RPC = "1";
+
+  const providerReady = opts.dryRun ? undefined : createProviderAdapter();
   let plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
   // High price-impact gate: the server plans nothing and asks for explicit
   // opt-in. With --accept-impact, re-plan echoing acceptImpactBps; the fresh
@@ -588,17 +658,15 @@ async function runTrade(opts: Record<string, unknown>, json: boolean): Promise<v
   progress(
     json,
     `Trade ${plan.tradeId.slice(0, 8)}` +
-      (plan.direction && plan.route ? ` (${plan.direction} via ${plan.route})` : "")
+      (plan.direction && plan.route
+        ? ` (${plan.direction} via ${plan.route})`
+        : "")
   );
   const result = opts.dryRun
-    ? // A dry run signs and submits nothing — the server returns a `preview`
-      // action and runTradeLoop returns immediately — so skip building the
-      // signer entirely. This lets `--dry-run` work on agents with no signer
-      // registered (and avoids the approval gate's signer requirement).
-      await runTradeLoop(apiUrl, token, undefined, plan, json)
+    ? await runTradeLoop(apiUrl, token, undefined, plan, json)
     : await withApprovalGate(
         (provider) => runTradeLoop(apiUrl, token, provider, plan, json),
-        { json }
+        { json, deferSocket: true, evmProvider: providerReady }
       );
   outputTradeResult(json, result);
 }
@@ -630,7 +698,7 @@ export async function runTradeLoop(
       throw new CliError(
         "A signer is required to execute this trade.",
         "NO_SIGNER",
-        "Run `acp agent add-signer` to register a signing key.",
+        "Run `acp agent add-signer` to register a signing key."
       );
     }
     return provider;
@@ -654,7 +722,9 @@ export async function runTradeLoop(
     if (action.kind === "error") {
       if (action.partialResult && !json && isTTY()) {
         process.stderr.write(
-          "Partial state:\n" + JSON.stringify(action.partialResult, null, 2) + "\n"
+          "Partial state:\n" +
+            JSON.stringify(action.partialResult, null, 2) +
+            "\n"
         );
       }
       throw new CliError(
@@ -665,6 +735,7 @@ export async function runTradeLoop(
     }
 
     let nextBody: Record<string, unknown>;
+    const actionStart = Date.now();
     if (action.kind === "send") {
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {
@@ -731,7 +802,10 @@ export async function runTradeLoop(
       try {
         let signature: string | undefined;
         let sponsoredTxHash: string | undefined;
-        if (action.sigType === "solana-message" || action.sigType === "solana-tx") {
+        if (
+          action.sigType === "solana-message" ||
+          action.sigType === "solana-tx"
+        ) {
           solSigner ??= (await createSolanaProviderAdapter(
             SOLANA_MAINNET_PRIVY_CHAIN_ID
           )) as unknown as SolanaTradeSigner;
@@ -750,7 +824,8 @@ export async function runTradeLoop(
             // BigInt() and failing the leg — worst case we just fall back to
             // the adapter's own confirmation bound.
             const lvbh =
-              action.lastValidBlockHeight && /^\d+$/.test(action.lastValidBlockHeight)
+              action.lastValidBlockHeight &&
+              /^\d+$/.test(action.lastValidBlockHeight)
                 ? { lastValidBlockHeight: BigInt(action.lastValidBlockHeight) }
                 : undefined;
             sponsoredTxHash = await solSigner.sendSponsoredSignedTransaction(
@@ -761,12 +836,20 @@ export async function runTradeLoop(
           } else {
             // Sign the serialized versioned tx WITHOUT broadcasting — the
             // server (LiFi legs) or the venue (Treasures) broadcasts it.
-            signature = await solSigner.signTransactionViaPrivy(action.txBase64 ?? "");
+            signature = await solSigner.signTransactionViaPrivy(
+              action.txBase64 ?? ""
+            );
           }
         } else if (action.sigType === "eip712") {
-          signature = await requireSigner().signTypedData(action.chainId, action.typedData);
+          signature = await requireSigner().signTypedData(
+            action.chainId,
+            action.typedData
+          );
         } else {
-          signature = await requireSigner().signMessage(action.chainId, action.message ?? "");
+          signature = await requireSigner().signMessage(
+            action.chainId,
+            action.message ?? ""
+          );
         }
         nextBody = sponsoredTxHash
           ? { tradeId: plan.tradeId, step, txHash: sponsoredTxHash }
@@ -780,7 +863,10 @@ export async function runTradeLoop(
         };
       }
     } else if (action.kind === "wait") {
-      progress(json, `[step ${step + 1}] ${action.label} (waiting ${action.delaySec}s)`);
+      progress(
+        json,
+        `[step ${step + 1}] ${action.label} (waiting ${action.delaySec}s)`
+      );
       await sleep(action.delaySec * 1000);
       nextBody = { tradeId: plan.tradeId, step };
     } else {
@@ -899,7 +985,8 @@ async function post<T>(
   let tok = token;
   let refreshedAuth = false;
   for (let attempt = 0; ; attempt++) {
-    const canRetry = retryTransient && attempt < TRANSIENT_RETRY_DELAYS_MS.length;
+    const canRetry =
+      retryTransient && attempt < TRANSIENT_RETRY_DELAYS_MS.length;
     let res: Response;
     try {
       res = await fetch(base + path, {
@@ -915,7 +1002,8 @@ async function post<T>(
       // Network-level failure (connection reset/refused) OR a timeout (stalled
       // connection) — same class as a 502, so retry transient calls.
       const timedOut =
-        err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+        err instanceof Error &&
+        (err.name === "TimeoutError" || err.name === "AbortError");
       if (canRetry) {
         await sleep(TRANSIENT_RETRY_DELAYS_MS[attempt]);
         continue;
@@ -924,7 +1012,7 @@ async function post<T>(
         throw new CliError(
           `Request to ${path} timed out after ${REQUEST_TIMEOUT_MS / 1000}s (no response).`,
           "TIMEOUT",
-          "Re-run the command — the request stalled rather than failing, and is safe to retry.",
+          "Re-run the command — the request stalled rather than failing, and is safe to retry."
         );
       }
       throw err;
@@ -948,7 +1036,11 @@ async function post<T>(
       const raw = await res.text();
       let parsed: { error?: string; code?: string; recovery?: string } | string;
       try {
-        parsed = JSON.parse(raw) as { error?: string; code?: string; recovery?: string };
+        parsed = JSON.parse(raw) as {
+          error?: string;
+          code?: string;
+          recovery?: string;
+        };
       } catch {
         parsed = raw;
       }
@@ -957,9 +1049,15 @@ async function post<T>(
           ? `${res.status} ${res.statusText}: ${parsed}`
           : `${res.status} ${res.statusText}: ${parsed.error ?? "unknown"}`;
       const code =
-        typeof parsed === "object" && parsed.code ? parsed.code : `HTTP_${res.status}`;
+        typeof parsed === "object" && parsed.code
+          ? parsed.code
+          : `HTTP_${res.status}`;
       const recovery = typeof parsed === "object" ? parsed.recovery : undefined;
-      throw new CliError(message, isKnownCode(code) ? code : "API_ERROR", recovery);
+      throw new CliError(
+        message,
+        isKnownCode(code) ? code : "API_ERROR",
+        recovery
+      );
     }
     return (await res.json()) as T;
   }
@@ -968,7 +1066,11 @@ async function post<T>(
 // Read-only GET (discovery). No body and no retry: a failed read just surfaces,
 // it never half-applies like a send/sign post could. Shares post()'s https
 // guard and error-body parsing so failures read the same to the caller.
-async function get<T>(baseUrl: string, token: string, path: string): Promise<T> {
+async function get<T>(
+  baseUrl: string,
+  token: string,
+  path: string
+): Promise<T> {
   const base = baseUrl.replace(/\/$/, "");
   assertTrustedTradeEndpoint(base);
   let res: Response;
@@ -979,11 +1081,14 @@ async function get<T>(baseUrl: string, token: string, path: string): Promise<T> 
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (err) {
-    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+    if (
+      err instanceof Error &&
+      (err.name === "TimeoutError" || err.name === "AbortError")
+    ) {
       throw new CliError(
         `Request to ${path} timed out after ${REQUEST_TIMEOUT_MS / 1000}s (no response).`,
         "TIMEOUT",
-        "Re-run the command — the request stalled rather than failing, and is safe to retry.",
+        "Re-run the command — the request stalled rather than failing, and is safe to retry."
       );
     }
     throw err;
@@ -992,7 +1097,11 @@ async function get<T>(baseUrl: string, token: string, path: string): Promise<T> 
     const raw = await res.text();
     let parsed: { error?: string; code?: string; recovery?: string } | string;
     try {
-      parsed = JSON.parse(raw) as { error?: string; code?: string; recovery?: string };
+      parsed = JSON.parse(raw) as {
+        error?: string;
+        code?: string;
+        recovery?: string;
+      };
     } catch {
       parsed = raw;
     }
@@ -1001,9 +1110,15 @@ async function get<T>(baseUrl: string, token: string, path: string): Promise<T> 
         ? `${res.status} ${res.statusText}: ${parsed}`
         : `${res.status} ${res.statusText}: ${parsed.error ?? "unknown"}`;
     const code =
-      typeof parsed === "object" && parsed.code ? parsed.code : `HTTP_${res.status}`;
+      typeof parsed === "object" && parsed.code
+        ? parsed.code
+        : `HTTP_${res.status}`;
     const recovery = typeof parsed === "object" ? parsed.recovery : undefined;
-    throw new CliError(message, isKnownCode(code) ? code : "API_ERROR", recovery);
+    throw new CliError(
+      message,
+      isKnownCode(code) ? code : "API_ERROR",
+      recovery
+    );
   }
   return (await res.json()) as T;
 }
@@ -1033,7 +1148,10 @@ function progress(json: boolean, msg: string): void {
 // Render a trade outcome. A dry-run result carries a ready-to-read `summary`, so
 // in human mode we print just that (multi-line) string; otherwise (and always
 // in --json) we fall back to the structured key/value output.
-function outputTradeResult(json: boolean, result: Record<string, unknown>): void {
+function outputTradeResult(
+  json: boolean,
+  result: Record<string, unknown>
+): void {
   if (!json && result.dryRun === true && typeof result.summary === "string") {
     console.log(result.summary);
     return;

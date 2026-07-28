@@ -22,6 +22,7 @@ import type {
   SupportedStreams,
 } from "@virtuals-protocol/acp-node-v2";
 import {
+  createAuthTokenStore,
   getBuilderCode,
   getActiveWallet,
   getAgentId,
@@ -42,12 +43,12 @@ import { base, baseSepolia } from "viem/chains";
 type EvmChain = (typeof EVM_MAINNET_CHAINS)[number];
 
 export async function getWalletIdByAddress(
-  walletAddress: string,
+  walletAddress: string
 ): Promise<string> {
   const { agentApi } = await getClient();
   const agentList = await agentApi.list();
   const agent = agentList.data.find(
-    (agent) => agent.walletAddress === walletAddress,
+    (agent) => agent.walletAddress === walletAddress
   );
 
   if (!agent) {
@@ -55,12 +56,12 @@ export async function getWalletIdByAddress(
   }
 
   const evmProvider = agent.walletProviders.find(
-    (wp) => (wp.chainType ?? "EVM") === "EVM",
+    (wp) => (wp.chainType ?? "EVM") === "EVM"
   );
 
   if (!evmProvider) {
     throw new Error(
-      `EVM wallet provider not found for wallet address: ${walletAddress}`,
+      `EVM wallet provider not found for wallet address: ${walletAddress}`
     );
   }
 
@@ -89,7 +90,8 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
   try {
     solanaProvider = await createSolanaProviderAdapter(solanaChainId);
   } catch (err) {
-    if (!(err instanceof CliError && err.code === "NO_SOLANA_WALLET")) throw err;
+    if (!(err instanceof CliError && err.code === "NO_SOLANA_WALLET"))
+      throw err;
   }
 
   return AcpAgent.create({
@@ -107,14 +109,14 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
 async function createProviderFromConfig(
   chains: EvmChain[],
   serverUrl: string,
-  privyAppId: string,
+  privyAppId: string
 ): Promise<IEvmProviderAdapter> {
   const walletAddress = getActiveWallet();
   if (!walletAddress) {
     throw new CliError(
       "No active agent set.",
       "NO_ACTIVE_AGENT",
-      "Run `acp agent create` or `acp agent use` to set an active agent.",
+      "Run `acp agent create` or `acp agent use` to set an active agent."
     );
   }
 
@@ -123,7 +125,7 @@ async function createProviderFromConfig(
     throw new CliError(
       "No signer configured for this agent.",
       "NO_SIGNER",
-      "Run `acp agent add-signer` to generate and register a signing key.",
+      "Run `acp agent add-signer` to generate and register a signing key."
     );
   }
 
@@ -149,6 +151,7 @@ async function createProviderFromConfig(
   // server, so gas sponsorship (the /wallets/alchemy-rpc proxy + its filter)
   // can be exercised end-to-end locally. Falls back to the normal serverUrl.
   const walletRpcUrl = process.env.ACP_WALLET_RPC_URL?.trim() || serverUrl;
+  const tokenStore = await createAuthTokenStore(walletRpcUrl, walletAddress);
   return PrivyAlchemyEvmProviderAdapter.create({
     walletAddress: walletAddress as `0x${string}`,
     walletId,
@@ -157,6 +160,7 @@ async function createProviderFromConfig(
     serverUrl: walletRpcUrl,
     privyAppId,
     builderCode,
+    tokenStore,
   });
 }
 
@@ -179,7 +183,7 @@ export async function createLegacyBuyerAdapter(options?: {
   const provider = await createProviderFromConfig(
     [chain],
     serverUrl,
-    privyAppId,
+    privyAppId
   );
   return LegacyBuyerAdapter.create(provider, chain.id, options);
 }
@@ -204,7 +208,7 @@ export async function createProviderAdapter(): Promise<IEvmProviderAdapter> {
 
 export async function createSseTransport(
   provider: IEvmProviderAdapter,
-  streams: SupportedStreams[],
+  streams: SupportedStreams[]
 ): Promise<SseTransport> {
   const isTestnet = process.env.IS_TESTNET === "true";
   const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
@@ -233,7 +237,7 @@ export function getWalletAddress(): string {
     throw new CliError(
       "No active agent set.",
       "NO_ACTIVE_AGENT",
-      "Run `acp agent create` or `acp agent use` to set an active agent.",
+      "Run `acp agent create` or `acp agent use` to set an active agent."
     );
   }
   return addr;
@@ -249,7 +253,7 @@ export function getWalletAddress(): string {
  * so the same P256 signFn authorizes Solana operations too.
  */
 async function getSolanaWalletInfo(
-  walletAddress: string,
+  walletAddress: string
 ): Promise<{ solWalletAddress: string; walletId: string }> {
   const { agentApi } = await getClient();
   const agentList = await agentApi.list();
@@ -257,17 +261,17 @@ async function getSolanaWalletInfo(
   if (!agent) {
     throw new CliError(
       `Agent not found for wallet address: ${walletAddress}`,
-      "AGENT_NOT_FOUND",
+      "AGENT_NOT_FOUND"
     );
   }
   const solProvider = agent.walletProviders.find(
-    (wp) => wp.chainType === "SOLANA",
+    (wp) => wp.chainType === "SOLANA"
   );
   if (!agent.solWalletAddress || !solProvider?.metadata.walletId) {
     throw new CliError(
       "This agent has no Solana wallet.",
       "NO_SOLANA_WALLET",
-      "The agent's Privy wallet has no Solana provider configured.",
+      "The agent's Privy wallet has no Solana provider configured."
     );
   }
   return {
@@ -289,7 +293,7 @@ export async function getSolanaWalletAddress(): Promise<string> {
  */
 export async function createSolanaProviderAdapter(
   chainId: number,
-  opts?: { sponsored?: boolean },
+  opts?: { sponsored?: boolean }
 ): Promise<ISolanaProviderAdapter> {
   const isTestnet = process.env.IS_TESTNET === "true";
   const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
@@ -301,7 +305,7 @@ export async function createSolanaProviderAdapter(
     throw new CliError(
       "No signer configured for this agent.",
       "NO_SIGNER",
-      "Run `acp agent add-signer` to generate and register a signing key.",
+      "Run `acp agent add-signer` to generate and register a signing key."
     );
   }
 

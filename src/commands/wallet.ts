@@ -257,6 +257,7 @@ function formatToken(
   name: string;
   balance: string;
   usd: string;
+  usdValue: number;
   contract: string;
 } {
   const isNative = t.tokenAddress === null;
@@ -274,6 +275,7 @@ function formatToken(
     name,
     balance,
     usd: `$${value.toFixed(2)}`,
+    usdValue: Number.isFinite(value) ? value : 0,
     contract: t.tokenAddress ?? "native",
   };
 }
@@ -284,8 +286,10 @@ function printTokenTable(tokens: TokenInfo[], nativeFor: NativeResolver): void {
     "NAME".padEnd(22)
   )}${c.dim("BALANCE".padEnd(24))}${c.dim("USD")}`;
   console.log(header);
-  for (const t of tokens) {
-    const { symbol, name, balance, usd } = formatToken(t, nativeFor(t.network));
+  const rows = tokens
+    .map((t) => formatToken(t, nativeFor(t.network)))
+    .sort((a, b) => b.usdValue - a.usdValue);
+  for (const { symbol, name, balance, usd } of rows) {
     const bal = balance.length > 22 ? balance.slice(0, 22) : balance;
     console.log(
       `  ${c.cyan(symbol.padEnd(10))}${name.padEnd(22)}${bal.padEnd(24)}${usd}`
