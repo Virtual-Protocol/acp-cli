@@ -483,6 +483,12 @@ export function registerTradeCommands(program: Command): void {
       "Proceed through the server's high price-impact warning on the bridge leg",
       false
     )
+    .option(
+      "--preconf",
+      "EXPERIMENTAL: detect Base tx inclusion via Flashblocks preconfirmations" +
+        " (bridge legs to Base)",
+      false
+    )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
@@ -492,13 +498,14 @@ export function registerTradeCommands(program: Command): void {
             chainOut: opts.toChain ?? 42161,
             amountIn: opts.amount,
             recipient: opts.destination,
-            // The parent `trade` command also declares --dry-run and
-            // --accept-impact, and commander assigns such flags to the parent
-            // even when they appear after the subcommand — read the merged
-            // view or the preview silently runs live / the impact opt-in is
-            // silently dropped.
+            // The parent `trade` command also declares --dry-run,
+            // --accept-impact, and --preconf, and commander assigns such flags
+            // to the parent even when they appear after the subcommand — read
+            // the merged view or the preview silently runs live / the impact
+            // opt-in / Flashblocks preconf is silently dropped.
             dryRun: cmd.optsWithGlobals().dryRun,
             acceptImpact: cmd.optsWithGlobals().acceptImpact,
+            preconf: cmd.optsWithGlobals().preconf,
           },
           json
         );
