@@ -619,6 +619,7 @@ async function runTrade(
   if (opts.preconf) process.env.USE_PRECONF_RPC = "1";
 
   const providerReady = opts.dryRun ? undefined : createProviderAdapter();
+  providerReady?.catch(() => {});
   let plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
   // High price-impact gate: the server plans nothing and asks for explicit
   // opt-in. With --accept-impact, re-plan echoing acceptImpactBps; the fresh

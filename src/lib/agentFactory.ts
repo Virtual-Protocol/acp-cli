@@ -151,7 +151,7 @@ async function createProviderFromConfig(
   // server, so gas sponsorship (the /wallets/alchemy-rpc proxy + its filter)
   // can be exercised end-to-end locally. Falls back to the normal serverUrl.
   const walletRpcUrl = process.env.ACP_WALLET_RPC_URL?.trim() || serverUrl;
-  const tokenStore = await createAuthTokenStore(walletRpcUrl, walletAddress);
+  const tokenStore = await createAuthTokenStore(walletAddress);
   return PrivyAlchemyEvmProviderAdapter.create({
     walletAddress: walletAddress as `0x${string}`,
     walletId,
