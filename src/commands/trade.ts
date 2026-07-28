@@ -415,12 +415,7 @@ export function registerTradeCommands(program: Command): void {
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        const startTime = Date.now();
-        console.log("start", startTime);
         await runTrade(opts, json);
-        const endTime = Date.now();
-        console.log("end", endTime);
-        console.log("time taken (ms)", endTime - startTime);
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
@@ -735,7 +730,6 @@ export async function runTradeLoop(
     }
 
     let nextBody: Record<string, unknown>;
-    const actionStart = Date.now();
     if (action.kind === "send") {
       progress(json, `[step ${step + 1}] ${action.label}`);
       try {

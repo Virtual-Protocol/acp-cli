@@ -139,48 +139,38 @@ export async function setTokens(
   );
 }
 
-function agentAuthAccount(serverUrl: string, walletAddress: string): string {
+function agentAuthAccount(walletAddress: string): string {
   return `agent-token-${walletAddress.toLowerCase()}`;
 }
 
 export async function getAgentAuthToken(
-  serverUrl: string,
   walletAddress: string
 ): Promise<string | undefined> {
   return (
     (await withKeyringFallback(() =>
-      getPassword(
-        AUTH_KEYCHAIN_SERVICE,
-        agentAuthAccount(serverUrl, walletAddress)
-      )
+      getPassword(AUTH_KEYCHAIN_SERVICE, agentAuthAccount(walletAddress))
     )) ?? undefined
   );
 }
 
 export async function setAgentAuthToken(
-  serverUrl: string,
   walletAddress: string,
   token: string
 ): Promise<void> {
   await withKeyringFallback(() =>
-    setPassword(
-      AUTH_KEYCHAIN_SERVICE,
-      agentAuthAccount(serverUrl, walletAddress),
-      token
-    )
+    setPassword(AUTH_KEYCHAIN_SERVICE, agentAuthAccount(walletAddress), token)
   );
 }
 
 export async function createAuthTokenStore(
-  serverUrl: string,
   walletAddress: string
 ): Promise<AuthTokenStore> {
-  let cached = await getAgentAuthToken(serverUrl, walletAddress);
+  let cached = await getAgentAuthToken(walletAddress);
   return {
     get: () => cached,
     set: (token: string) => {
       cached = token;
-      void setAgentAuthToken(serverUrl, walletAddress, token);
+      void setAgentAuthToken(walletAddress, token);
     },
   };
 }
