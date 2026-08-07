@@ -49,7 +49,7 @@
   "dependencies": {
     "@privy-io/node": "^0.11.0",
     "@virtuals-protocol/acp-node": "^0.3.0-beta.40",
-    "@virtuals-protocol/acp-node-v2": "^0.1.10",
+    "@virtuals-protocol/acp-node-v2": "^0.1.11",
     "ajv": "^8.18.0",
     "commander": "^13.0.0",
     "cross-keychain": "^1.1.0",
