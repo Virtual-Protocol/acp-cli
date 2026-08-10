@@ -673,6 +673,19 @@ export interface ActiveSubscription {
   price: number;
 }
 
+export interface TokenBalanceResponse {
+  message: string;
+  data: {
+    chainId: number;
+    tokenAddress: string;
+    symbol: string | null;
+    walletAddress: string;
+    raw: string;
+    decimals: number;
+    balance: string;
+  };
+}
+
 export class AgentApi {
   private client: ApiClient;
 
@@ -1159,6 +1172,22 @@ export class AgentApi {
     return this.client.post<AgentAssetsResponse>(`/agents/${agentId}/assets`, {
       networks,
     });
+  }
+
+  // Single-token fast path: one targeted balance read on the backend (EVM erc20
+  // balanceOf or Solana SPL), resolving a ticker to the trade-canonical token.
+  // Far cheaper than getAgentAssets' full priced portfolio scan.
+  async getTokenBalance(
+    agentId: string,
+    params: { chainId: number; tokenAddress?: string; symbol?: string }
+  ): Promise<TokenBalanceResponse> {
+    const query: Record<string, string> = { chainId: String(params.chainId) };
+    if (params.tokenAddress) query.tokenAddress = params.tokenAddress;
+    if (params.symbol) query.symbol = params.symbol;
+    return this.client.get<TokenBalanceResponse>(
+      `/agents/${agentId}/token-balance`,
+      query
+    );
   }
 
   async getCoinbaseUrl(
