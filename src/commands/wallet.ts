@@ -658,9 +658,12 @@ export function registerWalletCommands(program: Command): void {
           }
           const token = String(opts.token);
           // An 0x address (EVM) or a base58 mint (Solana) is a contract address;
-          // anything else is a ticker the backend resolves.
+          // anything else is a ticker the backend resolves. strict:false so a
+          // valid-hex but non-checksummed (e.g. all-lowercase) address still
+          // classifies as an address, not a ticker.
           const looksLikeAddress =
-            isAddress(token) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(token);
+            isAddress(token, { strict: false }) ||
+            /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(token);
           const { agentApi } = await getClient();
           const res = await agentApi.getTokenBalance(agentId, {
             chainId,
