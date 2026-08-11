@@ -84,9 +84,23 @@ async function getAssetsRetryingStocks(
   return assets;
 }
 
-// A nullable USD amount → "$12.34", or "—" when unknown (null ≠ 0).
-function usd(v: string | null): string {
-  return v == null ? "—" : `$${parseFloat(v).toFixed(2)}`;
+function floorDecimals(v: string, decimals: number): string {
+  const s = /e/i.test(v) ? parseFloat(v).toFixed(20) : v.trim();
+  const dot = s.indexOf(".");
+  if (dot === -1) return s;
+  if (decimals <= 0) return s.slice(0, dot);
+  const cut = s
+    .slice(0, dot + 1 + decimals)
+    .replace(/0+$/, "")
+    .replace(/\.$/, "");
+  return cut === "-0" ? "0" : cut;
+}
+
+function usd(v: string | null, decimals: number = 2): string {
+  if (v == null) return "—";
+  return Number.isFinite(parseFloat(v))
+    ? `$${floorDecimals(v, decimals)}`
+    : "—";
 }
 
 // Unrealized PnL with an explicit sign so gains/losses read at a glance.

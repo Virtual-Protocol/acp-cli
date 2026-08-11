@@ -625,7 +625,9 @@ async function runTrade(
 
   if (opts.preconf) process.env.USE_PRECONF_RPC = "1";
 
-  const providerReady = opts.dryRun ? undefined : createProviderAdapter();
+  const providerReady = opts.dryRun
+    ? undefined
+    : createProviderAdapter({ attribution: false });
   providerReady?.catch(() => {});
   let plan: PlanResponse = await post(apiUrl, token, "/trade/plan", body);
   // High price-impact gate: the server plans nothing and asks for explicit

@@ -684,13 +684,12 @@ Each event line includes the job ID, chain ID, status, your roles, available act
 
 ### Trading (`acp trade`)
 
-`acp trade` is one command for moving and trading value. **Hyperliquid is chain `1337`** — so swaps, HL deposits, HL spot orders, and HL withdrawals all use the same `--token-in/--chain-in/--amount-in/--token-out/--chain-out` shape, and **the chains decide the venue**:
+`acp trade` is one command for moving and trading value. **Hyperliquid is chain `1337`** — so swaps, HL deposits, and HL withdrawals all use the same `--token-in/--chain-in/--amount-in/--token-out/--chain-out` shape, and **the chains decide the venue**:
 
 | chain-in    | chain-out   | Intent                                       |
 | ----------- | ----------- | -------------------------------------------- |
 | EVM         | EVM         | **Swap** — same-chain or cross-chain (DEX)   |
 | EVM         | **1337**    | **Deposit** USDC into Hyperliquid            |
-| **1337**    | **1337**    | **Spot** order on the Hyperliquid order book |
 | **1337**    | EVM         | **Withdraw** USDC from Hyperliquid           |
 | **Solana**  | EVM         | **Swap** out of Solana (USDC@sol → an EVM token) |
 | EVM         | **Solana**  | **Buy SOL / SPL** — delivered to your agent's Solana wallet |
@@ -698,7 +697,7 @@ Each event line includes the job ID, chain ID, status, your roles, available act
 
 > **`--chain-out` is optional — it defaults to `--chain-in`.** Omit it to keep the output on the source chain. Single-chain tokens infer their own chain, so `--token-out sol` routes to Solana with no `--chain-out`. A buy that lands on Solana needs no `--recipient` — it delivers to your agent's own Solana wallet automatically (pass `--recipient` only to send elsewhere).
 
-> **One command runs the whole route.** You only ever state the start and end (`--token-in`/`--chain-in` → `--token-out`/`--chain-out`); the backend decomposes it into as many legs as the route needs and the CLI signs each in turn, blocking until the last one settles. `PURR@HL → ETH@Base` is one command that sells on HL, withdraws, bridges, and swaps — there's no need to chain a `deposit` then a `spot order`, or a `bridge` then a `swap`, yourself. A multi-leg route can take a few minutes; that's the legs settling, not a hang.
+> **One command runs the whole route.** You only ever state the start and end (`--token-in`/`--chain-in` → `--token-out`/`--chain-out`); the backend decomposes it into as many legs as the route needs and the CLI signs each in turn, blocking until the last one settles. `USDC@HL → ETH@Base` is one command that withdraws from HL, bridges, and swaps — there's no need to chain a `withdraw` then a `swap`, or a `bridge` then a `swap`, yourself. A multi-leg route can take a few minutes; that's the legs settling, not a hang.
 
 Two intents don't use the chain-pair shape:
 
@@ -709,27 +708,27 @@ Two intents don't use the chain-pair shape:
 
 Running `acp trade` bare in a terminal opens an interactive picker (humans only).
 
-**Auto-balancing.** Hyperliquid keeps perp (collateral) and spot USDC in separate wallets, and deposits land in the *perp* wallet. You don't have to manage that: before an HL order the CLI checks the funding wallet and, if it's short, moves the shortfall over automatically (perp→spot for a spot buy, spot→perp for a perp). It's an instant, free L1 transfer — agents never think about sub-wallets.
+**Auto-balancing.** Hyperliquid keeps perp (collateral) and spot USDC in separate wallets, and perp orders draw on the perp wallet. You don't have to manage that: before a perp order the CLI checks the perp wallet and, if it's short, moves the shortfall over from the spot side automatically. It's an instant, free L1 transfer — agents never think about sub-wallets.
 
-Swaps, deposits, and HL spot/perp/withdraw all run through the **ACP backend**, which picks the route and builds each transaction; the CLI signs and broadcasts with your keystore-backed signer — **no per-transaction prompt**. Private keys never leave the OS keystore.
+Swaps, deposits, and HL perp/withdraw all run through the **ACP backend**, which picks the route and builds each transaction; the CLI signs and broadcasts with your keystore-backed signer — **no per-transaction prompt**. Private keys never leave the OS keystore.
 
 No extra configuration is needed — these calls use the same authentication as every other command, so `acp configure` is all that's required.
 
 **Discovering what's tradable (`acp trade stock-list`):**
 
-Read-only discovery — no signing, no funds moved. Run it with **no symbol** to list the spot markets, or with a **symbol** to see every route for one asset.
+Read-only discovery — no signing, no funds moved. Run it with **no symbol** to list the tokenized-stock catalog, or with a **symbol** to see every route for one asset.
 
 ```bash
-# List the spot markets: tokenized stocks + the Hyperliquid spot order book
+# List the tokenized-stock catalog
 acp trade stock-list
 
 # Every route for one asset, each naming the exact ticker to pass
 acp trade stock-list AAPL
 ```
 
-With no symbol you get `{ stocks, hlSpot }` — `stocks` is the tokenized-stock catalog (`symbol`, `name`, `protocols`), `hlSpot` is the HL order book (`token`, `pair`). A `warnings` field appears only if one venue's catalog is temporarily unavailable.
+With no symbol you get the tokenized-stock catalog under `stocks` (`symbol`, `name`, `protocols`). A `warnings` field appears only if one venue's catalog is temporarily unavailable.
 
-With a symbol you get `{ symbol, name?, routes }`, where each route is `{ kind, label, token, maxLeverage? }`. **`token` is the exact ticker string to pass** — e.g. an HL equity perp must be quoted `xyz:AAPL`, while the spot routes use bare `AAPL`. The route tells you *what's possible and which ticker*; the flags for each (`--side`, `--amount-usdc`, …) are documented above.
+With a symbol you get `{ symbol, name?, routes }`, where each route is `{ kind, label, token, maxLeverage? }`. **`token` is the exact ticker string to pass** — e.g. an HL equity perp must be quoted `xyz:AAPL`, while the tokenized-stock route uses bare `AAPL`. The route tells you *what's possible and which ticker*; the flags for each (`--side`, `--amount-usdc`, …) are documented above.
 
 > **Funding is flexible — `stock-list` never implies you must pre-hold USDC on Hyperliquid.** USDC is the *settlement* currency, not a prerequisite. You can fund any trade with any supported token on any supported chain (Ethereum, Base, Arbitrum, Solana, …) via `--token-in`/`--chain-in`; the backend bridges, swaps, and (for HL) deposits as needed to settle in one command.
 
@@ -806,8 +805,8 @@ acp trade --side long --token BTC --size 0.01 --reduce-only    # closes a BTC sh
 **Hyperliquid — account & withdraw:**
 
 ```bash
-# Show Hyperliquid ACCOUNT status ONLY — HL perp positions, margin, and HL spot balances.
-# This is the one HL-specific read. For on-chain token balances
+# Show Hyperliquid ACCOUNT status ONLY — HL perp positions and margin.
+# This is the one HL-specific read. For on-chain token balances (all sponsored
 # EVM chains + Solana), use `acp wallet balance` instead.
 acp trade hl-status
 
