@@ -42,6 +42,10 @@ import { base, baseSepolia } from "viem/chains";
 
 type EvmChain = (typeof EVM_MAINNET_CHAINS)[number];
 
+export interface ProviderAdapterOptions {
+  attribution?: boolean;
+}
+
 export async function getWalletIdByAddress(
   walletAddress: string
 ): Promise<string> {
@@ -109,7 +113,8 @@ export async function createAgentFromConfig(): Promise<AcpAgent> {
 async function createProviderFromConfig(
   chains: EvmChain[],
   serverUrl: string,
-  privyAppId: string
+  privyAppId: string,
+  opts?: ProviderAdapterOptions
 ): Promise<IEvmProviderAdapter> {
   const walletAddress = getActiveWallet();
   if (!walletAddress) {
@@ -135,8 +140,10 @@ async function createProviderFromConfig(
 
   const signFn = createSignFn(publicKey);
 
-  let builderCode = getBuilderCode(walletAddress);
-  if (!builderCode) {
+  let builderCode =
+    opts?.attribution === false ? undefined : getBuilderCode(walletAddress);
+
+  if (!builderCode && opts?.attribution !== false) {
     const agentId = getAgentId(walletAddress);
     if (agentId) {
       const { agentApi } = await getClient();
@@ -193,7 +200,9 @@ export async function createLegacyBuyerAdapter(options?: {
  * Lightweight alternative to createAgentFromConfig() when only
  * signing / provider operations are needed.
  */
-export async function createProviderAdapter(): Promise<IEvmProviderAdapter> {
+export async function createProviderAdapter(
+  opts?: ProviderAdapterOptions
+): Promise<IEvmProviderAdapter> {
   const isTestnet = process.env.IS_TESTNET === "true";
   const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
   const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
@@ -203,7 +212,7 @@ export async function createProviderAdapter(): Promise<IEvmProviderAdapter> {
   // for chainId <n>" the moment it takes the sponsored sendCalls path. Mirrors
   // the chains the ERC20 paymaster already covers.
   const chains = isTestnet ? EVM_TESTNET_CHAINS : ERC20_SPONSORED_CHAINS;
-  return createProviderFromConfig(chains, serverUrl, privyAppId);
+  return createProviderFromConfig(chains, serverUrl, privyAppId, opts);
 }
 
 export async function createSseTransport(
