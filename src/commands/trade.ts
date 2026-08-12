@@ -792,12 +792,15 @@ async function runHlCancel(
       ).orders ?? [];
     // --tp / --sl select which leg(s) to cancel; neither (or both) → all
     // triggers. Filter by HL's orderType ("Take Profit …" vs "Stop …").
+    // reduceOnly gates OUT non-reduce-only entry stops, which share the "Stop"
+    // orderType — without it, `--sl` (or the all-triggers path) could cancel an
+    // entry stop instead of the position's stop-loss.
     const wantTp = opts.tp === true;
     const wantSl = opts.sl === true;
     const all = wantTp === wantSl;
     oids = existing
       .filter((o) => {
-        if (o.isTrigger !== true) return false;
+        if (o.isTrigger !== true || o.reduceOnly !== true) return false;
         if (all) return true;
         const t = String(o.orderType ?? "").toLowerCase();
         return wantTp ? t.includes("take profit") : t.includes("stop");
@@ -1137,7 +1140,13 @@ async function runHlSetTpsl(
         { wallet: owner, coin: token }
       )
     ).orders ?? [];
-  const triggers = existing.filter((o) => o.isTrigger === true);
+  // reduceOnly is load-bearing: a position's TP/SL are reduce-only, whereas a
+  // non-reduce-only entry stop shares the "Stop" orderType. Without this gate,
+  // `side` could be inferred from an entry stop's `side`, and the SL leg could
+  // cancel/replace that entry stop instead of the position's stop-loss.
+  const triggers = existing.filter(
+    (o) => o.isTrigger === true && o.reduceOnly === true
+  );
   if (triggers.length === 0) {
     throw new CliError(
       `No existing TP/SL on ${token} to replace.`,
