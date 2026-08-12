@@ -594,8 +594,9 @@ export function registerTradeCommands(program: Command): void {
 // Treasures) and hands back the actions to sign. The CLI does no routing.
 async function runTrade(
   opts: Record<string, unknown>,
-  json: boolean
-): Promise<void> {
+  json: boolean,
+  capture = false
+): Promise<Record<string, unknown> | void> {
   if (opts.amountShares !== undefined && opts.chain === undefined) {
     throw new CliError(
       "tokenized-stock sells require --chain eth|sol",
@@ -747,6 +748,7 @@ async function runTrade(
         (provider) => runTradeLoop(apiUrl, token, provider, plan, json),
         { json, deferSocket: true, evmProvider: providerReady }
       );
+  if (capture) return result;
   outputTradeResult(json, result);
 }
 
@@ -757,13 +759,24 @@ async function runTrade(
 // into one `cancel` action, so TP + SL clear in a single signature.
 async function runHlCancel(
   opts: { token: string; oids?: string[]; tp?: boolean; sl?: boolean },
-  json: boolean
-): Promise<void> {
+  json: boolean,
+  capture = false
+): Promise<Record<string, unknown> | void> {
   const { apiUrl, token } = await getApiContext();
   const owner = getWalletAddress() as Address;
-  let oids = (opts.oids ?? [])
+  const rawOids = opts.oids ?? [];
+  let oids = rawOids
     .map((o) => Number(o))
     .filter((o) => Number.isSafeInteger(o) && o > 0);
+  // --oid was passed but every value was invalid (0, negative, non-integer):
+  // fail loudly instead of falling through to the "no oids → cancel EVERYTHING"
+  // path below, which would silently wipe every resting trigger on the coin.
+  if (rawOids.length > 0 && oids.length === 0) {
+    throw new CliError(
+      `Invalid --oid value(s): ${rawOids.join(", ")} — order ids must be positive integers.`,
+      "VALIDATION_ERROR"
+    );
+  }
   // No explicit oids → cancel EVERY resting trigger on the coin. The caller
   // (an agent, the app, or a person) shouldn't have to know order ids — we look
   // them up from the live resting orders.
@@ -824,11 +837,13 @@ async function runHlCancel(
     },
     { json, deferSocket: true, evmProvider: createProviderAdapter() }
   );
-  outputTradeResult(json, {
+  const cancelResult = {
     cancelled: oids,
     coin: opts.token,
     ...(result as Record<string, unknown>),
-  });
+  };
+  if (capture) return cancelResult;
+  outputTradeResult(json, cancelResult);
 }
 
 export async function runTradeLoop(
@@ -1099,7 +1114,9 @@ async function runHlSetTpsl(
   if (!token) {
     throw new CliError("--coin is required", "VALIDATION_ERROR");
   }
-  if (opts.tp === undefined && opts.sl === undefined) {
+  const editingTp = opts.tp !== undefined;
+  const editingSl = opts.sl !== undefined;
+  if (!editingTp && !editingSl) {
     throw new CliError(
       "provide at least one of --tp / --sl",
       "VALIDATION_ERROR"
@@ -1129,22 +1146,53 @@ async function runHlSetTpsl(
     );
   }
   const side = String(triggers[0].side) === "A" ? "long" : "short";
-  const oids = triggers.map((o) => String(o.oid));
 
-  // 1. cancel the existing triggers → replace, not stack
-  progress(json, `Replacing ${oids.length} existing ${token} ${side} trigger(s)`);
-  await runHlCancel({ token, oids }, json);
+  // Only replace the leg(s) being edited: cancel the existing trigger(s) for
+  // just those legs, leaving the other leg's resting order untouched. Cancelling
+  // EVERY trigger and re-setting only the provided legs would silently drop the
+  // unspecified one — e.g. editing the take-profit would wipe an active stop.
+  const legOids = (kind: "tp" | "sl"): string[] =>
+    triggers
+      .filter((o) => {
+        const t = String(o.orderType ?? "").toLowerCase();
+        return kind === "tp" ? t.includes("take profit") : t.includes("stop");
+      })
+      .map((o) => String(o.oid));
+  const oidsToCancel = [
+    ...(editingTp ? legOids("tp") : []),
+    ...(editingSl ? legOids("sl") : []),
+  ];
+
+  // 1. cancel the existing trigger(s) for the edited leg(s) → replace, not stack
+  let cancelled: unknown[] = [];
+  if (oidsToCancel.length > 0) {
+    progress(
+      json,
+      `Replacing ${oidsToCancel.length} existing ${token} ${side} trigger(s)`
+    );
+    const cancelResult = (await runHlCancel(
+      { token, oids: oidsToCancel },
+      json,
+      true
+    )) as Record<string, unknown>;
+    cancelled = (cancelResult.cancelled as unknown[]) ?? [];
+  }
 
   // 2. set the new TP/SL — no size, so it attaches to the live position
-  await runTrade(
+  const setResult = (await runTrade(
     {
       side,
       token,
-      ...(opts.tp !== undefined ? { takeProfit: opts.tp } : {}),
-      ...(opts.sl !== undefined ? { stopLoss: opts.sl } : {}),
+      ...(editingTp ? { takeProfit: opts.tp } : {}),
+      ...(editingSl ? { stopLoss: opts.sl } : {}),
     },
-    json
-  );
+    json,
+    true
+  )) as Record<string, unknown>;
+
+  // 3. one combined result → a single JSON object on stdout in --json mode
+  // (the composed cancel + set previously printed separately, emitting two).
+  outputResult(json, { coin: token, side, cancelled, set: setResult });
 }
 
 async function runStatus(json: boolean): Promise<void> {
