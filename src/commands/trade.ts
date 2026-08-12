@@ -374,6 +374,12 @@ export function registerTradeCommands(program: Command): void {
     .option("--leverage <n>", "Set leverage for this token before a perp order")
     .option("--isolated", "Use isolated margin when setting leverage", false)
     .option(
+      "--add-margin <usd>",
+      "Add isolated margin (USD) to the EXISTING position for --token. No order — a standalone " +
+        "updateIsolatedMargin action. The venue and position side are resolved server-side; the " +
+        "position must already be isolated. e.g. `acp trade --token BTC --add-margin 25`."
+    )
+    .option(
       "--reduce-only",
       "Close/shrink an existing perp position. --side must be the OPPOSITE of the position " +
         "(close a long with --side short, close a short with --side long). " +
@@ -554,6 +560,9 @@ async function runTrade(
   fwd("side", opts.side);
   fwd("size", opts.size);
   fwd("leverage", opts.leverage);
+  // Add isolated margin to an existing position (routes server-side to hl-margin,
+  // a standalone updateIsolatedMargin action — no order). Needs only --token.
+  fwd("addMarginUsd", opts.addMargin);
   fwd("price", opts.price);
   fwd("amountUsdc", opts.amountUsdc);
   fwd("amountShares", opts.amountShares);
