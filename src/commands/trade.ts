@@ -519,6 +519,80 @@ export function registerTradeCommands(program: Command): void {
         outputError(json, err instanceof Error ? err : String(err));
       }
     });
+
+  // ── hl-cancel ────────────────────────────────────────────────────────────────
+  // Cancel resting Hyperliquid order(s) by order id — e.g. a pending TP/SL
+  // trigger. Drives the dedicated /trade/hl-cancel sign→submit endpoints (NOT the
+  // /plan loop): fetch the L1 sign request, sign it with the agent wallet, submit
+  // the signature. Pass --oid twice to clear a position's TP and SL together.
+  trade
+    .command("hl-cancel")
+    .description(
+      "Cancel resting Hyperliquid TP/SL on a coin. Default cancels ALL triggers on --coin; pass --tp to cancel only take-profit(s) or --sl only stop-loss(es). No order ids needed; --oid targets specific ones."
+    )
+    .requiredOption("--coin <symbol>", "Perp coin, e.g. BTC or xyz:AAPL (parent `trade` owns --token)")
+    .option("--tp", "Cancel only the take-profit trigger(s)")
+    .option("--sl", "Cancel only the stop-loss trigger(s)")
+    .option(
+      "--oid <id...>",
+      "Specific order id(s) to cancel (repeat for several). Overrides --tp/--sl."
+    )
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        await runHlCancel(
+          {
+            token: opts.coin,
+            oids: opts.oid as string[] | undefined,
+            tp: opts.tp === true,
+            sl: opts.sl === true,
+          },
+          json
+        );
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  // ── hl-orders ────────────────────────────────────────────────────────────────
+  // List resting HL orders (pending TP/SL triggers + their oids). Read-only; the
+  // oid you pass to `hl-cancel` comes from here.
+  trade
+    .command("hl-orders")
+    .description(
+      "List resting Hyperliquid orders (pending TP/SL triggers and their order ids)"
+    )
+    .option("--coin <symbol>", "Filter to one perp coin, e.g. BTC or xyz:AAPL")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        await runHlOrders(opts.coin as string | undefined, json);
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  // ── hl-set-tpsl ──────────────────────────────────────────────────────────────
+  // ONE-command edit: cancel any existing TP/SL on the position, then set the new
+  // ones. Idempotent replace — re-run with new prices to "edit". Callers never
+  // touch oids; the two signatures (cancel, then set) happen under the hood. The
+  // app's edit does exactly this internally.
+  trade
+    .command("hl-set-tpsl")
+    .description(
+      "Set/replace TP/SL on an existing position — cancels existing triggers first, then sets the new ones (one command). Side is inferred from your position."
+    )
+    .requiredOption("--coin <symbol>", "Perp coin, e.g. BTC or xyz:AAPL (parent `trade` owns --token)")
+    .option("--tp <price>", "New take-profit trigger price")
+    .option("--sl <price>", "New stop-loss trigger price")
+    .action(async (opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        await runHlSetTpsl(opts, json);
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
 }
 
 // One trade path: forward every provided flag verbatim to the backend, which
@@ -526,8 +600,9 @@ export function registerTradeCommands(program: Command): void {
 // Treasures) and hands back the actions to sign. The CLI does no routing.
 async function runTrade(
   opts: Record<string, unknown>,
-  json: boolean
-): Promise<void> {
+  json: boolean,
+  capture = false
+): Promise<Record<string, unknown> | void> {
   if (opts.amountShares !== undefined && opts.chain === undefined) {
     throw new CliError(
       "tokenized-stock sells require --chain eth|sol",
@@ -682,7 +757,105 @@ async function runTrade(
         (provider) => runTradeLoop(apiUrl, token, provider, plan, json),
         { json, deferSocket: true, evmProvider: providerReady }
       );
+  if (capture) return result;
   outputTradeResult(json, result);
+}
+
+// Cancel resting HL order(s) via the dedicated /trade/hl-cancel sign→submit
+// endpoints. Unlike runTrade this is a plain two-call flow (no /plan state
+// machine): POST the coin + oid(s), sign the L1 typed-data the bot returns,
+// POST the signature. The bot resolves the asset index and bundles every oid
+// into one `cancel` action, so TP + SL clear in a single signature.
+async function runHlCancel(
+  opts: { token: string; oids?: string[]; tp?: boolean; sl?: boolean },
+  json: boolean,
+  capture = false
+): Promise<Record<string, unknown> | void> {
+  const { apiUrl, token } = await getApiContext();
+  const owner = getWalletAddress() as Address;
+  const rawOids = opts.oids ?? [];
+  let oids = rawOids
+    .map((o) => Number(o))
+    .filter((o) => Number.isSafeInteger(o) && o > 0);
+  // --oid was passed but every value was invalid (0, negative, non-integer):
+  // fail loudly instead of falling through to the "no oids → cancel EVERYTHING"
+  // path below, which would silently wipe every resting trigger on the coin.
+  if (rawOids.length > 0 && oids.length === 0) {
+    throw new CliError(
+      `Invalid --oid value(s): ${rawOids.join(", ")} — order ids must be positive integers.`,
+      "VALIDATION_ERROR"
+    );
+  }
+  // No explicit oids → cancel EVERY resting trigger on the coin. The caller
+  // (an agent, the app, or a person) shouldn't have to know order ids — we look
+  // them up from the live resting orders.
+  if (oids.length === 0) {
+    const existing =
+      (
+        await post<{ orders?: Array<Record<string, unknown>> }>(
+          apiUrl,
+          token,
+          "/trade/hl-orders",
+          { wallet: owner, coin: opts.token }
+        )
+      ).orders ?? [];
+    // --tp / --sl select which leg(s) to cancel; neither (or both) → all
+    // triggers. Filter by HL's orderType ("Take Profit …" vs "Stop …").
+    // reduceOnly gates OUT non-reduce-only entry stops, which share the "Stop"
+    // orderType — without it, `--sl` (or the all-triggers path) could cancel an
+    // entry stop instead of the position's stop-loss.
+    const wantTp = opts.tp === true;
+    const wantSl = opts.sl === true;
+    const all = wantTp === wantSl;
+    oids = existing
+      .filter((o) => {
+        if (o.isTrigger !== true || o.reduceOnly !== true) return false;
+        if (all) return true;
+        const t = String(o.orderType ?? "").toLowerCase();
+        return wantTp ? t.includes("take profit") : t.includes("stop");
+      })
+      .map((o) => Number(o.oid))
+      .filter((o) => Number.isSafeInteger(o) && o > 0);
+    if (oids.length === 0) {
+      const which = all ? "TP/SL" : wantTp ? "take-profit" : "stop-loss";
+      throw new CliError(
+        `No resting ${which} on ${opts.token} to cancel.`,
+        "VALIDATION_ERROR"
+      );
+    }
+  }
+  const step = (await post(apiUrl, token, "/trade/hl-cancel", {
+    wallet: owner,
+    coin: opts.token,
+    oids,
+  })) as {
+    typedData: { domain: { chainId: number } };
+    action: Record<string, unknown>;
+    nonce: number;
+    label?: string;
+  };
+  progress(json, step.label ?? `Cancelling ${oids.length} order(s) on ${opts.token}`);
+  const result = await withApprovalGate(
+    async (provider) => {
+      const signature = await provider.signTypedData(
+        step.typedData.domain.chainId,
+        step.typedData
+      );
+      return post(apiUrl, token, "/trade/hl-cancel/submit", {
+        action: step.action,
+        nonce: step.nonce,
+        signature,
+      });
+    },
+    { json, deferSocket: true, evmProvider: createProviderAdapter() }
+  );
+  const cancelResult = {
+    cancelled: oids,
+    coin: opts.token,
+    ...(result as Record<string, unknown>),
+  };
+  if (capture) return cancelResult;
+  outputTradeResult(json, cancelResult);
 }
 
 export async function runTradeLoop(
@@ -926,6 +1099,119 @@ async function runInstruments(
 }
 
 // ---------- Hyperliquid account ----------
+
+// List resting HL orders via the read-only /trade/hl-orders endpoint (no signing).
+async function runHlOrders(
+  coin: string | undefined,
+  json: boolean
+): Promise<void> {
+  const { apiUrl, token } = await getApiContext();
+  const owner = getWalletAddress() as Address;
+  const result = await post<Record<string, unknown>>(apiUrl, token, "/trade/hl-orders", {
+    wallet: owner,
+    ...(coin ? { coin } : {}),
+  });
+  outputResult(json, result);
+}
+
+// One-command TP/SL replace: cancel existing reduce-only triggers on the
+// position, then set the new ones. Two signatures under the hood (cancel, then
+// set); the caller runs a single command. This is the "edit" — re-run with new
+// prices. The app's edit performs the same fetch→cancel→set internally.
+async function runHlSetTpsl(
+  opts: Record<string, unknown>,
+  json: boolean
+): Promise<void> {
+  const token = String(opts.coin ?? "");
+  if (!token) {
+    throw new CliError("--coin is required", "VALIDATION_ERROR");
+  }
+  const editingTp = opts.tp !== undefined;
+  const editingSl = opts.sl !== undefined;
+  if (!editingTp && !editingSl) {
+    throw new CliError(
+      "provide at least one of --tp / --sl",
+      "VALIDATION_ERROR"
+    );
+  }
+  const { apiUrl, token: authToken } = await getApiContext();
+  const owner = getWalletAddress() as Address;
+
+  // Existing reduce-only triggers on this coin → their oids AND the position
+  // side (a long's TP/SL are reduce-only SELLs → side 'A'; a short's → 'B'), so
+  // the caller never passes --side.
+  const existing =
+    (
+      await post<{ orders?: Array<Record<string, unknown>> }>(
+        apiUrl,
+        authToken,
+        "/trade/hl-orders",
+        { wallet: owner, coin: token }
+      )
+    ).orders ?? [];
+  // reduceOnly is load-bearing: a position's TP/SL are reduce-only, whereas a
+  // non-reduce-only entry stop shares the "Stop" orderType. Without this gate,
+  // `side` could be inferred from an entry stop's `side`, and the SL leg could
+  // cancel/replace that entry stop instead of the position's stop-loss.
+  const triggers = existing.filter(
+    (o) => o.isTrigger === true && o.reduceOnly === true
+  );
+  if (triggers.length === 0) {
+    throw new CliError(
+      `No existing TP/SL on ${token} to replace.`,
+      "VALIDATION_ERROR",
+      `Set them first: acp trade --side long|short --token ${token} --take-profit <px> --stop-loss <px>`
+    );
+  }
+  const side = String(triggers[0].side) === "A" ? "long" : "short";
+
+  // Only replace the leg(s) being edited: cancel the existing trigger(s) for
+  // just those legs, leaving the other leg's resting order untouched. Cancelling
+  // EVERY trigger and re-setting only the provided legs would silently drop the
+  // unspecified one — e.g. editing the take-profit would wipe an active stop.
+  const legOids = (kind: "tp" | "sl"): string[] =>
+    triggers
+      .filter((o) => {
+        const t = String(o.orderType ?? "").toLowerCase();
+        return kind === "tp" ? t.includes("take profit") : t.includes("stop");
+      })
+      .map((o) => String(o.oid));
+  const oidsToCancel = [
+    ...(editingTp ? legOids("tp") : []),
+    ...(editingSl ? legOids("sl") : []),
+  ];
+
+  // 1. cancel the existing trigger(s) for the edited leg(s) → replace, not stack
+  let cancelled: unknown[] = [];
+  if (oidsToCancel.length > 0) {
+    progress(
+      json,
+      `Replacing ${oidsToCancel.length} existing ${token} ${side} trigger(s)`
+    );
+    const cancelResult = (await runHlCancel(
+      { token, oids: oidsToCancel },
+      json,
+      true
+    )) as Record<string, unknown>;
+    cancelled = (cancelResult.cancelled as unknown[]) ?? [];
+  }
+
+  // 2. set the new TP/SL — no size, so it attaches to the live position
+  const setResult = (await runTrade(
+    {
+      side,
+      token,
+      ...(editingTp ? { takeProfit: opts.tp } : {}),
+      ...(editingSl ? { stopLoss: opts.sl } : {}),
+    },
+    json,
+    true
+  )) as Record<string, unknown>;
+
+  // 3. one combined result → a single JSON object on stdout in --json mode
+  // (the composed cancel + set previously printed separately, emitting two).
+  outputResult(json, { coin: token, side, cancelled, set: setResult });
+}
 
 async function runStatus(json: boolean): Promise<void> {
   // Read-only account view, served by the backend (no HL SDK in the CLI).

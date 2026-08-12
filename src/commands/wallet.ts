@@ -636,9 +636,57 @@ export function registerWalletCommands(program: Command): void {
     )
     .option("--chain-id <id>", "Chain ID (EVM, or 500/501 for Solana)")
     .option("--cluster <name>", "Solana only: devnet | mainnet")
+    .option(
+      "--token <symbolOrAddress>",
+      "Fast single-token balance: a ticker (e.g. VIRTUAL) or a contract/mint address. Requires --chain-id."
+    )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
+        // Fast single-token path: one targeted balance read via the backend
+        // token-balance endpoint (resolves a ticker to the trade-canonical
+        // token), instead of the full priced portfolio scan below.
+        if (opts.token) {
+          if (opts.chainId === undefined) {
+            throw new CliError(
+              "--token requires --chain-id",
+              "VALIDATION_ERROR",
+              "e.g. --chain-id 8453 (Base) or --chain-id 501 (Solana mainnet)"
+            );
+          }
+          const chainId = Number(opts.chainId);
+          if (!Number.isInteger(chainId)) {
+            throw new CliError(
+              "--chain-id must be an integer",
+              "VALIDATION_ERROR"
+            );
+          }
+          const activeWallet = getActiveWallet();
+          const agentId = activeWallet ? getAgentId(activeWallet) : undefined;
+          if (!agentId) {
+            throw new CliError(
+              "Agent ID not found for active wallet.",
+              "NO_ACTIVE_AGENT",
+              "Run `acp agent list` or `acp agent use` to set an active agent."
+            );
+          }
+          const token = String(opts.token);
+          // An 0x address (EVM) or a base58 mint (Solana) is a contract address;
+          // anything else is a ticker the backend resolves. strict:false so a
+          // valid-hex but non-checksummed (e.g. all-lowercase) address still
+          // classifies as an address, not a ticker.
+          const looksLikeAddress =
+            isAddress(token, { strict: false }) ||
+            /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(token);
+          const { agentApi } = await getClient();
+          const res = await agentApi.getTokenBalance(agentId, {
+            chainId,
+            ...(looksLikeAddress ? { tokenAddress: token } : { symbol: token }),
+          });
+          outputResult(json, res.data);
+          return;
+        }
+
         // Resolve the chain-id set to query and whether this is an explicit
         // single-chain request (vs the default all-chains view).
         let chainIds: number[];
