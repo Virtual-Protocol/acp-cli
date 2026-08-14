@@ -285,7 +285,7 @@ acp trade hl-status --json
 acp trade withdraw-from-hl --amount 25 --json
 ```
 
-Supported swap chains: Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), Solana (+ Base Sepolia testnet). Known token symbols: `eth`, `weth`, `usdc`, `usdt`, `sol`, `virtual`; anything else is treated as a token address.
+Supported swap chains: Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), Solana (+ Base Sepolia testnet). The canonical symbols `eth`, `weth`, `usdc`, `usdt`, `sol`, `virtual` always resolve. Beyond those, the backend resolves a **bare ticker** for directional trades — a **buy** (a dollar/canonical/address `--token-in` → `--token-out <TICKER>`) picks the deployment with the highest 24h volume (which filters out same-ticker scams), and a **sell** (`--token-in <TICKER>` → a dollar `--token-out`) matches your wallet's holdings — so you needn't look up a contract address for those. Only a **token→token swap with no dollar leg** still needs an explicit contract address for a non-canonical symbol (a bare ticker there is ambiguous and is rejected with `AMBIGUOUS_SYMBOL`).
 
 **Timing.** Same-chain swaps return in a few seconds. Cross-chain swaps and HL **deposits block until the bridge settles** — the command self-polls every 10s. Typically ~10–30s (the Relay route into HL is near-instant), with a 10-minute cap for slower routes. Agents should treat these as long-running: wait for the command to return rather than killing it early; a couple of poll cycles while LiFi indexes the source tx is normal.
 
