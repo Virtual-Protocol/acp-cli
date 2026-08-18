@@ -1,6 +1,7 @@
 import {
   getCurrentOwnerWallet,
   getRefreshToken,
+  getServerUrl,
   getToken,
   isTokenExpired,
   setTokens,
@@ -9,10 +10,6 @@ import { CliError } from "../errors";
 import { AuthApi } from "./auth";
 import { AgentApi } from "./agent";
 import { PolicyApi } from "./policy";
-import {
-  ACP_SERVER_URL,
-  ACP_TESTNET_SERVER_URL,
-} from "@virtuals-protocol/acp-node-v2";
 
 // Hard ceiling on any single API request. Without it, a stalled connection
 // makes `fetch` hang forever — which froze the trade loop indefinitely mid-trade
@@ -190,7 +187,7 @@ export async function getClient(unauthenticated?: boolean): Promise<{
   policyApi: PolicyApi;
 }> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  const apiUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const apiUrl = getServerUrl(isTestnet);
   const token = unauthenticated ? undefined : await resolveToken(apiUrl);
   const httpClient = new ApiClient(apiUrl, token);
   return {
@@ -212,7 +209,7 @@ export async function getAgentApi(): Promise<AgentApi> {
  */
 export async function forceApiTokenRefresh(): Promise<string> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  return forceTokenRefresh(isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL);
+  return forceTokenRefresh(getServerUrl(isTestnet));
 }
 
 /**
@@ -222,7 +219,7 @@ export async function forceApiTokenRefresh(): Promise<string> {
  */
 export async function getApiContext(): Promise<{ apiUrl: string; token: string }> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  const realUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const realUrl = getServerUrl(isTestnet);
   // Resolve/refresh the bearer against the REAL ACP server so auth always works.
   const token = await resolveToken(realUrl);
   // LOCAL TEST ONLY: route /trade/* to a local proxy shim when set, leaving
