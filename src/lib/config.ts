@@ -1,5 +1,11 @@
 import type { AuthTokenStore } from "@virtuals-protocol/acp-node-v2";
 import {
+  ACP_SERVER_URL,
+  ACP_TESTNET_SERVER_URL,
+  PRIVY_APP_ID,
+  TESTNET_PRIVY_APP_ID,
+} from "@virtuals-protocol/acp-node-v2";
+import {
   existsSync,
   mkdirSync,
   readFileSync,
@@ -19,6 +25,28 @@ import {
 } from "cross-keychain";
 
 const IS_TESTNET = process.env.IS_TESTNET === "true";
+
+/**
+ * Resolve the ACP API base URL. Defaults to the mainnet/testnet server URL
+ * (per `isTestnet`), but an explicit `ACP_SERVER_URL` env var overrides both.
+ */
+export function getServerUrl(isTestnet: boolean): string {
+  return (
+    process.env.ACP_SERVER_URL?.trim() ||
+    (isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL)
+  );
+}
+
+/**
+ * Resolve the Privy app id. Defaults to the mainnet/testnet app id
+ * (per `isTestnet`), but an explicit `PRIVY_APP_ID` env var overrides both.
+ */
+export function getPrivyAppId(isTestnet: boolean): string {
+  return (
+    process.env.PRIVY_APP_ID?.trim() ||
+    (isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID)
+  );
+}
 
 const AUTH_KEYCHAIN_SERVICE = IS_TESTNET ? "acp-auth-testnet" : "acp-auth";
 

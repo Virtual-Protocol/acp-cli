@@ -2,13 +2,9 @@ import {
   AcpAgent,
   ACP_CONTRACT_ADDRESSES,
   PrivyAlchemyEvmProviderAdapter,
-  PRIVY_APP_ID,
-  ACP_SERVER_URL,
-  ACP_TESTNET_SERVER_URL,
   EVM_MAINNET_CHAINS,
   EVM_TESTNET_CHAINS,
   ERC20_SPONSORED_CHAINS,
-  TESTNET_PRIVY_APP_ID,
   SseTransport,
   AcpApiClient,
   PrivySolanaProviderAdapter,
@@ -26,7 +22,9 @@ import {
   getBuilderCode,
   getActiveWallet,
   getAgentId,
+  getPrivyAppId,
   getPublicKey,
+  getServerUrl,
   getWalletId,
   setBuilderCode,
   setWalletId,
@@ -81,8 +79,8 @@ export async function getWalletIdByAddress(
 export async function createAgentFromConfig(): Promise<AcpAgent> {
   const isTestnet = process.env.IS_TESTNET === "true";
   const chains = isTestnet ? EVM_TESTNET_CHAINS : EVM_MAINNET_CHAINS;
-  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
-  const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
+  const serverUrl = getServerUrl(isTestnet);
+  const privyAppId = getPrivyAppId(isTestnet);
   const solanaChainId = isTestnet
     ? SOLANA_DEVNET_CHAIN_ID
     : SOLANA_MAINNET_CHAIN_ID;
@@ -184,8 +182,8 @@ export async function createLegacyBuyerAdapter(options?: {
   if (!chain) {
     throw new CliError(`Unsupported chain id: ${chainId}`, "VALIDATION_ERROR");
   }
-  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
-  const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
+  const serverUrl = getServerUrl(isTestnet);
+  const privyAppId = getPrivyAppId(isTestnet);
 
   const provider = await createProviderFromConfig(
     [chain],
@@ -204,8 +202,8 @@ export async function createProviderAdapter(
   opts?: ProviderAdapterOptions
 ): Promise<IEvmProviderAdapter> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
-  const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
+  const serverUrl = getServerUrl(isTestnet);
+  const privyAppId = getPrivyAppId(isTestnet);
   // Use the full sponsored-chain set (not just Base): the adapter builds its
   // app-sponsored gas clients (acpClients) from this list, so a trade whose
   // source tx is on BSC/Arbitrum/etc. would otherwise fail "ACP not configured
@@ -220,7 +218,7 @@ export async function createSseTransport(
   streams: SupportedStreams[]
 ): Promise<SseTransport> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
+  const serverUrl = getServerUrl(isTestnet);
   const [agentAddress, providerSupportedChainIds] = await Promise.all([
     provider.getAddress(),
     provider.getSupportedChainIds(),
@@ -305,8 +303,8 @@ export async function createSolanaProviderAdapter(
   opts?: { sponsored?: boolean }
 ): Promise<ISolanaProviderAdapter> {
   const isTestnet = process.env.IS_TESTNET === "true";
-  const serverUrl = isTestnet ? ACP_TESTNET_SERVER_URL : ACP_SERVER_URL;
-  const privyAppId = isTestnet ? TESTNET_PRIVY_APP_ID : PRIVY_APP_ID;
+  const serverUrl = getServerUrl(isTestnet);
+  const privyAppId = getPrivyAppId(isTestnet);
 
   const walletAddress = getWalletAddress();
   const publicKey = getPublicKey(walletAddress);
