@@ -1165,6 +1165,23 @@ export class AgentApi {
     );
   }
 
+  // ── Developer campaign methods ───────────────────────────────────
+
+  private getWebBaseUrl(): string {
+    const base = this.client["baseUrl"];
+    const isTestnet = base.includes("api-dev") || base.includes("testnet") || base.includes("dev") || base.includes("acp-dev");
+    return isTestnet ? "https://app-dev.virtuals.io" : "https://app.virtuals.io";
+  }
+
+  /**
+   * Web URL of an agent's compute / developer-campaign page, where the user can
+   * connect GitHub via the app's Privy OAuth flow (used as the headless-CLI
+   * fallback when no local GitHub token is available).
+   */
+  getDeveloperCampaignWebUrl(agentId: string): string {
+    return `${this.getWebBaseUrl()}/acp/agents/${agentId}?tab=compute&action=link-github`;
+  }
+
   async getAgentAssets(
     agentId: string,
     networks: string[]
