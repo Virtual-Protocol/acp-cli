@@ -1,6 +1,6 @@
 {
   "name": "@virtuals-protocol/acp-cli",
-  "version": "1.0.32",
+  "version": "1.0.33",
   "type": "module",
   "bin": {
     "acp": "./dist/bin/acp.js"
@@ -49,7 +49,7 @@
   "dependencies": {
     "@privy-io/node": "^0.11.0",
     "@virtuals-protocol/acp-node": "^0.3.0-beta.40",
-    "@virtuals-protocol/acp-node-v2": "^0.1.11",
+    "@virtuals-protocol/acp-node-v2": "^0.1.12",
     "ajv": "^8.18.0",
     "commander": "^13.0.0",
     "cross-keychain": "^1.1.0",
