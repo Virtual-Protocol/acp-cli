@@ -1434,10 +1434,6 @@ export interface SolanaPrepareLaunchResponse {
   virtualId: number;
   programId: string;
   quoteMint: string;
-  baseMint: string;
-  launchPda: string;
-  escrowQuoteAta: string;
-  creatorQuoteAta: string;
   nonce: string;
   launchFee: string;
   purchaseAmount: string;
