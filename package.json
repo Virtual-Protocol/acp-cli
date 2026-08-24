@@ -1,6 +1,6 @@
 {
   "name": "@virtuals-protocol/acp-cli",
-  "version": "1.0.33",
+  "version": "1.0.34",
   "type": "module",
   "bin": {
     "acp": "./dist/bin/acp.js"
