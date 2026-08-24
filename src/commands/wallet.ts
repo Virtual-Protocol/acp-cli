@@ -326,6 +326,11 @@ function renderBalances(opts: {
   // positions may exist but couldn't be read, so say so instead of rendering
   // nothing.
   stocksUnavailable?: boolean;
+  // True when the Solana wallet couldn't be resolved and Solana was dropped from
+  // the queried set: holdings may exist but weren't scanned. Same contract as
+  // stocksUnavailable — without it, "no Solana tokens" is indistinguishable from
+  // "Solana was never checked".
+  solanaUnavailable?: boolean;
   // Hyperliquid funds/positions live off-chain (account-wide), so they render
   // once, after the tokens + stocks — independent of the queried network.
   hyperliquid?: HyperliquidBalanceSummary | null;
@@ -339,6 +344,7 @@ function renderBalances(opts: {
     tokens,
     stocks = [],
     stocksUnavailable = false,
+    solanaUnavailable = false,
     hyperliquid = null,
     evmAddress,
     solAddress,
@@ -361,6 +367,7 @@ function renderBalances(opts: {
         tokens,
         stocks,
         ...(stocksUnavailable ? { stocksUnavailable } : {}),
+        ...(solanaUnavailable ? { solanaUnavailable } : {}),
         hyperliquid,
       });
     } else {
@@ -374,6 +381,7 @@ function renderBalances(opts: {
         tokens,
         stocks,
         ...(stocksUnavailable ? { stocksUnavailable } : {}),
+        ...(solanaUnavailable ? { solanaUnavailable } : {}),
         hyperliquid,
       });
     }
@@ -421,6 +429,13 @@ function renderBalances(opts: {
       console.log(
         `  ${c.dim(`Checked: ${networks.join(", ")} (${networks.length} chains)`)}\n`
       );
+      if (solanaUnavailable) {
+        console.log(
+          `  ${c.yellow(
+            "Solana was not checked (wallet could not be resolved) — any Solana holdings are not shown. Retry in a moment."
+          )}\n`
+        );
+      }
     }
     // Stocks span both chains — print the table once, after the token output.
     printStockPositions(stocks);
@@ -458,6 +473,12 @@ function renderBalances(opts: {
       // Stderr so the TSV on stdout stays parseable.
       process.stderr.write(
         "warning: tokenized-stock positions unavailable (upstream fetch failed) — stock rows omitted\n"
+      );
+    }
+    if (solanaUnavailable) {
+      // Stderr so the TSV on stdout stays parseable.
+      process.stderr.write(
+        "warning: solana not checked (wallet could not be resolved) — solana rows omitted\n"
       );
     }
     if (hlHasData(hyperliquid)) {
@@ -738,9 +759,12 @@ export function registerWalletCommands(program: Command): void {
         }
 
         // Resolve the Solana address only if a Solana network is in scope. In
-        // the default all-chains view a missing Solana wallet is skipped
-        // silently; an explicit Solana request surfaces the error.
+        // the default all-chains view a missing Solana wallet drops Solana from
+        // the scan rather than failing the whole balance; an explicit Solana
+        // request surfaces the error. Either way the drop is reported, so a
+        // caller can tell "no Solana tokens" from "Solana was never checked".
         let solAddress: string | undefined;
+        let solanaUnavailable = false;
         const hasSolana = networks.some((n) =>
           isSolanaChainId(networkToChainId.get(n) ?? -1)
         );
@@ -756,6 +780,7 @@ export function registerWalletCommands(program: Command): void {
                 networkToChainId.delete(network);
               }
             }
+            solanaUnavailable = true;
           }
         }
 
@@ -777,6 +802,7 @@ export function registerWalletCommands(program: Command): void {
           tokens,
           stocks,
           stocksUnavailable: stocksFetchFailed(assets),
+          solanaUnavailable,
           hyperliquid: assets.data.hyperliquid ?? null,
           evmAddress: walletAddress,
           solAddress,
