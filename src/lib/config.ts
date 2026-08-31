@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "fs";
 import { homedir } from "os";
-import { resolve } from "path";
+import { join, resolve } from "path";
 import {
   getPassword,
   setPassword,
@@ -98,7 +98,12 @@ function loadConfig(): Config {
 
 function saveConfig(config: Config): void {
   mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n");
+  // Write to a temp file first, then atomically rename to the final path.
+  // This prevents a truncated/partial JSON file if the process is interrupted
+  // mid-write, which would make loadConfig return an empty object on next run.
+  const tmpPath = join(CONFIG_DIR, `${CONFIG_FILENAME}.tmp`);
+  writeFileSync(tmpPath, JSON.stringify(config, null, 2) + "\n");
+  renameSync(tmpPath, CONFIG_PATH);
 }
 
 function isKeychainUnavailable(err: unknown): boolean {
