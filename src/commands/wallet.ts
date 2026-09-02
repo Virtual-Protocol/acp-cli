@@ -19,7 +19,6 @@ import type {
   HyperliquidBalanceSummary,
   HyperliquidSpotBalance,
   HyperliquidPerpPosition,
-  TokenBalanceResponse,
 } from "../lib/api/agent";
 import { CliError } from "../lib/errors";
 import {
@@ -83,27 +82,6 @@ async function getAssetsRetryingStocks(
     assets = await agentApi.getAgentAssets(agentId, networks);
   }
   return assets;
-}
-
-// Sum per-chain token-balance rows into one human-readable total. Adds the raw
-// base-unit integers (never the pre-formatted decimal strings, which lose
-// precision through float parsing), scaling each chain's raw value to the
-// widest `decimals` seen so chains that disagree on decimals still add up. A
-// row whose raw value isn't an integer string is skipped rather than poisoning
-// the total.
-function sumTokenBalances(rows: TokenBalanceResponse["data"][]): string {
-  const usable = rows.filter((r) => /^\d+$/.test(String(r.raw)));
-  if (usable.length === 0) return "0";
-  const maxDecimals = usable.reduce(
-    (max, r) => Math.max(max, Number(r.decimals) || 0),
-    0
-  );
-  let total = 0n;
-  for (const r of usable) {
-    const decimals = Number(r.decimals) || 0;
-    total += BigInt(r.raw) * 10n ** BigInt(maxDecimals - decimals);
-  }
-  return formatUnits(total, maxDecimals);
 }
 
 function floorDecimals(v: string, decimals: number): string {
@@ -710,6 +688,16 @@ export function registerWalletCommands(program: Command): void {
           const selector = looksLikeAddress
             ? { tokenAddress: token }
             : { symbol: token };
+          // A contract address names a token but not a chain, so the
+          // every-chain search below can't work from one. Fail on the argument
+          // before spending a network round-trip.
+          if (looksLikeAddress && opts.chainId === undefined) {
+            throw new CliError(
+              "--chain-id is required with a contract address",
+              "VALIDATION_ERROR",
+              "A contract address doesn't say which chain it's on. Pass a ticker instead to search every chain, or add --chain-id."
+            );
+          }
           const { agentApi } = await getClient();
 
           // An explicit chain narrows to exactly that chain, and keeps the flat
@@ -730,69 +718,13 @@ export function registerWalletCommands(program: Command): void {
             return;
           }
 
-          // No chain named: check every chain this environment sponsors plus
-          // Solana, so "how much VIRTUAL do I have" is answerable without the
-          // caller knowing (or guessing) where the token sits. A ticker that
-          // exists on several chains sums into `total`; the per-chain rows
-          // stay in `balances` so the caller can still see where it sits.
-          const chainIds = [
-            ...getEnvSponsoredChainIds(),
-            solanaChainId(opts.cluster),
-          ];
-          let firstError: unknown;
-          const settled = await Promise.all(
-            chainIds.map(async (chainId) => {
-              try {
-                const res = await agentApi.getTokenBalance(agentId, {
-                  chainId,
-                  ...selector,
-                });
-                return { chainId, data: res.data };
-              } catch (err) {
-                // A ticker/mint that doesn't exist on a chain is the normal
-                // case here, not a failure — record the chain as unresolved
-                // and keep going.
-                firstError ??= err;
-                return { chainId, data: null };
-              }
-            })
-          );
-
-          const resolved = settled.filter(
-            (r): r is { chainId: number; data: TokenBalanceResponse["data"] } =>
-              r.data !== null
-          );
-          // Every chain failing is a real error (auth, network, a bad agent id)
-          // wearing "you hold none" as a disguise — surface it instead.
-          if (resolved.length === 0) {
-            throw firstError instanceof Error
-              ? firstError
-              : new CliError(
-                  `No balance for ${token} on any chain checked.`,
-                  "API_ERROR",
-                  `Chains checked: ${chainIds.join(", ")}.`
-                );
-          }
-
-          outputResult(json, {
-            // Take the symbol from whichever chain reported one — a chain
-            // that resolves the token but returns a null symbol shouldn't blank
-            // out a name another chain knows.
-            symbol: resolved.find((r) => r.data.symbol)?.data.symbol ?? token,
-            total: sumTokenBalances(resolved.map((r) => r.data)),
-            balances: resolved.map((r) => ({
-              ...r.data,
-              chainId: r.chainId,
-              network: CHAIN_NETWORK_MAP[r.chainId] ?? null,
-            })),
-            chainsChecked: chainIds,
-            // Chains whose read didn't come back: the token may or may not be
-            // there. Never report a zero total as "holds none" while this is
-            // non-empty.
-            unresolvedChains: settled
-              .filter((r) => r.data === null)
-              .map((r) => r.chainId),
-          });
+          // No chain named: one call, no chainId — the backend resolves the
+          // ticker on every chain and returns the summed `total` with the
+          // per-chain rows. That is the point of the flag: a caller asking
+          // "how much VIRTUAL do I have" does not know which chain it sits on,
+          // and a token spread across chains is one balance, not one per chain.
+          const res = await agentApi.getTokenBalanceAllChains(agentId, token);
+          outputResult(json, res.data);
           return;
         }
 

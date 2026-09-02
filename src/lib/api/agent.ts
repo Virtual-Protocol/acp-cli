@@ -686,6 +686,21 @@ export interface TokenBalanceResponse {
   };
 }
 
+// What `/token-balance` returns when called with a symbol and no chainId: one
+// row per chain the token was found on, plus the summed `total`. A chain in
+// `unresolvedChains` was NOT read — a `total` of "0" alongside a non-empty
+// list is not evidence the agent holds none.
+export interface AggregateTokenBalanceResponse {
+  message: string;
+  data: {
+    symbol: string;
+    total: string;
+    balances: TokenBalanceResponse["data"][];
+    chainsChecked: number[];
+    unresolvedChains: number[];
+  };
+}
+
 export class AgentApi {
   private client: ApiClient;
 
@@ -1179,14 +1194,30 @@ export class AgentApi {
   // Far cheaper than getAgentAssets' full priced portfolio scan.
   async getTokenBalance(
     agentId: string,
-    params: { chainId: number; tokenAddress?: string; symbol?: string }
+    params: { chainId?: number; tokenAddress?: string; symbol?: string }
   ): Promise<TokenBalanceResponse> {
-    const query: Record<string, string> = { chainId: String(params.chainId) };
+    const query: Record<string, string> = {};
+    // Omitted entirely (not sent empty) when no chain is named: the backend
+    // treats an absent chainId as "resolve this symbol on every chain and sum",
+    // and an empty string would fail its integer check instead.
+    if (params.chainId !== undefined) query.chainId = String(params.chainId);
     if (params.tokenAddress) query.tokenAddress = params.tokenAddress;
     if (params.symbol) query.symbol = params.symbol;
     return this.client.get<TokenBalanceResponse>(
       `/agents/${agentId}/token-balance`,
       query
+    );
+  }
+
+  // Same endpoint, called without a chainId: the backend resolves the ticker on
+  // every chain and returns the summed `total` alongside the per-chain rows.
+  async getTokenBalanceAllChains(
+    agentId: string,
+    symbol: string
+  ): Promise<AggregateTokenBalanceResponse> {
+    return this.client.get<AggregateTokenBalanceResponse>(
+      `/agents/${agentId}/token-balance`,
+      { symbol }
     );
   }
 
