@@ -718,12 +718,25 @@ export function registerWalletCommands(program: Command): void {
             return;
           }
 
-          // No chain named: one call, no chainId — the backend resolves the
-          // ticker on every chain and returns the summed `total` with the
-          // per-chain rows. That is the point of the flag: a caller asking
+          // No chain named: one call, no chainId — the backend scans the
+          // wallet across these networks and filters to the ticker, returning
+          // the summed on-chain total plus any tokenized-stock and Hyperliquid
+          // holdings under it. That is the point of the flag: a caller asking
           // "how much VIRTUAL do I have" does not know which chain it sits on,
           // and a token spread across chains is one balance, not one per chain.
-          const res = await agentApi.getTokenBalanceAllChains(agentId, token);
+          // Send this environment's own chain set so a testnet CLI is not
+          // answered from the backend's mainnet default.
+          const networks = [
+            ...getEnvSponsoredChainIds(),
+            solanaChainId(opts.cluster),
+          ]
+            .map((id) => CHAIN_NETWORK_MAP[id])
+            .filter((n): n is string => Boolean(n));
+          const res = await agentApi.getTokenBalanceAllChains(
+            agentId,
+            token,
+            networks
+          );
           outputResult(json, res.data);
           return;
         }

@@ -686,18 +686,37 @@ export interface TokenBalanceResponse {
   };
 }
 
-// What `/token-balance` returns when called with a symbol and no chainId: one
-// row per chain the token was found on, plus the summed `total`. A chain in
-// `unresolvedChains` was NOT read — a `total` of "0" alongside a non-empty
-// list is not evidence the agent holds none.
-export interface AggregateTokenBalanceResponse {
+// What `/token-balance` returns when called with a symbol and no chainId: the
+// owner's holding of that ticker everywhere it can sit. The three sections are
+// separate on purpose — on-chain token balances (summed into `total`),
+// tokenized-stock positions measured in shares, and Hyperliquid spot balances
+// and perp positions held off-chain — because their units are not the same
+// thing and adding them would invent a number.
+//
+// A network in `unresolvedNetworks`, or `stocks.unavailable`, means that part
+// was NOT read: a `total` of "0" alongside either is not evidence the agent
+// holds none.
+export interface TickerBalanceResponse {
   message: string;
   data: {
     symbol: string;
     total: string;
-    balances: TokenBalanceResponse["data"][];
-    chainsChecked: number[];
-    unresolvedChains: number[];
+    balances: (Omit<TokenBalanceResponse["data"], "tokenAddress"> & {
+      network: string;
+      tokenAddress: string | null;
+    })[];
+    networksChecked: string[];
+    unresolvedNetworks: string[];
+    stocks: {
+      positions: StockPosition[];
+      unavailable: boolean;
+    };
+    // Null when the agent has no Hyperliquid account or the read failed; the
+    // backend does not distinguish the two.
+    hyperliquid: {
+      spotBalances: HyperliquidSpotBalance[];
+      positions: HyperliquidPerpPosition[];
+    } | null;
   };
 }
 
@@ -1209,15 +1228,21 @@ export class AgentApi {
     );
   }
 
-  // Same endpoint, called without a chainId: the backend resolves the ticker on
-  // every chain and returns the summed `total` alongside the per-chain rows.
+  // Same endpoint, called without a chainId: the backend scans the wallet across
+  // `networks`, filters to the ticker, and returns the summed on-chain `total`
+  // alongside the tokenized-stock and Hyperliquid holdings under that ticker.
   async getTokenBalanceAllChains(
     agentId: string,
-    symbol: string
-  ): Promise<AggregateTokenBalanceResponse> {
-    return this.client.get<AggregateTokenBalanceResponse>(
+    symbol: string,
+    networks?: string[]
+  ): Promise<TickerBalanceResponse> {
+    const query: Record<string, string> = { symbol };
+    // Let the CLI's own environment decide which chains are in scope, rather
+    // than leaving the backend to guess from its mainnet default.
+    if (networks && networks.length > 0) query.networks = networks.join(",");
+    return this.client.get<TickerBalanceResponse>(
       `/agents/${agentId}/token-balance`,
-      { symbol }
+      query
     );
   }
 
