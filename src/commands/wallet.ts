@@ -664,9 +664,12 @@ export function registerWalletCommands(program: Command): void {
         }
         const tokenArg = opts.token ?? opts.ticker;
 
-        // Fast single-token path: targeted balance reads via the backend
-        // token-balance endpoint (resolves a ticker to the trade-canonical
-        // token), instead of the full priced portfolio scan below.
+        // Single-token path via the backend token-balance endpoint, instead
+        // of the full priced portfolio scan below. The two branches answer
+        // different questions: with --chain-id the backend resolves the ticker
+        // to its trade-canonical contract on that chain (what a pre-trade
+        // sizing check wants); without one it scans the wallet across every
+        // network and filters to the ticker (what "how much do I have" means).
         if (tokenArg !== undefined) {
           const activeWallet = getActiveWallet();
           const agentId = activeWallet ? getAgentId(activeWallet) : undefined;
