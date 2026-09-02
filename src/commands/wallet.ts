@@ -638,29 +638,39 @@ export function registerWalletCommands(program: Command): void {
     .option("--cluster <name>", "Solana only: devnet | mainnet")
     .option(
       "--token <symbolOrAddress>",
-      "Fast single-token balance: a ticker (e.g. VIRTUAL) or a contract/mint address. Requires --chain-id."
+      "Balance of one token: a ticker (e.g. VIRTUAL) or a contract/mint address. Scans the wallet across every chain and also reports tokenized-stock and Hyperliquid holdings under that ticker. --chain-id narrows the scan to one chain."
+    )
+    .option(
+      "--ticker <symbol>",
+      "Alias for --token (a ticker, e.g. VIRTUAL)."
     )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        // Fast single-token path: one targeted balance read via the backend
-        // token-balance endpoint (resolves a ticker to the trade-canonical
-        // token), instead of the full priced portfolio scan below.
-        if (opts.token) {
-          if (opts.chainId === undefined) {
-            throw new CliError(
-              "--token requires --chain-id",
-              "VALIDATION_ERROR",
-              "e.g. --chain-id 8453 (Base) or --chain-id 501 (Solana mainnet)"
-            );
-          }
-          const chainId = Number(opts.chainId);
-          if (!Number.isInteger(chainId)) {
-            throw new CliError(
-              "--chain-id must be an integer",
-              "VALIDATION_ERROR"
-            );
-          }
+        // `--ticker` is the spelling callers reach for when they mean a symbol;
+        // it is the same flag as `--token`. Passing both with different values
+        // is a typo, not a two-token query — reject it rather than silently
+        // reading one and dropping the other.
+        if (
+          opts.token !== undefined &&
+          opts.ticker !== undefined &&
+          String(opts.token) !== String(opts.ticker)
+        ) {
+          throw new CliError(
+            "--token and --ticker are the same flag; pass only one",
+            "VALIDATION_ERROR",
+            `Got --token ${opts.token} and --ticker ${opts.ticker}.`
+          );
+        }
+        const tokenArg = opts.token ?? opts.ticker;
+
+        // Single-token path via the backend token-balance endpoint, instead
+        // of the full priced portfolio scan below. The two branches answer
+        // different questions: with --chain-id the backend resolves the ticker
+        // to its trade-canonical contract on that chain (what a pre-trade
+        // sizing check wants); without one it scans the wallet across every
+        // network and filters to the ticker (what "how much do I have" means).
+        if (tokenArg !== undefined) {
           const activeWallet = getActiveWallet();
           const agentId = activeWallet ? getAgentId(activeWallet) : undefined;
           if (!agentId) {
@@ -670,7 +680,7 @@ export function registerWalletCommands(program: Command): void {
               "Run `acp agent list` or `acp agent use` to set an active agent."
             );
           }
-          const token = String(opts.token);
+          const token = String(tokenArg);
           // An 0x address (EVM) or a base58 mint (Solana) is a contract address;
           // anything else is a ticker the backend resolves. strict:false so a
           // valid-hex but non-checksummed (e.g. all-lowercase) address still
@@ -678,11 +688,49 @@ export function registerWalletCommands(program: Command): void {
           const looksLikeAddress =
             isAddress(token, { strict: false }) ||
             /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(token);
+          const selector = looksLikeAddress
+            ? { tokenAddress: token }
+            : { symbol: token };
           const { agentApi } = await getClient();
-          const res = await agentApi.getTokenBalance(agentId, {
-            chainId,
-            ...(looksLikeAddress ? { tokenAddress: token } : { symbol: token }),
-          });
+
+          // One call either way. The backend scans the wallet and filters to
+          // the ticker or address, returning the summed on-chain total plus any
+          // tokenized-stock and Hyperliquid holdings under it. --chain-id only
+          // narrows which networks it scans; omit it and every chain this
+          // environment uses is checked, which is the point of the flag — a
+          // caller asking "how much VIRTUAL do I have" does not know where it
+          // sits, and a token spread across chains is one balance.
+          if (opts.chainId !== undefined) {
+            const chainId = Number(opts.chainId);
+            if (!Number.isInteger(chainId)) {
+              throw new CliError(
+                "--chain-id must be an integer",
+                "VALIDATION_ERROR"
+              );
+            }
+            const res = await agentApi.getTokenBalanceAllChains(
+              agentId,
+              selector,
+              undefined,
+              chainId
+            );
+            outputResult(json, res.data);
+            return;
+          }
+
+          // Send this environment's own chain set so a testnet CLI is not
+          // answered from the backend's mainnet default.
+          const networks = [
+            ...getEnvSponsoredChainIds(),
+            solanaChainId(opts.cluster),
+          ]
+            .map((id) => CHAIN_NETWORK_MAP[id])
+            .filter((n): n is string => Boolean(n));
+          const res = await agentApi.getTokenBalanceAllChains(
+            agentId,
+            selector,
+            networks
+          );
           outputResult(json, res.data);
           return;
         }

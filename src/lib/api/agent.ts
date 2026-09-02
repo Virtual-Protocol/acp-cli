@@ -673,16 +673,76 @@ export interface ActiveSubscription {
   price: number;
 }
 
-export interface TokenBalanceResponse {
+// One token's balance on one chain, as a row of the scan below.
+export interface TokenBalanceRow {
+  // Null when the backend has no chain id for the network the row came from.
+  // Report `network` in that case rather than inventing an id.
+  chainId: number | null;
+  network: string;
+  // Null for a chain's native coin, which the scan returns alongside tokens.
+  tokenAddress: string | null;
+  symbol: string | null;
+  walletAddress: string;
+  // Base units, or null when the row names a token without a known balance.
+  // `balance` is the same amount decimal-shifted.
+  raw: string | null;
+  // Null when the token's metadata carries no decimals — the row cannot be
+  // rendered as a human number and is left out of `total`.
+  decimals: number | null;
+  // Human units, or null when the balance is UNKNOWN. Never "0" in that case:
+  // that would be a holding claim nobody made.
+  balance: string | null;
+}
+
+// What `/token-balance` returns when called with a symbol and no chainId: the
+// owner's holding of that ticker everywhere it can sit. The three sections are
+// separate on purpose — on-chain token balances (summed into `total`),
+// tokenized-stock positions measured in shares, and Hyperliquid spot balances
+// and perp positions held off-chain — because their units are not the same
+// thing and adding them would invent a number.
+//
+// A network in `unresolvedNetworks`, or `stocks.unavailable`, means that part
+// was NOT read: a `total` of "0" alongside either is not evidence the agent
+// holds none.
+export interface TickerBalanceResponse {
   message: string;
   data: {
-    chainId: number;
-    tokenAddress: string;
-    symbol: string | null;
-    walletAddress: string;
-    raw: string;
-    decimals: number;
-    balance: string;
+    symbol: string;
+    /**
+     * Summed on-chain holding across chains, already decimal-shifted.
+     *
+     * Null when NO row carried a balance — the ticker resolved to real tokens
+     * but nothing read a balance for them (see `registryOnly`). That is not the
+     * same as "0", which is a confirmed reading of an empty wallet, so never
+     * render a null as zero.
+     */
+    total: string | null;
+    /**
+     * True when the rows name tokens from the backend's verified registry
+     * rather than holdings read from the wallet. Their balances are null: the
+     * ticker resolved, but nothing here says the owner holds any.
+     */
+    registryOnly: boolean;
+    /**
+     * On-chain rows dropped for having no market price — an airdrop, or an
+     * impersonator reusing the ticker. A `total` of "0" with a non-zero count
+     * here means "none of the real token", not "nothing at all": something IS
+     * in the wallet under that ticker, it just is not the asset asked about.
+     */
+    filteredUnpriced: number;
+    balances: TokenBalanceRow[];
+    networksChecked: string[];
+    unresolvedNetworks: string[];
+    stocks: {
+      positions: StockPosition[];
+      unavailable: boolean;
+    };
+    // Null when the agent has no Hyperliquid account or the read failed; the
+    // backend does not distinguish the two.
+    hyperliquid: {
+      spotBalances: HyperliquidSpotBalance[];
+      positions: HyperliquidPerpPosition[];
+    } | null;
   };
 }
 
@@ -1177,14 +1237,26 @@ export class AgentApi {
   // Single-token fast path: one targeted balance read on the backend (EVM erc20
   // balanceOf or Solana SPL), resolving a ticker to the trade-canonical token.
   // Far cheaper than getAgentAssets' full priced portfolio scan.
-  async getTokenBalance(
+  // Scans the wallet across `networks` (or the single chain `chainId` names),
+  // filters to the ticker or contract address, and returns the summed on-chain
+  // `total` alongside the tokenized-stock and Hyperliquid holdings under it.
+  async getTokenBalanceAllChains(
     agentId: string,
-    params: { chainId: number; tokenAddress?: string; symbol?: string }
-  ): Promise<TokenBalanceResponse> {
-    const query: Record<string, string> = { chainId: String(params.chainId) };
-    if (params.tokenAddress) query.tokenAddress = params.tokenAddress;
-    if (params.symbol) query.symbol = params.symbol;
-    return this.client.get<TokenBalanceResponse>(
+    selector: { symbol?: string; tokenAddress?: string },
+    networks?: string[],
+    chainId?: number
+  ): Promise<TickerBalanceResponse> {
+    const query: Record<string, string> = {};
+    // Narrows the scan to that one chain; the response shape is unchanged.
+    if (chainId !== undefined) query.chainId = String(chainId);
+    if (selector.symbol) query.symbol = selector.symbol;
+    // An address needs no chain here: the scan visits every network anyway, so
+    // it can match the address wherever it turns up.
+    if (selector.tokenAddress) query.tokenAddress = selector.tokenAddress;
+    // Let the CLI's own environment decide which chains are in scope, rather
+    // than leaving the backend to guess from its mainnet default.
+    if (networks && networks.length > 0) query.networks = networks.join(",");
+    return this.client.get<TickerBalanceResponse>(
       `/agents/${agentId}/token-balance`,
       query
     );
