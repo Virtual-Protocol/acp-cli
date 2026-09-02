@@ -701,9 +701,15 @@ export interface TickerBalanceResponse {
   data: {
     symbol: string;
     total: string;
-    balances: (Omit<TokenBalanceResponse["data"], "tokenAddress"> & {
+    balances: (Omit<
+      TokenBalanceResponse["data"],
+      "tokenAddress" | "chainId"
+    > & {
       network: string;
       tokenAddress: string | null;
+      // Null when the backend has no chain id for the network the row came
+      // from. Report the `network` in that case rather than inventing an id.
+      chainId: number | null;
     })[];
     networksChecked: string[];
     unresolvedNetworks: string[];
