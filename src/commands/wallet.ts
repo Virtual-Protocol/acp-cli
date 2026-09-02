@@ -19,6 +19,7 @@ import type {
   HyperliquidBalanceSummary,
   HyperliquidSpotBalance,
   HyperliquidPerpPosition,
+  TokenBalanceResponse,
 } from "../lib/api/agent";
 import { CliError } from "../lib/errors";
 import {
@@ -82,6 +83,27 @@ async function getAssetsRetryingStocks(
     assets = await agentApi.getAgentAssets(agentId, networks);
   }
   return assets;
+}
+
+// Sum per-chain token-balance rows into one human-readable total. Adds the raw
+// base-unit integers (never the pre-formatted decimal strings, which lose
+// precision through float parsing), scaling each chain's raw value to the
+// widest `decimals` seen so chains that disagree on decimals still add up. A
+// row whose raw value isn't an integer string is skipped rather than poisoning
+// the total.
+function sumTokenBalances(rows: TokenBalanceResponse["data"][]): string {
+  const usable = rows.filter((r) => /^\d+$/.test(String(r.raw)));
+  if (usable.length === 0) return "0";
+  const maxDecimals = usable.reduce(
+    (max, r) => Math.max(max, Number(r.decimals) || 0),
+    0
+  );
+  let total = 0n;
+  for (const r of usable) {
+    const decimals = Number(r.decimals) || 0;
+    total += BigInt(r.raw) * 10n ** BigInt(maxDecimals - decimals);
+  }
+  return formatUnits(total, maxDecimals);
 }
 
 function floorDecimals(v: string, decimals: number): string {
@@ -638,29 +660,36 @@ export function registerWalletCommands(program: Command): void {
     .option("--cluster <name>", "Solana only: devnet | mainnet")
     .option(
       "--token <symbolOrAddress>",
-      "Fast single-token balance: a ticker (e.g. VIRTUAL) or a contract/mint address. Requires --chain-id."
+      "Fast single-token balance: a ticker (e.g. VIRTUAL) or a contract/mint address. --chain-id is optional; without it every sponsored chain plus Solana is checked and the holdings summed."
+    )
+    .option(
+      "--ticker <symbol>",
+      "Alias for --token (a ticker, e.g. VIRTUAL)."
     )
     .action(async (opts, cmd) => {
       const json = isJson(cmd);
       try {
-        // Fast single-token path: one targeted balance read via the backend
+        // `--ticker` is the spelling callers reach for when they mean a symbol;
+        // it is the same flag as `--token`. Passing both with different values
+        // is a typo, not a two-token query — reject it rather than silently
+        // reading one and dropping the other.
+        if (
+          opts.token !== undefined &&
+          opts.ticker !== undefined &&
+          String(opts.token) !== String(opts.ticker)
+        ) {
+          throw new CliError(
+            "--token and --ticker are the same flag; pass only one",
+            "VALIDATION_ERROR",
+            `Got --token ${opts.token} and --ticker ${opts.ticker}.`
+          );
+        }
+        const tokenArg = opts.token ?? opts.ticker;
+
+        // Fast single-token path: targeted balance reads via the backend
         // token-balance endpoint (resolves a ticker to the trade-canonical
         // token), instead of the full priced portfolio scan below.
-        if (opts.token) {
-          if (opts.chainId === undefined) {
-            throw new CliError(
-              "--token requires --chain-id",
-              "VALIDATION_ERROR",
-              "e.g. --chain-id 8453 (Base) or --chain-id 501 (Solana mainnet)"
-            );
-          }
-          const chainId = Number(opts.chainId);
-          if (!Number.isInteger(chainId)) {
-            throw new CliError(
-              "--chain-id must be an integer",
-              "VALIDATION_ERROR"
-            );
-          }
+        if (tokenArg !== undefined) {
           const activeWallet = getActiveWallet();
           const agentId = activeWallet ? getAgentId(activeWallet) : undefined;
           if (!agentId) {
@@ -670,7 +699,7 @@ export function registerWalletCommands(program: Command): void {
               "Run `acp agent list` or `acp agent use` to set an active agent."
             );
           }
-          const token = String(opts.token);
+          const token = String(tokenArg);
           // An 0x address (EVM) or a base58 mint (Solana) is a contract address;
           // anything else is a ticker the backend resolves. strict:false so a
           // valid-hex but non-checksummed (e.g. all-lowercase) address still
@@ -678,12 +707,92 @@ export function registerWalletCommands(program: Command): void {
           const looksLikeAddress =
             isAddress(token, { strict: false }) ||
             /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(token);
+          const selector = looksLikeAddress
+            ? { tokenAddress: token }
+            : { symbol: token };
           const { agentApi } = await getClient();
-          const res = await agentApi.getTokenBalance(agentId, {
-            chainId,
-            ...(looksLikeAddress ? { tokenAddress: token } : { symbol: token }),
+
+          // An explicit chain narrows to exactly that chain, and keeps the flat
+          // single-chain response shape callers already parse.
+          if (opts.chainId !== undefined) {
+            const chainId = Number(opts.chainId);
+            if (!Number.isInteger(chainId)) {
+              throw new CliError(
+                "--chain-id must be an integer",
+                "VALIDATION_ERROR"
+              );
+            }
+            const res = await agentApi.getTokenBalance(agentId, {
+              chainId,
+              ...selector,
+            });
+            outputResult(json, res.data);
+            return;
+          }
+
+          // No chain named: check every chain this environment sponsors plus
+          // Solana, so "how much VIRTUAL do I have" is answerable without the
+          // caller knowing (or guessing) where the token sits. A ticker that
+          // exists on several chains sums into `total`; the per-chain rows
+          // stay in `balances` so the caller can still see where it sits.
+          const chainIds = [
+            ...getEnvSponsoredChainIds(),
+            solanaChainId(opts.cluster),
+          ];
+          let firstError: unknown;
+          const settled = await Promise.all(
+            chainIds.map(async (chainId) => {
+              try {
+                const res = await agentApi.getTokenBalance(agentId, {
+                  chainId,
+                  ...selector,
+                });
+                return { chainId, data: res.data };
+              } catch (err) {
+                // A ticker/mint that doesn't exist on a chain is the normal
+                // case here, not a failure — record the chain as unresolved
+                // and keep going.
+                firstError ??= err;
+                return { chainId, data: null };
+              }
+            })
+          );
+
+          const resolved = settled.filter(
+            (r): r is { chainId: number; data: TokenBalanceResponse["data"] } =>
+              r.data !== null
+          );
+          // Every chain failing is a real error (auth, network, a bad agent id)
+          // wearing "you hold none" as a disguise — surface it instead.
+          if (resolved.length === 0) {
+            throw firstError instanceof Error
+              ? firstError
+              : new CliError(
+                  `No balance for ${token} on any chain checked.`,
+                  "API_ERROR",
+                  `Chains checked: ${chainIds.join(", ")}.`
+                );
+          }
+
+          outputResult(json, {
+            // Take the symbol from whichever chain reported one — a chain
+            // that resolves the token but returns a null symbol shouldn't blank
+            // out a name another chain knows.
+            symbol: resolved.find((r) => r.data.symbol)?.data.symbol ?? token,
+            total: sumTokenBalances(resolved.map((r) => r.data)),
+            balances: resolved.map((r) => ({
+              ...r.data,
+              chainId: r.chainId,
+              network: CHAIN_NETWORK_MAP[r.chainId] ?? null,
+            })),
+            chainsChecked: chainIds,
+            // Chains whose read didn't come back: the token may or may not be
+            // there. Never report a zero total as "holds none" while this is
+            // non-empty.
+            unresolvedChains: settled
+              .filter((r) => r.data === null)
+              .map((r) => r.chainId),
           });
-          outputResult(json, res.data);
           return;
         }
 
