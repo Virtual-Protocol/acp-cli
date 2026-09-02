@@ -691,16 +691,6 @@ export function registerWalletCommands(program: Command): void {
           const selector = looksLikeAddress
             ? { tokenAddress: token }
             : { symbol: token };
-          // A contract address names a token but not a chain, so the
-          // every-chain search below can't work from one. Fail on the argument
-          // before spending a network round-trip.
-          if (looksLikeAddress && opts.chainId === undefined) {
-            throw new CliError(
-              "--chain-id is required with a contract address",
-              "VALIDATION_ERROR",
-              "A contract address doesn't say which chain it's on. Pass a ticker instead to search every chain, or add --chain-id."
-            );
-          }
           const { agentApi } = await getClient();
 
           // An explicit chain narrows to exactly that chain, and keeps the flat
@@ -737,7 +727,7 @@ export function registerWalletCommands(program: Command): void {
             .filter((n): n is string => Boolean(n));
           const res = await agentApi.getTokenBalanceAllChains(
             agentId,
-            token,
+            selector,
             networks
           );
           outputResult(json, res.data);

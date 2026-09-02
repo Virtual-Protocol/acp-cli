@@ -1229,14 +1229,19 @@ export class AgentApi {
   }
 
   // Same endpoint, called without a chainId: the backend scans the wallet across
-  // `networks`, filters to the ticker, and returns the summed on-chain `total`
-  // alongside the tokenized-stock and Hyperliquid holdings under that ticker.
+  // `networks`, filters to the ticker or contract address, and returns the
+  // summed on-chain `total` alongside the tokenized-stock and Hyperliquid
+  // holdings under it.
   async getTokenBalanceAllChains(
     agentId: string,
-    symbol: string,
+    selector: { symbol?: string; tokenAddress?: string },
     networks?: string[]
   ): Promise<TickerBalanceResponse> {
-    const query: Record<string, string> = { symbol };
+    const query: Record<string, string> = {};
+    if (selector.symbol) query.symbol = selector.symbol;
+    // An address needs no chain here: the scan visits every network anyway, so
+    // it can match the address wherever it turns up.
+    if (selector.tokenAddress) query.tokenAddress = selector.tokenAddress;
     // Let the CLI's own environment decide which chains are in scope, rather
     // than leaving the backend to guess from its mainnet default.
     if (networks && networks.length > 0) query.networks = networks.join(",");
