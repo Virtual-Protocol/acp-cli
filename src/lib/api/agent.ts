@@ -683,12 +683,15 @@ export interface TokenBalanceRow {
   tokenAddress: string | null;
   symbol: string | null;
   walletAddress: string;
-  // Base units. `balance` is the same amount decimal-shifted.
-  raw: string;
+  // Base units, or null when the row names a token without a known balance.
+  // `balance` is the same amount decimal-shifted.
+  raw: string | null;
   // Null when the token's metadata carries no decimals — the row cannot be
   // rendered as a human number and is left out of `total`.
   decimals: number | null;
-  balance: string;
+  // Human units, or null when the balance is UNKNOWN. Never "0" in that case:
+  // that would be a holding claim nobody made.
+  balance: string | null;
 }
 
 // What `/token-balance` returns when called with a symbol and no chainId: the
@@ -705,7 +708,28 @@ export interface TickerBalanceResponse {
   message: string;
   data: {
     symbol: string;
-    total: string;
+    /**
+     * Summed on-chain holding across chains, already decimal-shifted.
+     *
+     * Null when NO row carried a balance — the ticker resolved to real tokens
+     * but nothing read a balance for them (see `registryOnly`). That is not the
+     * same as "0", which is a confirmed reading of an empty wallet, so never
+     * render a null as zero.
+     */
+    total: string | null;
+    /**
+     * True when the rows name tokens from the backend's verified registry
+     * rather than holdings read from the wallet. Their balances are null: the
+     * ticker resolved, but nothing here says the owner holds any.
+     */
+    registryOnly: boolean;
+    /**
+     * On-chain rows dropped for having no market price — an airdrop, or an
+     * impersonator reusing the ticker. A `total` of "0" with a non-zero count
+     * here means "none of the real token", not "nothing at all": something IS
+     * in the wallet under that ticker, it just is not the asset asked about.
+     */
+    filteredUnpriced: number;
     balances: TokenBalanceRow[];
     networksChecked: string[];
     unresolvedNetworks: string[];
