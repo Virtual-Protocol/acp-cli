@@ -673,17 +673,22 @@ export interface ActiveSubscription {
   price: number;
 }
 
-export interface TokenBalanceResponse {
-  message: string;
-  data: {
-    chainId: number;
-    tokenAddress: string;
-    symbol: string | null;
-    walletAddress: string;
-    raw: string;
-    decimals: number;
-    balance: string;
-  };
+// One token's balance on one chain, as a row of the scan below.
+export interface TokenBalanceRow {
+  // Null when the backend has no chain id for the network the row came from.
+  // Report `network` in that case rather than inventing an id.
+  chainId: number | null;
+  network: string;
+  // Null for a chain's native coin, which the scan returns alongside tokens.
+  tokenAddress: string | null;
+  symbol: string | null;
+  walletAddress: string;
+  // Base units. `balance` is the same amount decimal-shifted.
+  raw: string;
+  // Null when the token's metadata carries no decimals — the row cannot be
+  // rendered as a human number and is left out of `total`.
+  decimals: number | null;
+  balance: string;
 }
 
 // What `/token-balance` returns when called with a symbol and no chainId: the
@@ -701,16 +706,7 @@ export interface TickerBalanceResponse {
   data: {
     symbol: string;
     total: string;
-    balances: (Omit<
-      TokenBalanceResponse["data"],
-      "tokenAddress" | "chainId"
-    > & {
-      network: string;
-      tokenAddress: string | null;
-      // Null when the backend has no chain id for the network the row came
-      // from. Report the `network` in that case rather than inventing an id.
-      chainId: number | null;
-    })[];
+    balances: TokenBalanceRow[];
     networksChecked: string[];
     unresolvedNetworks: string[];
     stocks: {
@@ -1217,33 +1213,18 @@ export class AgentApi {
   // Single-token fast path: one targeted balance read on the backend (EVM erc20
   // balanceOf or Solana SPL), resolving a ticker to the trade-canonical token.
   // Far cheaper than getAgentAssets' full priced portfolio scan.
-  async getTokenBalance(
-    agentId: string,
-    params: { chainId?: number; tokenAddress?: string; symbol?: string }
-  ): Promise<TokenBalanceResponse> {
-    const query: Record<string, string> = {};
-    // Omitted entirely (not sent empty) when no chain is named: the backend
-    // treats an absent chainId as "resolve this symbol on every chain and sum",
-    // and an empty string would fail its integer check instead.
-    if (params.chainId !== undefined) query.chainId = String(params.chainId);
-    if (params.tokenAddress) query.tokenAddress = params.tokenAddress;
-    if (params.symbol) query.symbol = params.symbol;
-    return this.client.get<TokenBalanceResponse>(
-      `/agents/${agentId}/token-balance`,
-      query
-    );
-  }
-
-  // Same endpoint, called without a chainId: the backend scans the wallet across
-  // `networks`, filters to the ticker or contract address, and returns the
-  // summed on-chain `total` alongside the tokenized-stock and Hyperliquid
-  // holdings under it.
+  // Scans the wallet across `networks` (or the single chain `chainId` names),
+  // filters to the ticker or contract address, and returns the summed on-chain
+  // `total` alongside the tokenized-stock and Hyperliquid holdings under it.
   async getTokenBalanceAllChains(
     agentId: string,
     selector: { symbol?: string; tokenAddress?: string },
-    networks?: string[]
+    networks?: string[],
+    chainId?: number
   ): Promise<TickerBalanceResponse> {
     const query: Record<string, string> = {};
+    // Narrows the scan to that one chain; the response shape is unchanged.
+    if (chainId !== undefined) query.chainId = String(chainId);
     if (selector.symbol) query.symbol = selector.symbol;
     // An address needs no chain here: the scan visits every network anyway, so
     // it can match the address wherever it turns up.

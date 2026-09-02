@@ -638,7 +638,7 @@ export function registerWalletCommands(program: Command): void {
     .option("--cluster <name>", "Solana only: devnet | mainnet")
     .option(
       "--token <symbolOrAddress>",
-      "Fast single-token balance: a ticker (e.g. VIRTUAL) or a contract/mint address. --chain-id is optional; without it every sponsored chain plus Solana is checked and the holdings summed."
+      "Balance of one token: a ticker (e.g. VIRTUAL) or a contract/mint address. Scans the wallet across every chain and also reports tokenized-stock and Hyperliquid holdings under that ticker. --chain-id narrows the scan to one chain."
     )
     .option(
       "--ticker <symbol>",
@@ -693,8 +693,13 @@ export function registerWalletCommands(program: Command): void {
             : { symbol: token };
           const { agentApi } = await getClient();
 
-          // An explicit chain narrows to exactly that chain, and keeps the flat
-          // single-chain response shape callers already parse.
+          // One call either way. The backend scans the wallet and filters to
+          // the ticker or address, returning the summed on-chain total plus any
+          // tokenized-stock and Hyperliquid holdings under it. --chain-id only
+          // narrows which networks it scans; omit it and every chain this
+          // environment uses is checked, which is the point of the flag — a
+          // caller asking "how much VIRTUAL do I have" does not know where it
+          // sits, and a token spread across chains is one balance.
           if (opts.chainId !== undefined) {
             const chainId = Number(opts.chainId);
             if (!Number.isInteger(chainId)) {
@@ -703,20 +708,16 @@ export function registerWalletCommands(program: Command): void {
                 "VALIDATION_ERROR"
               );
             }
-            const res = await agentApi.getTokenBalance(agentId, {
-              chainId,
-              ...selector,
-            });
+            const res = await agentApi.getTokenBalanceAllChains(
+              agentId,
+              selector,
+              undefined,
+              chainId
+            );
             outputResult(json, res.data);
             return;
           }
 
-          // No chain named: one call, no chainId — the backend scans the
-          // wallet across these networks and filters to the ticker, returning
-          // the summed on-chain total plus any tokenized-stock and Hyperliquid
-          // holdings under it. That is the point of the flag: a caller asking
-          // "how much VIRTUAL do I have" does not know which chain it sits on,
-          // and a token spread across chains is one balance, not one per chain.
           // Send this environment's own chain set so a testnet CLI is not
           // answered from the backend's mainnet default.
           const networks = [
