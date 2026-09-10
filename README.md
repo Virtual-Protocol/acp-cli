@@ -745,7 +745,7 @@ acp trade --token-in usdc --chain-in 1 --amount-in 100 --token-out usdc --chain-
 acp trade --token-in usdc --chain-in 8453 --amount-in 5 --token-out sol
 ```
 
-Supported chains: **Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), Solana** (+ Base Sepolia testnet). Token symbols `eth`, `weth`, `usdc`, `usdt`, `sol`, `virtual` are resolved automatically; anything else is taken as a token address.
+Supported chains: **Base (8453), Ethereum (1), BSC (56), Hyperliquid (1337), Solana** (+ Base Sepolia testnet). The canonical symbols `eth`, `weth`, `usdc`, `usdt`, `sol`, `virtual` always resolve. Beyond those, a **buy** (`--token-out <TICKER>`) or **sell** (`--token-in <TICKER>`) accepts a bare ticker — the backend resolves it (a buy by highest 24h volume, filtering same-ticker scams; a sell against your holdings). Only a token→token swap with no dollar leg needs an explicit contract address for a non-canonical symbol.
 
 **Hyperliquid — deposit (a cross-chain swap into HL, chain 1337):**
 
