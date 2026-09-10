@@ -5,6 +5,8 @@ import { c } from "../lib/color";
 import { getClient } from "../lib/api/client";
 import { prompt, printTable } from "../lib/prompt";
 import { getActiveAgentId } from "../lib/activeAgent";
+import { assertSponsoredChainId } from "../lib/chains";
+import { withApprovalGate } from "../lib/walletGate";
 import type {
   CardProfileResponse,
   NextStep,
@@ -26,6 +28,19 @@ function formatCents(cents: number): string {
 function emitCardSetupUrlToStderr(url: string): void {
   process.stderr.write(
     `\n>>> Open this URL to set up your card payment method:\n\n    ${url}\n\n`
+  );
+}
+
+// Unlimited approval, as uint256 max. Rain recommends it so the agent never
+// has to re-approve; shown as "Unlimited" rather than 78 digits of noise.
+const MAX_UINT256 = ((1n << 256n) - 1n).toString();
+
+// Same reasoning as emitCardSetupUrlToStderr: in --json mode the URL goes to
+// stdout for machines, but agent harnesses often swallow stdout while passing
+// stderr to the human. Mirroring it guarantees the person sees the link.
+function emitKycUrlToStderr(url: string): void {
+  process.stderr.write(
+    `\n>>> Open this URL to verify your identity:\n\n    ${url}\n\n`
   );
 }
 
@@ -543,6 +558,104 @@ export function registerCardCommands(program: Command): void {
           outputResult(json, result as unknown as Record<string, unknown>);
         } else {
           printSpendRequest(result);
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  // -- Rain: identity verification and spending authorisation --
+
+  card
+    .command("kyc")
+    .description(
+      "Check identity verification, or start it. Cards can only be issued to a verified owner."
+    )
+    .action(async (_opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+      const agentId = getActiveAgentId(json);
+      if (!agentId) return;
+
+      try {
+        let state = await agentApi.cardKycState(agentId);
+
+        // `not_started` means nothing exists yet, so there is nothing to
+        // report — start it and hand back a link in one step.
+        if (state.status === "not_started") {
+          state = await agentApi.cardStartKyc(agentId);
+        }
+
+        if (state.verificationUrl) emitKycUrlToStderr(state.verificationUrl);
+
+        if (json) {
+          outputResult(json, state as unknown as Record<string, unknown>);
+        } else {
+          printTable([
+            ["Status", state.status],
+            ["Cards enabled", state.cardsEnabled ? "Yes" : "No"],
+            ["Message", state.message],
+          ]);
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  card
+    .command("allowance")
+    .description(
+      "Authorise Rain to pull from this agent's wallet at purchase time. Required before any card works."
+    )
+    .option("--send", "Sign and broadcast, instead of only printing the call")
+    .action(async (opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+      const agentId = getActiveAgentId(json);
+      if (!agentId) return;
+
+      try {
+        const tx = await agentApi.cardGetAllowanceTx(agentId);
+
+        if (!opts.send) {
+          if (json) {
+            outputResult(json, tx as unknown as Record<string, unknown>);
+          } else {
+            printTable([
+              ["Chain", String(tx.chainId)],
+              ["Asset", tx.asset],
+              ["Token", tx.to],
+              ["Authorising", tx.spender],
+              ["Amount", tx.amount === MAX_UINT256 ? "Unlimited" : tx.amount],
+            ]);
+            console.log(
+              `\n${c.dim("→")} ${c.bold("Run with --send")} to sign and broadcast this.`
+            );
+          }
+          return;
+        }
+
+        assertSponsoredChainId(tx.chainId);
+        const transactionHash = await withApprovalGate(
+          (provider) =>
+            provider.sendTransaction(tx.chainId, {
+              to: tx.to as `0x${string}`,
+              data: tx.data as `0x${string}`,
+            }),
+          { json }
+        );
+
+        // Read it back rather than assuming: the broadcast returning is not
+        // the same as the allowance being live, and callers act on the latter.
+        const { sufficient } = await agentApi.cardRefreshAllowance(agentId);
+
+        if (json) {
+          outputResult(json, { transactionHash, sufficient });
+        } else {
+          printTable([
+            ["Transaction", transactionHash],
+            ["Allowance live", sufficient ? "Yes" : "Not yet — retry shortly"],
+          ]);
         }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));

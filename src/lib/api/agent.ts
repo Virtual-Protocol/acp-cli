@@ -363,6 +363,49 @@ export interface NextStep {
   missing?: string[];
 }
 
+// ── Rain KYC (agent card v2) ─────────────────────────────────────────
+//
+// Rain requires every cardholder to be a verified person, so an agent cannot
+// hold a card until its owner completes identity verification. Rain hosts the
+// whole flow — we only hand the user a URL.
+
+export type AgentKycStatus =
+  | "not_started"
+  | "pending"
+  | "needs_verification"
+  | "approved"
+  | "denied";
+
+export interface AgentKycState {
+  status: AgentKycStatus;
+  // Ready to open — the backend has already appended Rain's params. Null once
+  // approved, since there is nothing left to do.
+  verificationUrl: string | null;
+  verificationParams: Record<string, string> | null;
+  // The only flag worth gating on.
+  cardsEnabled: boolean;
+  message: string;
+}
+
+/**
+ * The unsigned ERC-20 approval the agent signs so Rain can pull from its wallet
+ * at purchase time. Built by the backend; Virtuals never signs it.
+ */
+export interface RainAllowanceTx {
+  chainId: number;
+  /** The token contract to call. */
+  to: string;
+  data: string;
+  value: string;
+  /** Rain's operator — the address being authorised. */
+  spender: string;
+  /** Base units. Unlimited by default so the agent never re-approves. */
+  amount: string;
+  asset: string;
+  /** The agent's wallet, which must be the sender. */
+  from: string;
+}
+
 export interface CardSignupResponse {
   state: string;
   nextStep: NextStep;
@@ -1192,6 +1235,45 @@ export class AgentApi {
     return this.client.get<SpendRequest>(
       `/agents/${agentId}/card/request/${requestId}`
     );
+  }
+
+  // -- Rain KYC --
+
+  async cardKycState(agentId: string): Promise<AgentKycState> {
+    const res = await this.client.get<{ data: AgentKycState }>(
+      `/agents/${agentId}/card/rain/kyc`
+    );
+    return res.data;
+  }
+
+  /**
+   * Idempotent — an existing application is reused and Rain's hosted flow
+   * resumes at the first outstanding step, so this is safe to call repeatedly.
+   */
+  async cardStartKyc(agentId: string): Promise<AgentKycState> {
+    const res = await this.client.post<{ data: AgentKycState }>(
+      `/agents/${agentId}/card/rain/kyc`,
+      {}
+    );
+    return res.data;
+  }
+
+  /** The unsigned approval for the agent to sign. */
+  async cardGetAllowanceTx(agentId: string): Promise<RainAllowanceTx> {
+    const res = await this.client.get<{ data: RainAllowanceTx }>(
+      `/agents/${agentId}/card/rain/allowance`
+    );
+    return res.data;
+  }
+
+  /** Re-read the on-chain allowance after the agent broadcasts the approval. */
+  async cardRefreshAllowance(
+    agentId: string
+  ): Promise<{ allowance: string; sufficient: boolean }> {
+    const res = await this.client.post<{
+      data: { allowance: string; sufficient: boolean };
+    }>(`/agents/${agentId}/card/rain/allowance/refresh`, {});
+    return res.data;
   }
 
   // -- 3DS verification codes --
