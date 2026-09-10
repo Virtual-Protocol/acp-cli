@@ -6,6 +6,7 @@ import { getClient } from "../lib/api/client";
 import { prompt, printTable } from "../lib/prompt";
 import { getActiveAgentId } from "../lib/activeAgent";
 import { assertSponsoredChainId } from "../lib/chains";
+import { createProviderAdapter } from "../lib/agentFactory";
 import { withApprovalGate } from "../lib/walletGate";
 import type {
   CardProfileResponse,
@@ -434,11 +435,11 @@ export function registerCardCommands(program: Command): void {
   card
     .command("issue")
     .description(
-      "Issue a single-use virtual card ($1–$75, increments of $1). Returns PAN/CVV/expiry inline."
+      "Issue a single-use virtual card ($1–$75, increments of $1). Returns PAN/CVV/expiry inline. On Rain (new agents) issuing moves no money: the amount is a spend cap and funds are pulled from the agent's wallet when the card is used."
     )
     .option(
       "--amount <cents>",
-      "Card amount in cents (100–7500, divisible by 100)"
+      "Amount in cents (100–7500, divisible by 100). On Rain this is a spend cap rather than a charge, and Rain adds a 20% buffer for tips and holds — a card can capture up to 1.2x this."
     )
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
@@ -603,6 +604,24 @@ export function registerCardCommands(program: Command): void {
     });
 
   card
+    .command("status")
+    .description(
+      "Full card setup state: Rain user, application status, allowance, next step"
+    )
+    .action(async (_opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+      const agentId = getActiveAgentId(json);
+      if (!agentId) return;
+      try {
+        const state = await agentApi.cardRainStatus(agentId);
+        outputResult(true, state);
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  card
     .command("allowance")
     .description(
       "Authorise Rain to pull from this agent's wallet at purchase time. Required before any card works."
@@ -636,14 +655,31 @@ export function registerCardCommands(program: Command): void {
         }
 
         assertSponsoredChainId(tx.chainId);
-        const transactionHash = await withApprovalGate(
+
+        // Attribution off. The builder code is appended to calldata, which is
+        // harmless for the contract calls it was designed around but makes
+        // this one invalid — `wallet_prepareCalls` rejects an approve() with
+        // trailing bytes. There is nothing to attribute here anyway: this is
+        // account setup, not a trade.
+        // sendCalls (EIP-5792), not sendTransaction: sendCalls takes the
+        // app-sponsored gas client, whereas sendTransaction bills gas to the
+        // user's USDC via the ERC-20 paymaster — which fails outright when the
+        // wallet holds none of the paymaster's gas token. Authorising spending
+        // is setup, and requiring the agent to already hold a gas token to do
+        // it would defeat the point. Same reasoning as the trade legs.
+        const result = await withApprovalGate(
           (provider) =>
-            provider.sendTransaction(tx.chainId, {
-              to: tx.to as `0x${string}`,
-              data: tx.data as `0x${string}`,
-            }),
-          { json }
+            provider.sendCalls(tx.chainId, [
+              {
+                to: tx.to as `0x${string}`,
+                data: tx.data as `0x${string}`,
+              },
+            ]),
+          { json, evmProvider: createProviderAdapter({ attribution: false }) }
         );
+        const transactionHash =
+          (result as { transactionHash?: string })?.transactionHash ??
+          (result as unknown as string);
 
         // Read it back rather than assuming: the broadcast returning is not
         // the same as the allowance being live, and callers act on the latter.

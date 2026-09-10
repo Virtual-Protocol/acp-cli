@@ -1237,6 +1237,14 @@ export class AgentApi {
     );
   }
 
+  /** Diagnostic: the full Rain setup state, including whether a Rain user exists. */
+  async cardRainStatus(agentId: string): Promise<Record<string, unknown>> {
+    const res = await this.client.get<{ data: Record<string, unknown> }>(
+      `/agents/${agentId}/card/rain/status`
+    );
+    return res.data;
+  }
+
   // -- Rain KYC --
 
   async cardKycState(agentId: string): Promise<AgentKycState> {

@@ -524,9 +524,23 @@ acp card allowance              # show what would be authorised
 acp card allowance --send       # sign and broadcast it
 
 # 3. Spend. Keep USDC in the agent's wallet on Base — that is the real limit.
-acp card issue --amount 2500    # $25 card, PAN/CVV shown once
+acp card issue --amount 2500    # $25 spend cap, PAN/CVV shown once
 acp card list
 ```
+
+> **Issuing a card moves no money.** `--amount` is a spend cap, not a charge
+> and not a reservation — nothing leaves the wallet until the card is actually
+> used, and an unused card simply expires. Two things follow that are easy to
+> get wrong:
+>
+> - **A card can capture up to 1.2x its amount.** Rain applies a 20% buffer by
+>   default so tips and pre-auth holds don't decline a legitimate purchase. A
+>   `--amount 2500` card can settle at up to $30, so size the wallet for that.
+> - **Cards expire 24 hours after issuance.** Issue one per purchase, at the
+>   point of purchase, rather than in advance.
+>
+> Rain caps each agent at 10 cards and $5,000 of approved spend per rolling
+> 24 hours.
 
 > **The allowance is not optional.** Verification alone doesn't make a card
 > work: without an on-chain allowance Rain has nothing to pull from, and every
