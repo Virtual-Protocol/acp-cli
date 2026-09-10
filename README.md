@@ -526,6 +526,7 @@ acp card allowance --send       # sign and broadcast it
 # 3. Spend. Keep USDC in the agent's wallet on Base — that is the real limit.
 acp card issue --amount 2500    # $25 spend cap, PAN/CVV shown once
 acp card list
+acp card cancel --card-id <id>  # terminal; an unused card has pulled nothing
 ```
 
 > **Issuing a card moves no money.** `--amount` is a spend cap, not a charge

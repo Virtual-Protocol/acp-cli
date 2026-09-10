@@ -622,6 +622,29 @@ export function registerCardCommands(program: Command): void {
     });
 
   card
+    .command("cancel")
+    .description(
+      "Cancel a card. Terminal — a cancelled card cannot be reactivated, and an unused one has pulled nothing from the wallet."
+    )
+    .requiredOption("--card-id <id>", "Card to cancel (see `acp card status`)")
+    .action(async (opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+      const agentId = getActiveAgentId(json);
+      if (!agentId) return;
+      try {
+        const card = await agentApi.cardRainCancel(agentId, opts.cardId);
+        if (json) {
+          outputResult(true, card);
+        } else {
+          console.log(`Card ending ${card.last4} is now ${card.status}.`);
+        }
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  card
     .command("allowance")
     .description(
       "Authorise Rain to pull from this agent's wallet at purchase time. Required before any card works."

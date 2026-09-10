@@ -1274,6 +1274,23 @@ export class AgentApi {
     return res.data;
   }
 
+  /**
+   * Cancel a card.
+   *
+   * Terminal — Rain has no route back from `canceled`, and a scoped card is
+   * single-use regardless. An unused card has pulled nothing from the wallet,
+   * so cancelling one moves no money.
+   */
+  async cardRainCancel(
+    agentId: string,
+    cardId: string
+  ): Promise<{ cardId: string; status: string; last4: string }> {
+    const res = await this.client.post<{
+      data: { cardId: string; status: string; last4: string };
+    }>(`/agents/${agentId}/card/rain/card/${cardId}/cancel`, {});
+    return res.data;
+  }
+
   /** Re-read the on-chain allowance after the agent broadcasts the approval. */
   async cardRefreshAllowance(
     agentId: string
