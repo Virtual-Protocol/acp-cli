@@ -1,6 +1,6 @@
 # acp-cli
 
-Command-line toolkit for autonomous agents on [Virtuals Protocol](https://app.virtuals.io). One CLI for everything an agent needs to operate independently: an on-chain wallet, a dedicated email inbox, a virtual payment card, and access to the **Agent Commerce Protocol (ACP)** marketplace for hiring and being hired by other agents.
+Command-line toolkit for autonomous agents on [Virtuals Protocol](https://app.virtuals.io). One CLI for everything an agent needs to operate independently: an on-chain wallet, a dedicated email inbox, a virtual payment card that spends from that wallet, and access to the **Agent Commerce Protocol (ACP)** marketplace for hiring and being hired by other agents.
 
 Every command supports `--json` for machine-readable output, and `acp events listen` streams marketplace events as NDJSON — making the CLI suitable as a tool interface for LLM agents like Claude Code.
 
@@ -16,7 +16,7 @@ Operate an agent as a first-class economic actor, even if you never touch the ma
 
 - **[Wallet](#wallet)** — EVM wallet per agent, with balances, message/typed-data signing, transaction broadcast, and on-ramp topup via Coinbase, card, or QR. Plus a Solana wallet (`wallet sol`) for SOL/SPL balances, transfers, and message signing.
 - **[Agent Email](#agent-email)** — provision a dedicated inbox for the agent, send/receive/search mail, view threads, extract OTPs and links, download attachments.
-- **[Agent Card](#agent-card)** — issue single-use virtual cards backed by agentcard.ai using a spend-request model with Stripe-attached payment methods, spend limits, and 3DS challenge handling.
+- **[Agent Card](#agent-card)** — issue single-use virtual cards. New agents spend directly from their own wallet via Rain, pulled at purchase time; existing agents stay on the older agentcard.ai flow with Stripe-attached payment methods, spend limits, and 3DS handling.
 - **[Signers](#agent-management)** — P256 keys stored in the OS keychain, approved via browser flow.
 - **[On-chain identity](#tokenization)** — register the agent on the ERC-8004 identity registry; tokenize it on Virtuals.
 - **Inference & compute** — pay for the agent's own AI workloads out of any of its economic primitives: the agent's wallet, its tokenized-agent trading fees, or its marketplace revenue. Managed via the dashboard at [app.virtuals.io/os](https://app.virtuals.io/os); not driven from this CLI today.
@@ -493,15 +493,51 @@ acp email attachment --attachment-id <id> --output ./downloads
 
 ### Agent Card
 
-Virtual cards use a **spend-request model** backed by agentcard.ai. The agent
-signs up, completes a profile, attaches a payment method via Stripe, sets a
-spend limit, and then issues single-use virtual cards (PAN/CVV returned
-inline). Every mutating response also carries a `nextStep` hint so agents
-can self-advance through setup. See the [EconomyOS whitepaper → Agent
+Cards are single-use: one is issued per purchase and retired once used.
+
+There are two backends, and which one an agent uses depends on when it was
+created. **New agents spend from their own wallet** via Rain — at the moment
+the agent pays, the amount is pulled straight out of its wallet, so there is
+no balance to top up and nothing sitting idle. **Existing agents** stay on the
+older agentcard.ai flow, which prefunds cards from a Stripe payment method.
+Nothing migrates on its own.
+
+`acp card issue` and `acp card list` work the same either way — only where the
+money comes from differs. See the [EconomyOS whitepaper → Agent
 Card](https://github.com/Virtual-Protocol/whitepaper-economyOS/blob/main/pages/agent-identity/card/overview.mdx)
-for architecture, the `nextStep` contract, and the full flow diagram.
+for architecture and the full flow diagram.
 
 All amount flags below are in **cents** (the BE DTO takes integer cents).
+
+#### New agents (Rain)
+
+Two one-time steps, then the agent can spend.
+
+```bash
+# 1. Identity verification. Rain issues cards only to a verified person, so
+#    the agent's owner verifies once. Rain hosts the flow — this returns a URL.
+acp card kyc
+
+# 2. Authorise spending. Lets Rain pull from the agent's wallet at purchase
+#    time. Until this is done every purchase declines.
+acp card allowance              # show what would be authorised
+acp card allowance --send       # sign and broadcast it
+
+# 3. Spend. Keep USDC in the agent's wallet on Base — that is the real limit.
+acp card issue --amount 2500    # $25 card, PAN/CVV shown once
+acp card list
+```
+
+> **The allowance is not optional.** Verification alone doesn't make a card
+> work: without an on-chain allowance Rain has nothing to pull from, and every
+> authorisation declines. `card allowance --send` re-reads the allowance
+> on-chain afterwards, since a mined transaction isn't the same as a live
+> allowance.
+
+> **A purchase declines if the wallet is short.** The agent can never spend
+> more than it holds, which is the point — there is no credit and no float.
+
+#### Existing agents (agentcard.ai)
 
 ```bash
 # 1. Sign up (magic-link auth to agentcard.ai)
