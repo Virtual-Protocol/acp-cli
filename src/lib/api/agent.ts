@@ -1261,16 +1261,21 @@ export class AgentApi {
   /**
    * Start verification.
    *
-   * [email] is where the card provider sends the owner to finish — it runs
-   * the whole flow, so nothing else is collected here.
+   * The card provider runs the whole flow — ID, address, documents — but it
+   * cannot start from nothing: the email is where it sends the owner, and the
+   * legal name is what it builds its applicant from. Without a name it returns
+   * a link that fails when opened.
    */
   async cardStartKyc(
     agentId: string,
-    email?: string
+    identity: { firstName?: string; lastName?: string; email?: string } = {}
   ): Promise<AgentKycState> {
+    const body = Object.fromEntries(
+      Object.entries(identity).filter(([, v]) => v)
+    );
     const res = await this.client.post<{ data: AgentKycState }>(
       `/agents/${agentId}/card/rain/kyc`,
-      email ? { email } : {}
+      body
     );
     return res.data;
   }

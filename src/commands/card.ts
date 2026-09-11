@@ -573,8 +573,13 @@ export function registerCardCommands(program: Command): void {
       "Check identity verification, or start it. Cards can only be issued to a verified owner."
     )
     .option(
+      "--first-name <name>",
+      "The card owner's legal name, as it appears on their ID. Required the first time — the provider builds its applicant from it, and without one the link it returns fails when opened."
+    )
+    .option("--last-name <name>", "The card owner's legal last name.")
+    .option(
       "--email <email>",
-      "Where the card provider sends the owner to finish verification. Required the first time; it runs the whole flow and collects everything else itself."
+      "Where the card provider sends the owner to finish verification. Required the first time; it collects the ID, address and documents itself."
     )
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
@@ -588,7 +593,11 @@ export function registerCardCommands(program: Command): void {
         // `not_started` means nothing exists yet, so there is nothing to
         // report — start it and hand back a link in one step.
         if (state.status === "not_started") {
-          state = await agentApi.cardStartKyc(agentId, opts.email);
+          state = await agentApi.cardStartKyc(agentId, {
+            firstName: opts.firstName,
+            lastName: opts.lastName,
+            email: opts.email,
+          });
         }
 
         if (state.verificationUrl) emitKycUrlToStderr(state.verificationUrl);
