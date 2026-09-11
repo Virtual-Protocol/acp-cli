@@ -1258,10 +1258,19 @@ export class AgentApi {
    * Idempotent — an existing application is reused and Rain's hosted flow
    * resumes at the first outstanding step, so this is safe to call repeatedly.
    */
-  async cardStartKyc(agentId: string): Promise<AgentKycState> {
+  /**
+   * Start verification.
+   *
+   * [email] is where the card provider sends the owner to finish — it runs
+   * the whole flow, so nothing else is collected here.
+   */
+  async cardStartKyc(
+    agentId: string,
+    email?: string
+  ): Promise<AgentKycState> {
     const res = await this.client.post<{ data: AgentKycState }>(
       `/agents/${agentId}/card/rain/kyc`,
-      {}
+      email ? { email } : {}
     );
     return res.data;
   }

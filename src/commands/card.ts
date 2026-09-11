@@ -572,7 +572,11 @@ export function registerCardCommands(program: Command): void {
     .description(
       "Check identity verification, or start it. Cards can only be issued to a verified owner."
     )
-    .action(async (_opts, cmd) => {
+    .option(
+      "--email <email>",
+      "Where the card provider sends the owner to finish verification. Required the first time; it runs the whole flow and collects everything else itself."
+    )
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
       const agentId = getActiveAgentId(json);
@@ -584,7 +588,7 @@ export function registerCardCommands(program: Command): void {
         // `not_started` means nothing exists yet, so there is nothing to
         // report — start it and hand back a link in one step.
         if (state.status === "not_started") {
-          state = await agentApi.cardStartKyc(agentId);
+          state = await agentApi.cardStartKyc(agentId, opts.email);
         }
 
         if (state.verificationUrl) emitKycUrlToStderr(state.verificationUrl);
