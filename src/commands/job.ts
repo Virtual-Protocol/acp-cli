@@ -109,7 +109,9 @@ export function registerJobCommands(program: Command): void {
             );
             for (const j of allJobs) {
               const budget = !j.legacy
-                ? formatUnits(BigInt(j.budget), 6)
+                ? j.budget
+                  ? formatUnits(BigInt(j.budget), 6)
+                  : "N/A"
                 : j.budget;
               console.log(
                 `${j.onChainJobId}\t${j.chainId}\t${j.clientAddress}\t${j.providerAddress}\t${budget}\t${j.jobStatus}\t${j.legacy}`
