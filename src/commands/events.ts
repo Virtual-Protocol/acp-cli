@@ -62,6 +62,15 @@ function phaseToEventType(phase: AcpJobPhases): string {
   }
 }
 
+function readEventLines(file: string): string[] {
+  try {
+    const content = readFileSync(file, "utf-8").trim();
+    return content ? content.split("\n") : [];
+  } catch {
+    return [];
+  }
+}
+
 export function registerEventsCommand(program: Command): void {
   const events = program
     .command("events")
@@ -311,13 +320,7 @@ export function registerEventsCommand(program: Command): void {
         const lockFile = file + ".lock";
         renameSync(file, lockFile);
 
-        let lines: string[];
-        try {
-          const content = readFileSync(lockFile, "utf-8").trim();
-          lines = content ? content.split("\n") : [];
-        } catch {
-          lines = [];
-        }
+        const lines = readEventLines(lockFile);
 
         const takeCount =
           limit !== undefined && limit > 0
@@ -326,10 +329,14 @@ export function registerEventsCommand(program: Command): void {
         const taken = lines.slice(0, takeCount);
         const remaining = lines.slice(takeCount);
 
-        // Write remaining events back to original path, then remove lock file
+        const concurrentlyAppended = readEventLines(file);
+        const mergedRemaining = [...remaining, ...concurrentlyAppended];
+
+        // Write remaining events back to original path, preserving events
+        // appended by a listener after the original file was renamed.
         writeFileSync(
           file,
-          remaining.length > 0 ? remaining.join("\n") + "\n" : ""
+          mergedRemaining.length > 0 ? mergedRemaining.join("\n") + "\n" : ""
         );
         try {
           unlinkSync(lockFile);
@@ -347,7 +354,7 @@ export function registerEventsCommand(program: Command): void {
           })
           .filter(Boolean);
 
-        outputResult(json, { events, remaining: remaining.length });
+        outputResult(json, { events, remaining: mergedRemaining.length });
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
