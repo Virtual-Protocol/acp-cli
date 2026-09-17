@@ -1434,8 +1434,8 @@ export function registerAgentCommands(program: Command): void {
       "Anti-sniper protection: 0 (none), 1 (60s), 2 (98min). Occupy offers only 0 or 1",
     )
     .option(
-      "--prebuy <virtuals>",
-      "Pre-buy amount in VIRTUAL tokens to spend at launch (e.g. 100 = 100 VIRTUAL)",
+      "--prebuy <amount>",
+      "Pre-buy at launch: VIRTUAL on the Virtuals launchpad (e.g. 100 = 100 VIRTUAL); units of --quote-token on Occupy (e.g. 5 = 5 shares)",
     )
     .option(
       "--acf",
@@ -1460,7 +1460,7 @@ export function registerAgentCommands(program: Command): void {
     )
     .option(
       "--quote-token <address>",
-      "Occupy only: quote asset the curve trades against (must be allow-listed)",
+      "Occupy only, REQUIRED: the tokenized equity the curve is priced against — e.g. NVDAc 0xb20000000000000000000078ee7ce2fE4908108C, also AAPLc/TSLAc/METAc/GOOGLc/MSTRc/AMZNc/SPCXc (8 decimals). Must be allow-listed on Occupy; WETH and USDC are not",
     )
     .option(
       "--pool-fee <fee>",
@@ -1544,6 +1544,18 @@ export function registerAgentCommands(program: Command): void {
             "--name is only supported on the Occupy launchpad.",
             "UNSUPPORTED_LAUNCH_OPTION",
             "On the Virtuals launchpad the token takes the agent's name; drop --name.",
+          ),
+        );
+        return;
+      }
+
+      if (isOccupy && !opts.quoteToken) {
+        outputError(
+          json,
+          new CliError(
+            "--quote-token is required on the Occupy launchpad.",
+            "MISSING_QUOTE_TOKEN",
+            "It names the tokenized equity your token is priced against (e.g. NVDAc 0xb20000000000000000000078ee7ce2fE4908108C). There is no default — it decides which stock the token trades against.",
           ),
         );
         return;
@@ -1799,17 +1811,8 @@ export function registerAgentCommands(program: Command): void {
       // which means the quote token has to be named explicitly.
       let prebuyVirtualBaseUnit = 0n;
       if (isOccupy && opts.prebuy !== undefined) {
-        if (!opts.quoteToken) {
-          outputError(
-            json,
-            new CliError(
-              "--prebuy on Occupy needs --quote-token.",
-              "MISSING_QUOTE_TOKEN",
-              "The pre-buy is denominated in the quote asset, so name it with --quote-token <address>.",
-            ),
-          );
-          return;
-        }
+        // Denominated in the quote asset, whose decimals are read on-chain
+        // (the equities are 8-decimal, not 18).
         let baseUnit: bigint | null;
         try {
           baseUnit = await convertPrebuyForToken(

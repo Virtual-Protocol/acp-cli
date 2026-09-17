@@ -341,6 +341,14 @@ async function launchOnOccupy(
   const { virtualId, contracts, approveCalldata, launchCalldata } = launch;
 
   try {
+    if (!json) {
+      // The venue and the quote asset are the two things a human most needs to
+      // see before an irreversible launch: the curve is priced against a stock.
+      console.log(
+        `Launchpad: Occupy — no launch fee, one transaction, curve priced against ${contracts.quoteToken}`
+      );
+    }
+
     if (prebuyBaseUnit > 0n) {
       const decimals = await checkTokenBalance(
         chainId,

@@ -80,7 +80,7 @@ Marks the virtual as an **Embodied** (robotics-capable) agent and makes it eligi
 Occupy differs in three ways that matter at the CLI:
 
 - **Single-phase and free.** One `launch` call mints the token, opens the Uniswap v4 pool and settles the pre-buy. There is no launch fee, so the agent wallet needs no VIRTUAL — only gas, which is sponsored for ACP agent wallets.
-- **The curve is quoted in a tokenized equity**, not VIRTUAL. `--quote-token <address>` picks it. The allow-listed assets on Base are share tokens — `NVDAc` (NVIDIA), `AAPLc` (Apple), `TSLAc` (Tesla), `METAc`, `GOOGLc`, `MSTRc`, `AMZNc`, `SPCXc` (SpaceX) — so an agent token trades against a stock rather than against VIRTUAL or a stablecoin. **WETH and USDC are not allow-listed.** The backend checks `AssetConfig` before creating anything and fails with a clear message otherwise.
+- **The curve is quoted in a tokenized equity**, not VIRTUAL. `--quote-token <address>` picks it, and it is **required** — there is no default, because the choice decides which stock your token trades against. The allow-listed assets on Base are share tokens — `NVDAc` (NVIDIA), `AAPLc` (Apple), `TSLAc` (Tesla), `METAc`, `GOOGLc`, `MSTRc`, `AMZNc`, `SPCXc` (SpaceX) — so an agent token trades against a stock rather than against VIRTUAL or a stablecoin. **WETH and USDC are not allow-listed.** The backend checks `AssetConfig` before creating anything and fails with a clear message otherwise.
 - **These tokens carry 8 decimals, not 18.** `--prebuy 5` means 5 shares' worth, and the CLI reads the token's decimals to convert it — assuming 18 would overspend by a factor of 10^10.
 - **A pre-buy is denominated in the quote asset**, so `--prebuy` on Occupy requires `--quote-token`.
 
@@ -89,7 +89,7 @@ Occupy runs on EVM chains only; Solana launches go through the Virtuals launchpa
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--name <name>` | the agent's name | Token name on-chain. Occupy names the token independently of the agent |
-| `--quote-token <address>` | backend default for the chain | A tokenized equity allow-listed on AssetConfig, e.g. NVDAc `0xb200…108C` (8 decimals) |
+| `--quote-token <address>` | **required, no default** | The tokenized equity the curve is priced against, e.g. NVDAc `0xb20000000000000000000078ee7ce2fE4908108C` (8 decimals) |
 | `--pool-fee <fee>` | `10000` | Uniswap v4 pool fee in hundredths of a bip; on-chain bounds are 10000 (1%) – 30000 (3%) |
 | `--tax-bips <bips>` | `100` | Trading tax, in bips |
 | `--no-thicken-liquidity` | thickening on | Disables liquidity thickening |
