@@ -36,6 +36,8 @@ export interface TokenizeParams {
 export interface EvmTokenizeParams extends TokenizeParams {
   walletAddress: string;
   launchOptions?: OccupyLaunchOptions;
+  /** Resolved Occupy quote asset, when one was named. */
+  quoteToken?: OccupyQuoteToken;
 }
 
 export interface TokenizeResult {
@@ -353,12 +355,20 @@ async function launchOnOccupy(
     symbol: string;
     prebuyBaseUnit: bigint;
     walletAddress: string;
+    quoteToken?: OccupyQuoteToken;
     json?: boolean;
     onProgress?: (message: string) => void;
   }
 ): Promise<TokenizeResult> {
-  const { chainId, symbol, prebuyBaseUnit, walletAddress, json, onProgress } =
-    params;
+  const {
+    chainId,
+    symbol,
+    prebuyBaseUnit,
+    walletAddress,
+    quoteToken,
+    json,
+    onProgress,
+  } = params;
   const { virtualId, contracts, approveCalldata, launchCalldata } = launch;
 
   try {
@@ -371,19 +381,20 @@ async function launchOnOccupy(
     }
 
     if (prebuyBaseUnit > 0n) {
+      // Same shape as the VIRTUAL check on the Virtuals launchpad: the agent
+      // spends the venue's own currency out of its own wallet.
       const decimals = await checkTokenBalance(
         chainId,
         contracts.quoteToken,
         walletAddress,
         prebuyBaseUnit.toString(),
-        "quote token"
+        quoteToken?.symbol ?? "quote token"
       );
       if (!json) {
         console.log(
-          `Pre-buying $${symbol} with ${formatUnits(
-            prebuyBaseUnit,
-            decimals
-          )} of ${contracts.quoteToken}`
+          `Pre-buying $${symbol} with ${formatUnits(prebuyBaseUnit, decimals)} ${
+            quoteToken?.symbol ?? contracts.quoteToken
+          }`
         );
       }
       if (!approveCalldata) {
@@ -422,6 +433,7 @@ export async function tokenizeOnEvm(
     prebuyVirtualBaseUnit,
     walletAddress,
     launchOptions,
+    quoteToken,
     onProgress,
   } = params;
 
@@ -454,6 +466,7 @@ export async function tokenizeOnEvm(
       symbol,
       prebuyBaseUnit: prebuyVirtualBaseUnit,
       walletAddress,
+      quoteToken,
       json,
       onProgress,
     });

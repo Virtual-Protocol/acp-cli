@@ -1865,6 +1865,7 @@ export function registerAgentCommands(program: Command): void {
       // 18 — so the amount is converted against that token's own decimals,
       // which means the quote token has to be named explicitly.
       let prebuyVirtualBaseUnit = 0n;
+      let resolvedQuoteToken;
       if (isOccupy && opts.prebuy !== undefined) {
         // Denominated in the quote asset, whose decimals are not uniform
         // (equities are 8, other allow-listed assets 18), so resolve the token
@@ -1897,6 +1898,7 @@ export function registerAgentCommands(program: Command): void {
           );
         }
         prebuyVirtualBaseUnit = baseUnit;
+        resolvedQuoteToken = resolved;
       } else if (opts.prebuy !== undefined) {
         const baseUnit = convertPrebuyVirtual(
           String(opts.prebuy),
@@ -2065,6 +2067,7 @@ export function registerAgentCommands(program: Command): void {
           prebuyVirtualBaseUnit,
           walletAddress: selected.walletAddress,
           onProgress,
+          ...(resolvedQuoteToken && { quoteToken: resolvedQuoteToken }),
           ...(isOccupy && {
             launchOptions: {
               launchpad,

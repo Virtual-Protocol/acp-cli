@@ -6,7 +6,7 @@ The `acp agent tokenize` command launches a token for the **active agent**.
 
 1. An active agent is set — run `acp agent use` if you haven't.
 2. A signer is registered for the active agent — run `acp agent add-signer` if you haven't. `tokenize` will refuse to run without a signer.
-3. The agent wallet has enough **VIRTUAL** to cover the launch fee (plus any pre-buy amount). *(Virtuals launchpad only — Occupy charges no launch fee; see [Occupy](#occupy-launchpad).)*
+3. The agent wallet holds enough of the venue's currency: **VIRTUAL** on the Virtuals launchpad, to cover the launch fee plus any pre-buy; **the quote asset** on Occupy, to cover a pre-buy (there is no launch fee, so with no pre-buy the wallet needs nothing at all). Either way the agent spends from its own wallet.
 4. The agent wallet has enough **ETH** to cover gas fees for the on-chain transactions, unless gas is sponsored for it.
 
 ## Chain selection
