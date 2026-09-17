@@ -1431,7 +1431,7 @@ export function registerAgentCommands(program: Command): void {
     .option("--symbol <symbol>", "Token symbol")
     .option(
       "--anti-sniper <type>",
-      "Anti-sniper protection: 0 (none), 1 (60s), 2 (98min)",
+      "Anti-sniper protection: 0 (none), 1 (60s), 2 (98min). Occupy also accepts 3 (98min sell tax), 4 (98min buy+sell tax), 5 (10min buy tax)",
     )
     .option(
       "--prebuy <virtuals>",
@@ -1453,6 +1453,10 @@ export function registerAgentCommands(program: Command): void {
     .option(
       "--launchpad <name>",
       "Launchpad to launch on: virtuals (default) or occupy",
+    )
+    .option(
+      "--name <name>",
+      "Occupy only: token name (defaults to the agent's name)",
     )
     .option(
       "--quote-token <address>",
@@ -1533,6 +1537,18 @@ export function registerAgentCommands(program: Command): void {
 
       const isOccupy = launchpad === "OCCUPY";
 
+      if (!isOccupy && opts.name !== undefined) {
+        outputError(
+          json,
+          new CliError(
+            "--name is only supported on the Occupy launchpad.",
+            "UNSUPPORTED_LAUNCH_OPTION",
+            "On the Virtuals launchpad the token takes the agent's name; drop --name.",
+          ),
+        );
+        return;
+      }
+
       if (isOccupy) {
         const virtualsOnly = [
           opts.acf && "--acf",
@@ -1552,6 +1568,69 @@ export function registerAgentCommands(program: Command): void {
             ),
           );
           return;
+        }
+      }
+
+      // BondingV5 exposes 0-2; Occupy's AssetConfig numbers six schedules and
+      // reverts above 5.
+      const antiSniperChoices = isOccupy
+        ? [
+            { value: 1, label: "60 seconds (default)" },
+            { value: 0, label: "None (0 seconds)" },
+            { value: 2, label: "98 minutes" },
+            { value: 3, label: "98 minutes, sell tax" },
+            { value: 4, label: "98 minutes, buy and sell tax" },
+            { value: 5, label: "10 minutes, buy tax" },
+          ]
+        : [
+            { value: 1, label: "60 seconds (default)" },
+            { value: 0, label: "None (0 seconds)" },
+            { value: 2, label: "98 minutes" },
+          ];
+
+      let antiSniperTaxType = 1; // default: 60 seconds
+      if (opts.antiSniper !== undefined) {
+        const parsed = Number(opts.antiSniper);
+        const allowed = antiSniperChoices.map((c) => c.value);
+        if (!allowed.includes(parsed)) {
+          outputError(
+            json,
+            `Invalid anti-sniper type: ${opts.antiSniper}. Must be one of ${allowed
+              .sort((a, b) => a - b)
+              .join(", ")}.`,
+          );
+          return;
+        }
+        antiSniperTaxType = parsed;
+      }
+
+      // Step 4b: Occupy launch settings. poolFee is bounded on-chain by
+      // AssetConfig to [MIN_POOL_FEE, MAX_POOL_FEE]; catching it here beats a
+      // revert after the draft already exists upstream.
+      let poolFee: number | undefined;
+      let taxBips: number | undefined;
+      if (isOccupy) {
+        if (opts.poolFee !== undefined) {
+          const parsed = Number(opts.poolFee);
+          if (!Number.isInteger(parsed) || parsed < 10000 || parsed > 30000) {
+            outputError(
+              json,
+              `Invalid --pool-fee value: ${opts.poolFee}. Must be an integer between 10000 (1%) and 30000 (3%).`,
+            );
+            return;
+          }
+          poolFee = parsed;
+        }
+        if (opts.taxBips !== undefined) {
+          const parsed = Number(opts.taxBips);
+          if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10000) {
+            outputError(
+              json,
+              `Invalid --tax-bips value: ${opts.taxBips}. Must be an integer between 0 and 10000.`,
+            );
+            return;
+          }
+          taxBips = parsed;
         }
       }
 
@@ -1707,58 +1786,15 @@ export function registerAgentCommands(program: Command): void {
       }
 
       // Step 4: Anti-sniper selection
-      let antiSniperTaxType = 1; // default: 60 seconds
-      if (opts.antiSniper !== undefined) {
-        const parsed = Number(opts.antiSniper);
-        if (![0, 1, 2].includes(parsed)) {
-          outputError(
-            json,
-            `Invalid anti-sniper type: ${opts.antiSniper}. Must be 0, 1, or 2.`,
-          );
-          return;
-        }
-        antiSniperTaxType = parsed;
-      } else if (opts.configure && !json) {
+      // Step 4: Anti-sniper. The flag was validated up front; only the
+      // interactive picker is left.
+      if (opts.antiSniper === undefined && opts.configure && !json) {
         const antiSniperChoice = await selectOption(
           "\nChoose anti-sniper protection duration:",
-          [
-            { value: 1, label: "60 seconds (default)" },
-            { value: 0, label: "None (0 seconds)" },
-            { value: 2, label: "98 minutes" },
-          ],
+          antiSniperChoices,
           (opt) => opt.label,
         );
         antiSniperTaxType = antiSniperChoice.value;
-      }
-
-      // Step 4b: Occupy launch settings. poolFee is bounded on-chain by
-      // AssetConfig to [MIN_POOL_FEE, MAX_POOL_FEE]; catching it here beats a
-      // revert after the draft already exists upstream.
-      let poolFee: number | undefined;
-      let taxBips: number | undefined;
-      if (isOccupy) {
-        if (opts.poolFee !== undefined) {
-          const parsed = Number(opts.poolFee);
-          if (!Number.isInteger(parsed) || parsed < 10000 || parsed > 30000) {
-            outputError(
-              json,
-              `Invalid --pool-fee value: ${opts.poolFee}. Must be an integer between 10000 (1%) and 30000 (3%).`,
-            );
-            return;
-          }
-          poolFee = parsed;
-        }
-        if (opts.taxBips !== undefined) {
-          const parsed = Number(opts.taxBips);
-          if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10000) {
-            outputError(
-              json,
-              `Invalid --tax-bips value: ${opts.taxBips}. Must be an integer between 0 and 10000.`,
-            );
-            return;
-          }
-          taxBips = parsed;
-        }
       }
 
       // Step 5: Pre-buy amount. On Virtuals this is VIRTUAL; on Occupy it is
@@ -1973,6 +2009,7 @@ export function registerAgentCommands(program: Command): void {
           ...(isOccupy && {
             launchOptions: {
               launchpad,
+              ...(opts.name && { name: String(opts.name) }),
               ...(opts.quoteToken && {
                 quoteTokenAddress: String(opts.quoteToken),
               }),

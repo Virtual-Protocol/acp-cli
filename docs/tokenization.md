@@ -20,11 +20,16 @@ The available chains come from the EVM provider attached to the active agent. Yo
 
 Anti-sniper applies a temporary transfer tax to newly launched tokens to discourage sniper bots from buying in the first seconds/minutes.
 
-| Value | Label      | Duration |
-| ----- | ---------- | -------- |
-| `0`   | None       | Off      |
-| `1`   | 60 seconds | Default  |
-| `2`   | 98 minutes | Extended |
+| Value | Label      | Duration | Venue |
+| ----- | ---------- | -------- | ----- |
+| `0`   | None       | Off      | Both |
+| `1`   | 60 seconds | Default  | Both |
+| `2`   | 98 minutes | Extended | Both |
+| `3`   | 98 minutes, sell tax | Extended | Occupy only |
+| `4`   | 98 minutes, buy and sell tax | Extended | Occupy only |
+| `5`   | 10 minutes, buy tax | Short | Occupy only |
+
+Types `3`–`5` come from Occupy's `AssetConfig`; the Virtuals launchpad only knows `0`–`2`, and passing a higher value there is rejected. Occupy reverts on anything above `5`.
 
 ## Pre-buy
 
@@ -85,17 +90,26 @@ Occupy runs on EVM chains only; Solana launches go through the Virtuals launchpa
 
 | Flag | Default | Notes |
 | --- | --- | --- |
+| `--name <name>` | the agent's name | Token name on-chain. Occupy names the token independently of the agent |
 | `--quote-token <address>` | backend default for the chain | Must be allow-listed on AssetConfig |
 | `--pool-fee <fee>` | `10000` | Uniswap v4 pool fee in hundredths of a bip; on-chain bounds are 10000 (1%) – 30000 (3%) |
 | `--tax-bips <bips>` | `100` | Trading tax, in bips |
 | `--no-thicken-liquidity` | thickening on | Disables liquidity thickening |
-| `--anti-sniper <0\|1\|2>` | `1` | Same meaning as above |
+| `--anti-sniper <0–5>` | `1` | Occupy accepts the full range, including `3`–`5` |
 | `--prebuy <amount>` | none | In **quote-token** units, not VIRTUAL. Requires `--quote-token` |
 
 ```bash
 # Launch on Occupy against an allow-listed quote asset
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
   --quote-token 0xb20000000000000000000078ee7ce2fE4908108C
+
+# Name the token something other than the agent's name
+acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
+  --name "My Token" --quote-token 0xb20000000000000000000078ee7ce2fE4908108C
+
+# 10-minute buy-tax anti-sniper (Occupy only)
+acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
+  --quote-token 0xb20000000000000000000078ee7ce2fE4908108C --anti-sniper 5
 
 # 3% pool fee, no liquidity thickening
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
@@ -111,12 +125,12 @@ acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
 
 ```
 acp agent tokenize [--chain-id <id>] [--symbol <symbol>] [--anti-sniper <0|1|2>] [--prebuy <virtuals>] [--acf] [--60-days] [--airdrop-percent <percent>] [--robotics] [--configure]
-acp agent tokenize --launchpad occupy [--chain-id <id>] [--symbol <symbol>] [--quote-token <address>] [--pool-fee <fee>] [--tax-bips <bips>] [--no-thicken-liquidity] [--anti-sniper <0|1|2>] [--prebuy <amount>]
+acp agent tokenize --launchpad occupy [--chain-id <id>] [--symbol <symbol>] [--name <name>] [--quote-token <address>] [--pool-fee <fee>] [--tax-bips <bips>] [--no-thicken-liquidity] [--anti-sniper <0|1|2>] [--prebuy <amount>]
 ```
 
 - `--chain-id <id>` — chain to launch on. Restricted to what the provider supports.
 - `--symbol <symbol>` — token symbol (uppercased). Prompted if omitted.
-- `--anti-sniper <0|1|2>` — set directly. Respected with or without `--configure`.
+- `--anti-sniper <0|1|2>` — set directly (`0`–`5` on Occupy). Respected with or without `--configure`.
 - `--prebuy <virtuals>` — VIRTUAL tokens to spend at launch. Respected with or without `--configure`.
 - `--acf` — enable Capital Formation. Respected with or without `--configure`.
 - `--60-days` — enable 60 Days Experiment mode. Respected with or without `--configure`.
