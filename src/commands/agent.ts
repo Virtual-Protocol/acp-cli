@@ -49,6 +49,7 @@ import {
   EVM_MAINNET_CHAINS,
   EVM_TESTNET_CHAINS,
 } from "@virtuals-protocol/acp-node-v2";
+import type { OccupyQuoteToken } from "../lib/api/agent";
 import {
   tokenizeOnSolana,
   tokenizeOnEvm,
@@ -1581,16 +1582,30 @@ export function registerAgentCommands(program: Command): void {
 
       const isOccupy = launchpad === "OCCUPY";
 
-      if (!isOccupy && opts.name !== undefined) {
-        outputError(
-          json,
-          new CliError(
-            "--name is only supported on the Occupy launchpad.",
-            "UNSUPPORTED_LAUNCH_OPTION",
-            "On the Virtuals launchpad the token takes the agent's name; drop --name.",
-          ),
-        );
-        return;
+      if (!isOccupy) {
+        // Silently dropping these would be worse than refusing them: a
+        // forgotten --launchpad occupy would spend --prebuy as VIRTUAL on a
+        // paid Virtuals launch, which is irreversible.
+        const occupyOnly = [
+          opts.name !== undefined && "--name",
+          opts.quoteToken !== undefined && "--quote-token",
+          opts.poolFee !== undefined && "--pool-fee",
+          opts.taxBips !== undefined && "--tax-bips",
+          opts.thickenLiquidity === false && "--no-thicken-liquidity",
+        ].filter(Boolean) as string[];
+        if (occupyOnly.length > 0) {
+          outputError(
+            json,
+            new CliError(
+              `${occupyOnly.join(", ")} ${
+                occupyOnly.length === 1 ? "is" : "are"
+              } only supported on the Occupy launchpad.`,
+              "UNSUPPORTED_LAUNCH_OPTION",
+              "Add --launchpad occupy, or drop the flag. On the Virtuals launchpad the token takes the agent's name and the curve is priced in VIRTUAL.",
+            ),
+          );
+          return;
+        }
       }
 
       const willPickQuoteToken = Boolean(opts.configure) && !json;
@@ -1852,6 +1867,25 @@ export function registerAgentCommands(program: Command): void {
         quoteTokenInput = picked.symbol;
       }
 
+      let resolvedQuoteToken: OccupyQuoteToken | undefined;
+      if (isOccupy && quoteTokenInput) {
+        try {
+          resolvedQuoteToken = await resolveQuoteToken(
+            agentApi,
+            selectedChain.id,
+            quoteTokenInput,
+          );
+        } catch (err) {
+          outputError(json, err instanceof Error ? err : String(err));
+          return;
+        }
+        if (!json) {
+          console.log(
+            `\nCurve priced against ${resolvedQuoteToken.symbol} — ${resolvedQuoteToken.name} (${resolvedQuoteToken.decimals} decimals)`,
+          );
+        }
+      }
+
       // Step 3: Input token symbol
       let symbol: string;
       if (opts.symbol) {
@@ -1901,25 +1935,12 @@ export function registerAgentCommands(program: Command): void {
       // 18 — so the amount is converted against that token's own decimals,
       // which means the quote token has to be named explicitly.
       let prebuyVirtualBaseUnit = 0n;
-      let resolvedQuoteToken;
       if (isOccupy && opts.prebuy !== undefined) {
         // Denominated in the quote asset, whose decimals are not uniform
-        // (equities are 8, other allow-listed assets 18), so resolve the token
-        // and convert against its own decimals.
-        let resolved;
-        try {
-          resolved = await resolveQuoteToken(
-            agentApi,
-            selectedChain.id,
-            quoteTokenInput as string,
-          );
-        } catch (err) {
-          outputError(json, err instanceof Error ? err : String(err));
-          return;
-        }
+        // (equities are 8, other allow-listed assets 18).
         const baseUnit = convertPrebuyWithDecimals(
           String(opts.prebuy),
-          resolved.decimals,
+          (resolvedQuoteToken as OccupyQuoteToken).decimals,
         );
         if (baseUnit === null) {
           outputError(
@@ -1930,11 +1951,10 @@ export function registerAgentCommands(program: Command): void {
         }
         if (!json) {
           console.log(
-            `Pre-buy: ${opts.prebuy} ${resolved.symbol} (${resolved.decimals} decimals)`,
+            `Pre-buy: ${opts.prebuy} ${(resolvedQuoteToken as OccupyQuoteToken).symbol}`,
           );
         }
         prebuyVirtualBaseUnit = baseUnit;
-        resolvedQuoteToken = resolved;
       } else if (opts.prebuy !== undefined) {
         const baseUnit = convertPrebuyVirtual(
           String(opts.prebuy),
@@ -1954,11 +1974,16 @@ export function registerAgentCommands(program: Command): void {
           output: process.stdout,
         });
         try {
+          const currency = resolvedQuoteToken
+            ? `${resolvedQuoteToken.symbol} (${resolvedQuoteToken.name})`
+            : "VIRTUAL tokens";
           const raw = await prompt(
             rl,
-            "\nPre-buy amount in VIRTUAL tokens (blank to skip): ",
+            `\nPre-buy amount in ${currency} (blank to skip): `,
           );
-          const base = convertPrebuyVirtual(raw, selectedChain.id);
+          const base = resolvedQuoteToken
+            ? convertPrebuyWithDecimals(raw, resolvedQuoteToken.decimals)
+            : convertPrebuyVirtual(raw, selectedChain.id);
           if (base === null) {
             outputError(
               json,
@@ -1972,11 +1997,13 @@ export function registerAgentCommands(program: Command): void {
         }
       }
 
-      // Step 6: Capital Formation (ACF) toggle
+      // Step 6: Capital Formation (ACF) toggle. Occupy has no such concept —
+      // the flags were already refused above, so the interactive flow must not
+      // ask for the same values and forward them into an irreversible launch.
       let needAcf = false;
       if (opts.acf) {
         needAcf = true;
-      } else if (opts.configure && !json) {
+      } else if (opts.configure && !json && !isOccupy) {
         const rl = readline.createInterface({
           input: process.stdin,
           output: process.stdout,
@@ -2002,7 +2029,7 @@ export function registerAgentCommands(program: Command): void {
       {
         if (opts["60Days"]) {
           isProject60days = true;
-        } else if (opts.configure && !json) {
+        } else if (opts.configure && !json && !isOccupy) {
           const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout,
@@ -2038,7 +2065,7 @@ export function registerAgentCommands(program: Command): void {
             return;
           }
           airdropPercent = n;
-        } else if (opts.configure && !json) {
+        } else if (opts.configure && !json && !isOccupy) {
           const rl = readline.createInterface({
             input: process.stdin,
             output: process.stdout,
@@ -2067,7 +2094,7 @@ export function registerAgentCommands(program: Command): void {
       let isRobotics = false;
       if (opts.robotics) {
         isRobotics = true;
-      } else if (opts.configure && !json) {
+      } else if (opts.configure && !json && !isOccupy) {
         const rl = readline.createInterface({
           input: process.stdin,
           output: process.stdout,
@@ -2108,7 +2135,9 @@ export function registerAgentCommands(program: Command): void {
             launchOptions: {
               launchpad,
               ...(opts.name && { name: String(opts.name) }),
-              ...(quoteTokenInput && { quoteToken: quoteTokenInput }),
+              ...(quoteTokenInput && {
+                quoteToken: resolvedQuoteToken?.address ?? quoteTokenInput,
+              }),
               ...(poolFee !== undefined && { poolFee }),
               ...(taxBips !== undefined && { taxBips }),
               thickenLiquidity: opts.thickenLiquidity !== false,
