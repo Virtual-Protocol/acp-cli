@@ -53,6 +53,7 @@ import {
   tokenizeOnSolana,
   tokenizeOnEvm,
   convertPrebuyVirtual,
+  convertPrebuyForToken,
 } from "../lib/tokenize";
 import * as viemChains from "viem/chains";
 import { formatChainId, solanaChainId, isSolanaChainId } from "../lib/chains";
@@ -1449,6 +1450,23 @@ export function registerAgentCommands(program: Command): void {
       "Airdrop allocation to veVIRTUAL holders (0–5%, e.g. 1.25)",
     )
     .option("--robotics", "Mark as a Robotics (Eastworld-eligible) launch")
+    .option(
+      "--launchpad <name>",
+      "Launchpad to launch on: virtuals (default) or occupy",
+    )
+    .option(
+      "--quote-token <address>",
+      "Occupy only: quote asset the curve trades against (must be allow-listed)",
+    )
+    .option(
+      "--pool-fee <fee>",
+      "Occupy only: Uniswap v4 pool fee in hundredths of a bip, 10000–30000 (default 10000 = 1%)",
+    )
+    .option("--tax-bips <bips>", "Occupy only: trading tax in bips (default 100)")
+    .option(
+      "--no-thicken-liquidity",
+      "Occupy only: disable liquidity thickening (on by default)",
+    )
     .option("--configure", "Show advanced launch configuration options")
     .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
@@ -1492,6 +1510,49 @@ export function registerAgentCommands(program: Command): void {
           ),
         );
         return;
+      }
+
+      // Step 2c: Launchpad. Occupy is a different venue with a different set
+      // of knobs; the Virtuals-only economics flags are rejected rather than
+      // silently dropped, since they shape a launch permanently.
+      const launchpad: "VIRTUALS" | "OCCUPY" =
+        String(opts.launchpad ?? "virtuals").toLowerCase() === "occupy"
+          ? "OCCUPY"
+          : "VIRTUALS";
+
+      if (opts.launchpad !== undefined) {
+        const requested = String(opts.launchpad).toLowerCase();
+        if (!["virtuals", "occupy"].includes(requested)) {
+          outputError(
+            json,
+            `Unknown launchpad: ${opts.launchpad}. Must be "virtuals" or "occupy".`,
+          );
+          return;
+        }
+      }
+
+      const isOccupy = launchpad === "OCCUPY";
+
+      if (isOccupy) {
+        const virtualsOnly = [
+          opts.acf && "--acf",
+          opts["60Days"] && "--60-days",
+          opts.airdropPercent !== undefined && "--airdrop-percent",
+          opts.robotics && "--robotics",
+        ].filter(Boolean) as string[];
+        if (virtualsOnly.length > 0) {
+          outputError(
+            json,
+            new CliError(
+              `${virtualsOnly.join(", ")} ${
+                virtualsOnly.length === 1 ? "is" : "are"
+              } not supported on the Occupy launchpad.`,
+              "UNSUPPORTED_LAUNCH_OPTION",
+              "Drop the flag, or launch on the Virtuals launchpad instead.",
+            ),
+          );
+          return;
+        }
       }
 
       let selected: Agent;
@@ -1601,6 +1662,18 @@ export function registerAgentCommands(program: Command): void {
         );
       }
 
+      if (isOccupy && isSolanaChainId(selectedChain.id)) {
+        outputError(
+          json,
+          new CliError(
+            "The Occupy launchpad does not support Solana.",
+            "UNSUPPORTED_CHAIN",
+            "Pick an EVM chain, or launch on the Virtuals launchpad instead.",
+          ),
+        );
+        return;
+      }
+
       // Step 3: Input token symbol
       let symbol: string;
       if (opts.symbol) {
@@ -1658,9 +1731,78 @@ export function registerAgentCommands(program: Command): void {
         antiSniperTaxType = antiSniperChoice.value;
       }
 
-      // Step 5: Pre-buy amount (VIRTUAL to spend at launch)
+      // Step 4b: Occupy launch settings. poolFee is bounded on-chain by
+      // AssetConfig to [MIN_POOL_FEE, MAX_POOL_FEE]; catching it here beats a
+      // revert after the draft already exists upstream.
+      let poolFee: number | undefined;
+      let taxBips: number | undefined;
+      if (isOccupy) {
+        if (opts.poolFee !== undefined) {
+          const parsed = Number(opts.poolFee);
+          if (!Number.isInteger(parsed) || parsed < 10000 || parsed > 30000) {
+            outputError(
+              json,
+              `Invalid --pool-fee value: ${opts.poolFee}. Must be an integer between 10000 (1%) and 30000 (3%).`,
+            );
+            return;
+          }
+          poolFee = parsed;
+        }
+        if (opts.taxBips !== undefined) {
+          const parsed = Number(opts.taxBips);
+          if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10000) {
+            outputError(
+              json,
+              `Invalid --tax-bips value: ${opts.taxBips}. Must be an integer between 0 and 10000.`,
+            );
+            return;
+          }
+          taxBips = parsed;
+        }
+      }
+
+      // Step 5: Pre-buy amount. On Virtuals this is VIRTUAL; on Occupy it is
+      // the quote asset the curve trades against, whose decimals need not be
+      // 18 — so the amount is converted against that token's own decimals,
+      // which means the quote token has to be named explicitly.
       let prebuyVirtualBaseUnit = 0n;
-      if (opts.prebuy !== undefined) {
+      if (isOccupy && opts.prebuy !== undefined) {
+        if (!opts.quoteToken) {
+          outputError(
+            json,
+            new CliError(
+              "--prebuy on Occupy needs --quote-token.",
+              "MISSING_QUOTE_TOKEN",
+              "The pre-buy is denominated in the quote asset, so name it with --quote-token <address>.",
+            ),
+          );
+          return;
+        }
+        let baseUnit: bigint | null;
+        try {
+          baseUnit = await convertPrebuyForToken(
+            String(opts.prebuy),
+            selectedChain.id,
+            String(opts.quoteToken),
+          );
+        } catch (err) {
+          outputError(
+            json,
+            `Failed to read decimals for ${opts.quoteToken}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          return;
+        }
+        if (baseUnit === null) {
+          outputError(
+            json,
+            `Invalid --prebuy value: ${opts.prebuy}. Must be a non-negative number.`,
+          );
+          return;
+        }
+        prebuyVirtualBaseUnit = baseUnit;
+      } else if (opts.prebuy !== undefined) {
         const baseUnit = convertPrebuyVirtual(
           String(opts.prebuy),
           selectedChain.id,
@@ -1828,6 +1970,17 @@ export function registerAgentCommands(program: Command): void {
           prebuyVirtualBaseUnit,
           walletAddress: selected.walletAddress,
           onProgress,
+          ...(isOccupy && {
+            launchOptions: {
+              launchpad,
+              ...(opts.quoteToken && {
+                quoteTokenAddress: String(opts.quoteToken),
+              }),
+              ...(poolFee !== undefined && { poolFee }),
+              ...(taxBips !== undefined && { taxBips }),
+              thickenLiquidity: opts.thickenLiquidity !== false,
+            },
+          }),
         };
 
         result = isSolanaChainId(selectedChain.id)
@@ -1850,6 +2003,7 @@ export function registerAgentCommands(program: Command): void {
           agentName: selected.name,
           virtualId: result.virtualId,
           txHash: result.txHash,
+          launchpad,
           needAcf,
           isProject60days,
           airdropPercent,

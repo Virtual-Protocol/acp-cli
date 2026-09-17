@@ -7,9 +7,13 @@ import {
 } from "@virtuals-protocol/acp-node-v2";
 import type {
   AgentApi,
+  OccupyLaunchOptions,
+  OccupyPrepareLaunchResponse,
   PrepareLaunchResponse,
   SolanaPrepareLaunchResponse,
+  VirtualsPrepareLaunchResponse,
 } from "./api/agent";
+import { isOccupyLaunch } from "./api/agent";
 import { toSolanaInstructionLike, type SolAddr } from "./solana";
 import { isSolanaChainId } from "./chains";
 import { withApprovalGate } from "./walletGate";
@@ -30,6 +34,7 @@ export interface TokenizeParams {
 
 export interface EvmTokenizeParams extends TokenizeParams {
   walletAddress: string;
+  launchOptions?: OccupyLaunchOptions;
 }
 
 export interface TokenizeResult {
@@ -62,6 +67,66 @@ function getEvmProvider(chainId: number) {
     }
     return client.getProvider();
   });
+}
+
+/**
+ * Occupy quotes its curve in an arbitrary asset, so a pre-buy is denominated in
+ * that token's units rather than VIRTUAL's 18. Read the decimals rather than
+ * assuming — an 8-decimal quote asset would otherwise overspend by 10^10.
+ */
+export async function convertPrebuyForToken(
+  raw: string,
+  chainId: number,
+  tokenAddress: string
+): Promise<bigint | null> {
+  const trimmed = raw.trim();
+  if (!trimmed) return 0n;
+  if (!/^\d*\.?\d+$/.test(trimmed)) return null;
+  const provider = await getEvmProvider(chainId);
+  const decimals = (await provider.readContract(chainId, {
+    abi: erc20Abi,
+    address: tokenAddress as `0x${string}`,
+    functionName: "decimals",
+  })) as number;
+  try {
+    const base = parseUnits(trimmed as `${number}`, Number(decimals));
+    return base < 0n ? null : base;
+  } catch {
+    return null;
+  }
+}
+
+export async function checkTokenBalance(
+  chainId: number,
+  tokenAddress: string,
+  wallet: string,
+  requiredWei: string,
+  label: string
+): Promise<number> {
+  const provider = await getEvmProvider(chainId);
+  const [balance, decimals] = await Promise.all([
+    provider.readContract(chainId, {
+      abi: erc20Abi,
+      address: tokenAddress as `0x${string}`,
+      functionName: "balanceOf",
+      args: [wallet as `0x${string}`],
+    }) as Promise<bigint>,
+    provider.readContract(chainId, {
+      abi: erc20Abi,
+      address: tokenAddress as `0x${string}`,
+      functionName: "decimals",
+    }) as Promise<number>,
+  ]);
+  const required = BigInt(requiredWei);
+  if (balance < required) {
+    throw new Error(
+      `Insufficient ${label} balance. Need ${formatUnits(
+        required,
+        Number(decimals)
+      )}, have ${formatUnits(balance, Number(decimals))}.`
+    );
+  }
+  return Number(decimals);
 }
 
 export async function checkVirtualBalance(
@@ -113,13 +178,28 @@ async function waitForReceipt(
 
 export async function sendApprove(
   chainId: number,
-  virtualTokenAddress: string,
+  tokenAddress: string,
   approveCalldata: string
 ): Promise<string> {
   const provider = await getEvmProvider(chainId);
   const txHash = await provider.sendTransaction(chainId, {
-    to: virtualTokenAddress as `0x${string}`,
+    to: tokenAddress as `0x${string}`,
     data: approveCalldata as `0x${string}`,
+  });
+
+  await waitForReceipt(provider, chainId, txHash as `0x${string}`);
+  return txHash;
+}
+
+export async function sendLaunch(
+  chainId: number,
+  bondingAddress: string,
+  launchCalldata: string
+): Promise<string> {
+  const provider = await getEvmProvider(chainId);
+  const txHash = await provider.sendTransaction(chainId, {
+    to: bondingAddress as `0x${string}`,
+    data: launchCalldata as `0x${string}`,
   });
 
   await waitForReceipt(provider, chainId, txHash as `0x${string}`);
@@ -239,6 +319,63 @@ export async function tokenizeOnSolana(
   };
 }
 
+/**
+ * Occupy is single-phase and charges no launch fee: one `launch` call mints the
+ * token, opens the pool and settles the pre-buy. So there is nothing to approve
+ * unless the backend returned `approveCalldata` for a pre-buy, and the balance
+ * to check is the quote token, not VIRTUAL.
+ */
+async function launchOnOccupy(
+  launch: OccupyPrepareLaunchResponse,
+  params: {
+    chainId: number;
+    symbol: string;
+    prebuyBaseUnit: bigint;
+    walletAddress: string;
+    json?: boolean;
+    onProgress?: (message: string) => void;
+  }
+): Promise<TokenizeResult> {
+  const { chainId, symbol, prebuyBaseUnit, walletAddress, json, onProgress } =
+    params;
+  const { virtualId, contracts, approveCalldata, launchCalldata } = launch;
+
+  try {
+    if (prebuyBaseUnit > 0n) {
+      const decimals = await checkTokenBalance(
+        chainId,
+        contracts.quoteToken,
+        walletAddress,
+        prebuyBaseUnit.toString(),
+        "quote token"
+      );
+      if (!json) {
+        console.log(
+          `Pre-buying $${symbol} with ${formatUnits(
+            prebuyBaseUnit,
+            decimals
+          )} of ${contracts.quoteToken}`
+        );
+      }
+      if (!approveCalldata) {
+        throw new Error(
+          "Backend returned no approveCalldata for a non-zero pre-buy"
+        );
+      }
+      onProgress?.("Approving quote token...");
+      await sendApprove(chainId, contracts.quoteToken, approveCalldata);
+    }
+
+    onProgress?.("Calling launch contract...");
+    const txHash = await sendLaunch(chainId, contracts.bonding, launchCalldata);
+
+    return { virtualId, txHash, launchFee: "0" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to launch token on Occupy: ${msg}`);
+  }
+}
+
 export async function tokenizeOnEvm(
   agentApi: AgentApi,
   params: EvmTokenizeParams,
@@ -255,6 +392,7 @@ export async function tokenizeOnEvm(
     isRobotics,
     prebuyVirtualBaseUnit,
     walletAddress,
+    launchOptions,
     onProgress,
   } = params;
 
@@ -270,7 +408,8 @@ export async function tokenizeOnEvm(
       isProject60days,
       airdropPercent,
       isRobotics,
-      prebuyVirtualBaseUnit > 0n ? prebuyVirtualBaseUnit.toString() : undefined
+      prebuyVirtualBaseUnit > 0n ? prebuyVirtualBaseUnit.toString() : undefined,
+      launchOptions
     );
   } catch (err) {
     throw new Error(
@@ -280,13 +419,24 @@ export async function tokenizeOnEvm(
     );
   }
 
+  if (isOccupyLaunch(launch)) {
+    return launchOnOccupy(launch, {
+      chainId,
+      symbol,
+      prebuyBaseUnit: prebuyVirtualBaseUnit,
+      walletAddress,
+      json,
+      onProgress,
+    });
+  }
+
   const {
     virtualId,
     contracts,
     launchFee,
     approveCalldata,
     preLaunchCalldata,
-  } = launch;
+  } = launch as VirtualsPrepareLaunchResponse;
 
   const launchFeeWei = BigInt(launchFee);
   const totalApprovalWei = launchFeeWei + prebuyVirtualBaseUnit;

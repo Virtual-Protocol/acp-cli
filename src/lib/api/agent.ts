@@ -1377,7 +1377,8 @@ export class AgentApi {
     isProject60days?: boolean,
     airdropPercent?: number,
     isRobotics?: boolean,
-    prebuyAmount?: string
+    prebuyAmount?: string,
+    launchOptions?: OccupyLaunchOptions
   ): Record<string, unknown> {
     const payload: Record<string, unknown> = {
       chainId,
@@ -1398,6 +1399,20 @@ export class AgentApi {
       payload.prebuyAmount = prebuyAmount;
     }
 
+    if (launchOptions?.launchpad) payload.launchpad = launchOptions.launchpad;
+    if (launchOptions?.quoteTokenAddress) {
+      payload.quoteTokenAddress = launchOptions.quoteTokenAddress;
+    }
+    if (launchOptions?.poolFee !== undefined) {
+      payload.poolFee = launchOptions.poolFee;
+    }
+    if (launchOptions?.taxBips !== undefined) {
+      payload.taxBips = launchOptions.taxBips;
+    }
+    if (launchOptions?.thickenLiquidity !== undefined) {
+      payload.thickenLiquidity = launchOptions.thickenLiquidity;
+    }
+
     return payload;
   }
 
@@ -1410,7 +1425,8 @@ export class AgentApi {
     isProject60days?: boolean,
     airdropPercent?: number,
     isRobotics?: boolean,
-    prebuyAmount?: string
+    prebuyAmount?: string,
+    launchOptions?: OccupyLaunchOptions
   ): Promise<PrepareLaunchResponse> {
     const payload = this.buildPrepareLaunchPayload(
       chainId,
@@ -1420,7 +1436,8 @@ export class AgentApi {
       isProject60days,
       airdropPercent,
       isRobotics,
-      prebuyAmount
+      prebuyAmount,
+      launchOptions
     );
 
     const res = await this.client.post<{ data: PrepareLaunchResponse }>(
@@ -1489,7 +1506,21 @@ export class AgentApi {
   }
 }
 
-export interface PrepareLaunchResponse {
+/** Options only the Occupy launchpad understands. */
+export interface OccupyLaunchOptions {
+  launchpad?: "VIRTUALS" | "OCCUPY";
+  /** Quote asset the curve trades against; must be allow-listed on Occupy. */
+  quoteTokenAddress?: string;
+  /** Uniswap v4 pool fee in hundredths of a bip (10000 = 1%). */
+  poolFee?: number;
+  taxBips?: number;
+  thickenLiquidity?: boolean;
+}
+
+/** Virtuals BondingV5: two calls, approve VIRTUAL for the fee, then preLaunch. */
+export interface VirtualsPrepareLaunchResponse {
+  /** Absent on backends predating the Occupy work; treat that as VIRTUALS. */
+  launchpad?: "VIRTUALS";
   virtualId: number;
   contracts: {
     bondingV5: string;
@@ -1499,6 +1530,34 @@ export interface PrepareLaunchResponse {
   launchFee: string;
   approveCalldata: string;
   preLaunchCalldata: string;
+}
+
+/**
+ * Occupy: one call. `launch` mints the token, opens the pool and settles the
+ * pre-buy, and charges no launch fee — so `approveCalldata` shows up only when
+ * there is a pre-buy to pull, and it approves the quote token, not VIRTUAL.
+ */
+export interface OccupyPrepareLaunchResponse {
+  launchpad: "OCCUPY";
+  virtualId: number;
+  contracts: {
+    bonding: string;
+    assetConfig: string;
+    quoteToken: string;
+  };
+  launchFee: "0";
+  approveCalldata?: string;
+  launchCalldata: string;
+}
+
+export type PrepareLaunchResponse =
+  | VirtualsPrepareLaunchResponse
+  | OccupyPrepareLaunchResponse;
+
+export function isOccupyLaunch(
+  res: PrepareLaunchResponse
+): res is OccupyPrepareLaunchResponse {
+  return res.launchpad === "OCCUPY";
 }
 
 export interface SolanaPrepareLaunchResponse {

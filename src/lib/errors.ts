@@ -13,7 +13,10 @@ export type ErrorCode =
   | "SLIPPAGE_TOO_LOW"
   | "INSUFFICIENT_GAS"
   | "APPROVAL_REQUIRED"
-  | "PRICE_IMPACT_HIGH";
+  | "PRICE_IMPACT_HIGH"
+  | "UNSUPPORTED_LAUNCH_OPTION"
+  | "UNSUPPORTED_CHAIN"
+  | "MISSING_QUOTE_TOKEN";
 
 export class CliError extends Error {
   code: ErrorCode;
