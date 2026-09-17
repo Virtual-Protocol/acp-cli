@@ -53,7 +53,8 @@ import {
   tokenizeOnSolana,
   tokenizeOnEvm,
   convertPrebuyVirtual,
-  convertPrebuyForToken,
+  convertPrebuyWithDecimals,
+  resolveQuoteToken,
 } from "../lib/tokenize";
 import * as viemChains from "viem/chains";
 import { formatChainId, solanaChainId, isSolanaChainId } from "../lib/chains";
@@ -1425,6 +1426,49 @@ export function registerAgentCommands(program: Command): void {
     });
 
   agent
+    .command("quote-tokens")
+    .description(
+      "List the assets an Occupy launch can be priced against (use one with `tokenize --launchpad occupy --quote-token`)",
+    )
+    .option("--chain-id <id>", "Chain ID (default: 8453, Base)")
+    .action(async (opts, cmd) => {
+      const { agentApi } = await getClient();
+      const json = isJson(cmd);
+      const chainId = Number(opts.chainId ?? 8453);
+
+      let tokens;
+      try {
+        tokens = await agentApi.listOccupyQuoteTokens(chainId);
+      } catch (err) {
+        outputError(
+          json,
+          `Failed to list quote tokens: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        return;
+      }
+
+      if (json) {
+        outputResult(json, { chainId, quoteTokens: tokens });
+        return;
+      }
+
+      if (tokens.length === 0) {
+        console.log(`No quote tokens available on chain ${chainId}.`);
+        return;
+      }
+
+      console.log(`\n${c.bold(`Occupy quote assets [${formatChainId(chainId)}]`)}`);
+      printTable(
+        tokens.map((t) => [
+          t.symbol,
+          `${t.name} — ${t.address} (${t.decimals} decimals)`,
+        ]),
+      );
+    });
+
+  agent
     .command("tokenize")
     .description("Tokenize the active agent on a blockchain")
     .option("--chain-id <id>", "Chain ID to tokenize on")
@@ -1460,7 +1504,7 @@ export function registerAgentCommands(program: Command): void {
     )
     .option(
       "--quote-token <address>",
-      "Occupy only, REQUIRED: the tokenized equity the curve is priced against — e.g. NVDAc 0xb20000000000000000000078ee7ce2fE4908108C, also AAPLc/TSLAc/METAc/GOOGLc/MSTRc/AMZNc/SPCXc (8 decimals). Must be allow-listed on Occupy; WETH and USDC are not",
+      "Occupy only, REQUIRED: the asset the curve is priced against — a symbol (e.g. NVDAc, TSLAc, MSFTc) or an address. Run `acp agent quote-tokens` to list them",
     )
     .option(
       "--pool-fee <fee>",
@@ -1550,12 +1594,23 @@ export function registerAgentCommands(program: Command): void {
       }
 
       if (isOccupy && !opts.quoteToken) {
+        let choices = "run `acp agent quote-tokens` to list them";
+        try {
+          const tokens = await agentApi.listOccupyQuoteTokens(
+            Number(opts.chainId ?? 8453),
+          );
+          if (tokens.length) {
+            choices = tokens.map((t) => `${t.symbol} (${t.name})`).join(", ");
+          }
+        } catch {
+          // Listing is a convenience; the flag is required either way.
+        }
         outputError(
           json,
           new CliError(
             "--quote-token is required on the Occupy launchpad.",
             "MISSING_QUOTE_TOKEN",
-            "It names the tokenized equity your token is priced against (e.g. NVDAc 0xb20000000000000000000078ee7ce2fE4908108C). There is no default — it decides which stock the token trades against.",
+            `It names the asset your token is priced against, and there is no default — it decides what the token trades against. Available: ${choices}`,
           ),
         );
         return;
@@ -1811,30 +1866,35 @@ export function registerAgentCommands(program: Command): void {
       // which means the quote token has to be named explicitly.
       let prebuyVirtualBaseUnit = 0n;
       if (isOccupy && opts.prebuy !== undefined) {
-        // Denominated in the quote asset, whose decimals are read on-chain
-        // (the equities are 8-decimal, not 18).
-        let baseUnit: bigint | null;
+        // Denominated in the quote asset, whose decimals are not uniform
+        // (equities are 8, other allow-listed assets 18), so resolve the token
+        // and convert against its own decimals.
+        let resolved;
         try {
-          baseUnit = await convertPrebuyForToken(
-            String(opts.prebuy),
+          resolved = await resolveQuoteToken(
+            agentApi,
             selectedChain.id,
             String(opts.quoteToken),
           );
         } catch (err) {
-          outputError(
-            json,
-            `Failed to read decimals for ${opts.quoteToken}: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
+          outputError(json, err instanceof Error ? err : String(err));
           return;
         }
+        const baseUnit = convertPrebuyWithDecimals(
+          String(opts.prebuy),
+          resolved.decimals,
+        );
         if (baseUnit === null) {
           outputError(
             json,
             `Invalid --prebuy value: ${opts.prebuy}. Must be a non-negative number.`,
           );
           return;
+        }
+        if (!json) {
+          console.log(
+            `Pre-buy: ${opts.prebuy} ${resolved.symbol} (${resolved.decimals} decimals)`,
+          );
         }
         prebuyVirtualBaseUnit = baseUnit;
       } else if (opts.prebuy !== undefined) {

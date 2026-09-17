@@ -80,7 +80,7 @@ Marks the virtual as an **Embodied** (robotics-capable) agent and makes it eligi
 Occupy differs in three ways that matter at the CLI:
 
 - **Single-phase and free.** One `launch` call mints the token, opens the Uniswap v4 pool and settles the pre-buy. There is no launch fee, so the agent wallet needs no VIRTUAL — only gas, which is sponsored for ACP agent wallets.
-- **The curve is quoted in a tokenized equity**, not VIRTUAL. `--quote-token <address>` picks it, and it is **required** — there is no default, because the choice decides which stock your token trades against. The allow-listed assets on Base are share tokens — `NVDAc` (NVIDIA), `AAPLc` (Apple), `TSLAc` (Tesla), `METAc`, `GOOGLc`, `MSTRc`, `AMZNc`, `SPCXc` (SpaceX) — so an agent token trades against a stock rather than against VIRTUAL or a stablecoin. **WETH and USDC are not allow-listed.** The backend checks `AssetConfig` before creating anything and fails with a clear message otherwise.
+- **The curve is quoted in a tokenized equity**, not VIRTUAL. `--quote-token` picks it, and it is **required** — there is no default, because the choice decides which stock your token trades against. Pass a **symbol** (`NVDAc`, `TSLAc`, `MSFTc`) or an address; list what is available with `acp agent quote-tokens`. The allow-listed assets on Base are share tokens — `NVDAc` (NVIDIA), `AAPLc` (Apple), `TSLAc` (Tesla), `METAc`, `GOOGLc`, `MSTRc`, `AMZNc`, `SPCXc` (SpaceX) — so an agent token trades against a stock rather than against VIRTUAL or a stablecoin. **WETH and USDC are not allow-listed.** The backend checks `AssetConfig` before creating anything and fails with a clear message otherwise.
 - **These tokens carry 8 decimals, not 18.** `--prebuy 5` means 5 shares' worth, and the CLI reads the token's decimals to convert it — assuming 18 would overspend by a factor of 10^10.
 - **A pre-buy is denominated in the quote asset**, so `--prebuy` on Occupy requires `--quote-token`.
 
@@ -89,7 +89,7 @@ Occupy runs on EVM chains only; Solana launches go through the Virtuals launchpa
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--name <name>` | the agent's name | Token name on-chain. Occupy names the token independently of the agent |
-| `--quote-token <address>` | **required, no default** | The tokenized equity the curve is priced against, e.g. NVDAc `0xb20000000000000000000078ee7ce2fE4908108C` (8 decimals) |
+| `--quote-token <symbol\|address>` | **required, no default** | The asset the curve is priced against, e.g. `NVDAc`. See `acp agent quote-tokens` |
 | `--pool-fee <fee>` | `10000` | Uniswap v4 pool fee in hundredths of a bip; on-chain bounds are 10000 (1%) – 30000 (3%) |
 | `--tax-bips <bips>` | `100` | Trading tax, in bips |
 | `--no-thicken-liquidity` | thickening on | Disables liquidity thickening |
@@ -97,33 +97,36 @@ Occupy runs on EVM chains only; Solana launches go through the Virtuals launchpa
 | `--prebuy <amount>` | none | In **quote-token** units, not VIRTUAL. Requires `--quote-token` |
 
 ```bash
-# Launch on Occupy against an allow-listed quote asset
+# What can this curve be priced against?
+acp agent quote-tokens --chain-id 8453
+
+# Launch on Occupy, priced against NVIDIA
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
-  --quote-token 0xb20000000000000000000078ee7ce2fE4908108C
+  --quote-token NVDAc
 
 # Name the token something other than the agent's name
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
-  --name "My Token" --quote-token 0xb20000000000000000000078ee7ce2fE4908108C
+  --name "My Token" --quote-token NVDAc
 
 # No anti-sniper protection
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
-  --quote-token 0xb20000000000000000000078ee7ce2fE4908108C --anti-sniper 0
+  --quote-token NVDAc --anti-sniper 0
 
 # 3% pool fee, no liquidity thickening
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
-  --quote-token 0xb20000000000000000000078ee7ce2fE4908108C \
-  --pool-fee 30000 --no-thicken-liquidity
+  --quote-token TSLAc --pool-fee 30000 --no-thicken-liquidity
 
-# Pre-buy 5 units of the quote asset at launch
+# Pre-buy 5 shares' worth of the quote asset at launch
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
-  --quote-token 0xb20000000000000000000078ee7ce2fE4908108C --prebuy 5
+  --quote-token NVDAc --prebuy 5
 ```
 
 ## CLI usage
 
 ```
 acp agent tokenize [--chain-id <id>] [--symbol <symbol>] [--anti-sniper <0|1|2>] [--prebuy <virtuals>] [--acf] [--60-days] [--airdrop-percent <percent>] [--robotics] [--configure]
-acp agent tokenize --launchpad occupy [--chain-id <id>] [--symbol <symbol>] [--name <name>] [--quote-token <address>] [--pool-fee <fee>] [--tax-bips <bips>] [--no-thicken-liquidity] [--anti-sniper <0|1|2>] [--prebuy <amount>]
+acp agent quote-tokens [--chain-id <id>]
+acp agent tokenize --launchpad occupy --quote-token <symbol|address> [--chain-id <id>] [--symbol <symbol>] [--name <name>] [--pool-fee <fee>] [--tax-bips <bips>] [--no-thicken-liquidity] [--anti-sniper <0|1|2>] [--prebuy <amount>]
 ```
 
 - `--chain-id <id>` — chain to launch on. Restricted to what the provider supports.

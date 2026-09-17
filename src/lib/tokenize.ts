@@ -8,6 +8,7 @@ import {
 import type {
   AgentApi,
   OccupyLaunchOptions,
+  OccupyQuoteToken,
   OccupyPrepareLaunchResponse,
   PrepareLaunchResponse,
   SolanaPrepareLaunchResponse,
@@ -70,26 +71,46 @@ function getEvmProvider(chainId: number) {
 }
 
 /**
+ * Turn `--quote-token` (a symbol like NVDAc, or an address) into the full
+ * record. The decimals matter: the tokenized equities are 8-decimal while
+ * other allow-listed assets are 18, so a pre-buy converted against the wrong
+ * one is off by orders of magnitude.
+ */
+export async function resolveQuoteToken(
+  agentApi: AgentApi,
+  chainId: number,
+  quoteToken: string
+): Promise<OccupyQuoteToken> {
+  const tokens = await agentApi.listOccupyQuoteTokens(chainId);
+  const wanted = quoteToken.trim().toLowerCase();
+  const match = tokens.find(
+    (t) =>
+      t.symbol.toLowerCase() === wanted || t.address.toLowerCase() === wanted
+  );
+  if (!match) {
+    throw new CliError(
+      `Unknown quote token "${quoteToken}" on chain ${chainId}.`,
+      "MISSING_QUOTE_TOKEN",
+      `Available: ${tokens.map((t) => `${t.symbol} (${t.name})`).join(", ")}`
+    );
+  }
+  return match;
+}
+
+/**
  * Occupy quotes its curve in an arbitrary asset, so a pre-buy is denominated in
  * that token's units rather than VIRTUAL's 18. Read the decimals rather than
  * assuming — an 8-decimal quote asset would otherwise overspend by 10^10.
  */
-export async function convertPrebuyForToken(
+export function convertPrebuyWithDecimals(
   raw: string,
-  chainId: number,
-  tokenAddress: string
-): Promise<bigint | null> {
+  decimals: number
+): bigint | null {
   const trimmed = raw.trim();
   if (!trimmed) return 0n;
   if (!/^\d*\.?\d+$/.test(trimmed)) return null;
-  const provider = await getEvmProvider(chainId);
-  const decimals = (await provider.readContract(chainId, {
-    abi: erc20Abi,
-    address: tokenAddress as `0x${string}`,
-    functionName: "decimals",
-  })) as number;
   try {
-    const base = parseUnits(trimmed as `${number}`, Number(decimals));
+    const base = parseUnits(trimmed as `${number}`, decimals);
     return base < 0n ? null : base;
   } catch {
     return null;

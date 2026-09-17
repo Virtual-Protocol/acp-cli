@@ -1477,6 +1477,15 @@ export class AgentApi {
     return res.data;
   }
 
+  /** The assets an Occupy launch can be priced against on this chain. */
+  async listOccupyQuoteTokens(chainId: number): Promise<OccupyQuoteToken[]> {
+    const res = await this.client.get<{ data: OccupyQuoteToken[] }>(
+      `/agents/launchpads/occupy/quote-tokens`,
+      { chainId: chainId.toString() }
+    );
+    return res.data;
+  }
+
   async getActiveSubscription(
     clientAgentId: string,
     providerWalletAddress: string,
@@ -1508,6 +1517,14 @@ export class AgentApi {
 }
 
 /** Options only the Occupy launchpad understands. */
+/** An asset an Occupy curve can be priced against. */
+export interface OccupyQuoteToken {
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+}
+
 export interface OccupyLaunchOptions {
   launchpad?: "VIRTUALS" | "OCCUPY";
   /** Token name on Occupy. Defaults to the agent's name. */
