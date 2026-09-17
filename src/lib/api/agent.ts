@@ -1401,8 +1401,8 @@ export class AgentApi {
 
     if (launchOptions?.launchpad) payload.launchpad = launchOptions.launchpad;
     if (launchOptions?.name) payload.name = launchOptions.name;
-    if (launchOptions?.quoteTokenAddress) {
-      payload.quoteTokenAddress = launchOptions.quoteTokenAddress;
+    if (launchOptions?.quoteToken) {
+      payload.quoteToken = launchOptions.quoteToken;
     }
     if (launchOptions?.poolFee !== undefined) {
       payload.poolFee = launchOptions.poolFee;
@@ -1529,8 +1529,11 @@ export interface OccupyLaunchOptions {
   launchpad?: "VIRTUALS" | "OCCUPY";
   /** Token name on Occupy. Defaults to the agent's name. */
   name?: string;
-  /** Quote asset the curve trades against; must be allow-listed on Occupy. */
-  quoteTokenAddress?: string;
+  /**
+   * Asset the curve is priced against — a symbol (`NVDAc`) or an address.
+   * Required on Occupy.
+   */
+  quoteToken?: string;
   /** Uniswap v4 pool fee in hundredths of a bip (10000 = 1%). */
   poolFee?: number;
   taxBips?: number;

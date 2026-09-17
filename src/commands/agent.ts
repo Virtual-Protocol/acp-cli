@@ -1593,7 +1593,8 @@ export function registerAgentCommands(program: Command): void {
         return;
       }
 
-      if (isOccupy && !opts.quoteToken) {
+      const willPickQuoteToken = Boolean(opts.configure) && !json;
+      if (isOccupy && !opts.quoteToken && !willPickQuoteToken) {
         let choices = "run `acp agent quote-tokens` to list them";
         try {
           const tokens = await agentApi.listOccupyQuoteTokens(
@@ -1804,6 +1805,10 @@ export function registerAgentCommands(program: Command): void {
         );
       }
 
+      let quoteTokenInput: string | undefined = opts.quoteToken
+        ? String(opts.quoteToken)
+        : undefined;
+
       if (isOccupy && isSolanaChainId(selectedChain.id)) {
         outputError(
           json,
@@ -1814,6 +1819,37 @@ export function registerAgentCommands(program: Command): void {
           ),
         );
         return;
+      }
+
+      // Step 3a: Quote asset. Required on Occupy and impossible to guess, so
+      // --configure offers the allow-list rather than making the user find an
+      // address somewhere else.
+      if (isOccupy && !quoteTokenInput && willPickQuoteToken) {
+        let available;
+        try {
+          available = await agentApi.listOccupyQuoteTokens(selectedChain.id);
+        } catch (err) {
+          outputError(
+            json,
+            `Failed to list quote tokens: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          return;
+        }
+        if (available.length === 0) {
+          outputError(
+            json,
+            `No quote tokens are available on chain ${selectedChain.id}.`,
+          );
+          return;
+        }
+        const picked = await selectOption(
+          "\nChoose the asset your token's curve is priced against:",
+          available,
+          (t) => `${t.symbol} — ${t.name} (${t.decimals} decimals)`,
+        );
+        quoteTokenInput = picked.symbol;
       }
 
       // Step 3: Input token symbol
@@ -1875,7 +1911,7 @@ export function registerAgentCommands(program: Command): void {
           resolved = await resolveQuoteToken(
             agentApi,
             selectedChain.id,
-            String(opts.quoteToken),
+            quoteTokenInput as string,
           );
         } catch (err) {
           outputError(json, err instanceof Error ? err : String(err));
@@ -2072,9 +2108,7 @@ export function registerAgentCommands(program: Command): void {
             launchOptions: {
               launchpad,
               ...(opts.name && { name: String(opts.name) }),
-              ...(opts.quoteToken && {
-                quoteTokenAddress: String(opts.quoteToken),
-              }),
+              ...(quoteTokenInput && { quoteToken: quoteTokenInput }),
               ...(poolFee !== undefined && { poolFee }),
               ...(taxBips !== undefined && { taxBips }),
               thickenLiquidity: opts.thickenLiquidity !== false,
