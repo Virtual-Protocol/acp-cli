@@ -24,12 +24,9 @@ Anti-sniper applies a temporary transfer tax to newly launched tokens to discour
 | ----- | ---------- | -------- | ----- |
 | `0`   | None       | Off      | Both |
 | `1`   | 60 seconds | Default  | Both |
-| `2`   | 98 minutes | Extended | Both |
-| `3`   | 98 minutes, sell tax | Extended | Occupy only |
-| `4`   | 98 minutes, buy and sell tax | Extended | Occupy only |
-| `5`   | 10 minutes, buy tax | Short | Occupy only |
+| `2`   | 98 minutes | Extended | Virtuals only |
 
-Types `3`–`5` come from Occupy's `AssetConfig`; the Virtuals launchpad only knows `0`–`2`, and passing a higher value there is rejected. Occupy reverts on anything above `5`.
+Occupy offers only `0` or `1`; `2` is a Virtuals launchpad option and is rejected on Occupy.
 
 ## Pre-buy
 
@@ -83,19 +80,20 @@ Marks the virtual as an **Embodied** (robotics-capable) agent and makes it eligi
 Occupy differs in three ways that matter at the CLI:
 
 - **Single-phase and free.** One `launch` call mints the token, opens the Uniswap v4 pool and settles the pre-buy. There is no launch fee, so the agent wallet needs no VIRTUAL — only gas, which is sponsored for ACP agent wallets.
-- **The curve is quoted in an arbitrary asset**, not VIRTUAL. `--quote-token <address>` picks it. The asset must be allow-listed on Occupy's `AssetConfig`; the backend checks before creating anything and fails with a clear message otherwise. Note that **WETH is not allow-listed** — the allowed assets are tokenized equities.
-- **A pre-buy is denominated in the quote asset**, whose decimals need not be 18. The CLI reads the token's decimals to convert `--prebuy`, so `--prebuy` on Occupy requires `--quote-token`.
+- **The curve is quoted in a tokenized equity**, not VIRTUAL. `--quote-token <address>` picks it. The allow-listed assets on Base are share tokens — `NVDAc` (NVIDIA), `AAPLc` (Apple), `TSLAc` (Tesla), `METAc`, `GOOGLc`, `MSTRc`, `AMZNc`, `SPCXc` (SpaceX) — so an agent token trades against a stock rather than against VIRTUAL or a stablecoin. **WETH and USDC are not allow-listed.** The backend checks `AssetConfig` before creating anything and fails with a clear message otherwise.
+- **These tokens carry 8 decimals, not 18.** `--prebuy 5` means 5 shares' worth, and the CLI reads the token's decimals to convert it — assuming 18 would overspend by a factor of 10^10.
+- **A pre-buy is denominated in the quote asset**, so `--prebuy` on Occupy requires `--quote-token`.
 
 Occupy runs on EVM chains only; Solana launches go through the Virtuals launchpad.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--name <name>` | the agent's name | Token name on-chain. Occupy names the token independently of the agent |
-| `--quote-token <address>` | backend default for the chain | Must be allow-listed on AssetConfig |
+| `--quote-token <address>` | backend default for the chain | A tokenized equity allow-listed on AssetConfig, e.g. NVDAc `0xb200…108C` (8 decimals) |
 | `--pool-fee <fee>` | `10000` | Uniswap v4 pool fee in hundredths of a bip; on-chain bounds are 10000 (1%) – 30000 (3%) |
 | `--tax-bips <bips>` | `100` | Trading tax, in bips |
 | `--no-thicken-liquidity` | thickening on | Disables liquidity thickening |
-| `--anti-sniper <0–5>` | `1` | Occupy accepts the full range, including `3`–`5` |
+| `--anti-sniper <0\|1>` | `1` | Occupy offers only off or 60 seconds |
 | `--prebuy <amount>` | none | In **quote-token** units, not VIRTUAL. Requires `--quote-token` |
 
 ```bash
@@ -107,9 +105,9 @@ acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
   --name "My Token" --quote-token 0xb20000000000000000000078ee7ce2fE4908108C
 
-# 10-minute buy-tax anti-sniper (Occupy only)
+# No anti-sniper protection
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
-  --quote-token 0xb20000000000000000000078ee7ce2fE4908108C --anti-sniper 5
+  --quote-token 0xb20000000000000000000078ee7ce2fE4908108C --anti-sniper 0
 
 # 3% pool fee, no liquidity thickening
 acp agent tokenize --launchpad occupy --chain-id 8453 --symbol MYTOKEN \
@@ -130,7 +128,7 @@ acp agent tokenize --launchpad occupy [--chain-id <id>] [--symbol <symbol>] [--n
 
 - `--chain-id <id>` — chain to launch on. Restricted to what the provider supports.
 - `--symbol <symbol>` — token symbol (uppercased). Prompted if omitted.
-- `--anti-sniper <0|1|2>` — set directly (`0`–`5` on Occupy). Respected with or without `--configure`.
+- `--anti-sniper <0|1|2>` — set directly (`0` or `1` only on Occupy). Respected with or without `--configure`.
 - `--prebuy <virtuals>` — VIRTUAL tokens to spend at launch. Respected with or without `--configure`.
 - `--acf` — enable Capital Formation. Respected with or without `--configure`.
 - `--60-days` — enable 60 Days Experiment mode. Respected with or without `--configure`.

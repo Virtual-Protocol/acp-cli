@@ -1431,7 +1431,7 @@ export function registerAgentCommands(program: Command): void {
     .option("--symbol <symbol>", "Token symbol")
     .option(
       "--anti-sniper <type>",
-      "Anti-sniper protection: 0 (none), 1 (60s), 2 (98min). Occupy also accepts 3 (98min sell tax), 4 (98min buy+sell tax), 5 (10min buy tax)",
+      "Anti-sniper protection: 0 (none), 1 (60s), 2 (98min). Occupy offers only 0 or 1",
     )
     .option(
       "--prebuy <virtuals>",
@@ -1571,16 +1571,12 @@ export function registerAgentCommands(program: Command): void {
         }
       }
 
-      // BondingV5 exposes 0-2; Occupy's AssetConfig numbers six schedules and
-      // reverts above 5.
+      // Occupy offers only off or 60s — narrower than BondingV5's 0-2, and
+      // narrower still than the six schedules its contract would accept.
       const antiSniperChoices = isOccupy
         ? [
             { value: 1, label: "60 seconds (default)" },
             { value: 0, label: "None (0 seconds)" },
-            { value: 2, label: "98 minutes" },
-            { value: 3, label: "98 minutes, sell tax" },
-            { value: 4, label: "98 minutes, buy and sell tax" },
-            { value: 5, label: "10 minutes, buy tax" },
           ]
         : [
             { value: 1, label: "60 seconds (default)" },
