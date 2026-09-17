@@ -88,6 +88,10 @@ const CHAIN_ALIASES: Record<string, number> = {
   scroll: 534352,
   linea: 59144,
   zora: 7777777,
+  // Circle's L1. Every other per-chain fact the CLI needs (native currency,
+  // client maps) comes from the SDK's ERC20_SPONSORED_CHAINS, but this alias
+  // table is local, so `--chain arc` needs its own entry.
+  arc: 5042,
   hyperliquid: 1337,
   hl: 1337,
 };
