@@ -94,6 +94,11 @@ const CHAIN_ALIASES: Record<string, number> = {
   arc: 5042,
   hyperliquid: 1337,
   hl: 1337,
+  robinhood: 4663,
+  polygon: 137,
+  matic: 137,
+  bnb: 56,
+  bsc: 56,
 };
 
 // Resolve a chain reference (numeric id, numeric string, or named alias like
