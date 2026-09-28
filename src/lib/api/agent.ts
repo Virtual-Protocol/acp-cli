@@ -600,6 +600,9 @@ export interface HyperliquidPerpPosition {
   entryPx?: string | number | null;
   positionValue?: string | number | null;
   unrealizedPnl?: string | number | null;
+  // Collateral locked against the position — surfaced so the balance view can
+  // explain why free/withdrawable USDC is below the account value.
+  marginUsed?: string | number | null;
   leverage?: { type?: string; value?: number; rawUsd?: string } | null;
   position?: {
     coin?: string | null;
@@ -607,6 +610,7 @@ export interface HyperliquidPerpPosition {
     entryPx?: string | number | null;
     positionValue?: string | number | null;
     unrealizedPnl?: string | number | null;
+    marginUsed?: string | number | null;
     [key: string]: unknown;
   };
   [key: string]: unknown;
