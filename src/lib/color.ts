@@ -8,6 +8,7 @@ export const c = {
   red: pc.red,
   cyan: pc.cyan,
   magenta: pc.magenta,
+  underline: pc.underline,
   status: (status: string) => {
     switch (status) {
       case "completed":

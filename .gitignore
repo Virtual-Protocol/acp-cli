@@ -5,3 +5,8 @@ dist/
 *config*.json
 acp-cli-signer/acp-cli-signer
 .DS_Store
+
+# Superpowers/Hermes Agent artifacts
+.hermes/
+docs/plans/
+docs/superpowers/
