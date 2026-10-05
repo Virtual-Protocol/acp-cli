@@ -9,6 +9,7 @@ import { getActiveAgentId } from "../lib/activeAgent";
 import { createProviderAdapter, getWalletAddress } from "../lib/agentFactory";
 import { formatChainId, formatChainIds } from "../lib/chains";
 import { CliError } from "../lib/errors";
+import { openBrowser } from "../lib/browser";
 
 // ── Registration ────────────────────────────────────────────────────
 
@@ -156,6 +157,62 @@ export function registerComputeCommands(program: Command): void {
           ["Fee Wallet", feeWallet],
           ["Tx Hash", txnHash],
         ]);
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+      }
+    });
+
+  compute
+    .command("apply")
+    .description("Apply for Venice developer compute credits ($200 approved)")
+    .action(async (_opts, cmd) => {
+      const json = isJson(cmd);
+      try {
+        const { agentApi } = await getClient();
+        const agentId = getActiveAgentId(json);
+        if (!agentId) return;
+
+        // GitHub linking + enrollment for this campaign run on the web app's
+        // Privy-authenticated session, which the CLI can't reproduce. So the CLI
+        // just sends the user to the agent's compute page, where the GitHub-linking
+        // UI lives, and they complete the connect + claim there.
+        const webUrl = agentApi.getDeveloperCampaignWebUrl(agentId);
+
+        if (json) {
+          outputResult(json, { status: "redirect", url: webUrl, agentId });
+          return;
+        }
+
+        console.log(
+          `\n🚀 ${c.cyan(
+            "Venice-Virtuals Developer Inference Credit Campaign ($200 approved)"
+          )}`
+        );
+        console.log(
+          `${c.dim(
+            "----------------------------------------------------------------------"
+          )}`
+        );
+        console.log(`\nApply by connecting your GitHub on this agent's compute page:`);
+        console.log(`\n  ${c.underline(webUrl)}\n`);
+        console.log(`  ${c.dim("1.")} Log in if prompted`);
+        console.log(`  ${c.dim("2.")} Connect GitHub — verifies your eligible repositories`);
+        console.log(`  ${c.dim("3.")} Claim your $200 weekly compute credit`);
+
+        if (isTTY()) {
+          openBrowser(webUrl);
+          console.log(
+            `\nℹ️  ${c.dim("Opened in your browser. Run")} ${c.bold(
+              "acp compute status"
+            )} ${c.dim("afterward to see your credit.")}`
+          );
+        } else {
+          console.log(
+            `\nℹ️  ${c.dim("Open the link above, then run")} ${c.bold(
+              "acp compute status"
+            )} ${c.dim("to see your credit.")}`
+          );
+        }
       } catch (err) {
         outputError(json, err instanceof Error ? err : String(err));
       }
