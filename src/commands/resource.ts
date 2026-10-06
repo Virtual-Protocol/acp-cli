@@ -206,7 +206,14 @@ export function registerResourceCommands(program: Command): void {
   resource
     .command("update")
     .description("Update an existing resource for the active agent")
-    .action(async (_opts, cmd) => {
+    .option("--resource-id <id>", "Resource ID to update")
+    .option("--name <name>", "New name")
+    .option("--description <text>", "New description")
+    .option("--url <url>", "New resource URL")
+    .option("--params <json>", "New params JSON schema")
+    .option("--hidden", "Set hidden to true")
+    .option("--no-hidden", "Set hidden to false")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
@@ -232,64 +239,104 @@ export function registerResourceCommands(program: Command): void {
         return;
       }
 
-      const selected = await selectOption(
-        "Choose a resource to update:",
-        resources,
-        (r) => `${r.name} — ${r.url}`
-      );
+      let selected: AgentResource;
+      if (opts.resourceId) {
+        const match = resources.find((r) => r.id === opts.resourceId);
+        if (!match) {
+          outputError(json, `No resource found with ID: ${opts.resourceId}`);
+          return;
+        }
+        selected = match;
+      } else {
+        selected = await selectOption(
+          "Choose a resource to update:",
+          resources,
+          (r) => `${r.name} — ${r.url}`
+        );
+      }
 
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
+      // If --resource-id is provided, build updates from flags only.
+      const nonInteractive = !!opts.resourceId;
+      let rl: readline.Interface | undefined;
 
       try {
-        console.log("\nPress Enter to keep current value.\n");
+        if (!nonInteractive) {
+          rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+          console.log("\nPress Enter to keep current value.\n");
+        }
 
         const updates: UpdateResourceBody = {};
 
-        const name = (
-          await prompt(rl, `Name [${selected.name}]: `)
-        ).trim();
-        if (name) updates.name = name;
-
-        const description = (
-          await prompt(rl, `Description [${selected.description}]: `)
-        ).trim();
-        if (description) updates.description = description;
-
-        const url = (
-          await prompt(rl, `URL [${selected.url}]: `)
-        ).trim();
-        if (url) updates.url = url;
-
-        const currentParamsDisplay = JSON.stringify(selected.params);
-        const updateParams = (
-          await prompt(
-            rl,
-            `Update params? Current: ${currentParamsDisplay} (y/N): `
-          )
-        ).trim().toLowerCase();
-        if (updateParams === "y") {
-          const paramsStr = (
-            await prompt(rl, "New params JSON schema: ")
+        if (opts.name) {
+          updates.name = opts.name.trim();
+        } else if (!nonInteractive) {
+          const name = (
+            await prompt(rl!, `Name [${selected.name}]: `)
           ).trim();
+          if (name) updates.name = name;
+        }
+
+        if (opts.description) {
+          updates.description = opts.description.trim();
+        } else if (!nonInteractive) {
+          const description = (
+            await prompt(rl!, `Description [${selected.description}]: `)
+          ).trim();
+          if (description) updates.description = description;
+        }
+
+        if (opts.url) {
+          updates.url = opts.url.trim();
+        } else if (!nonInteractive) {
+          const url = (
+            await prompt(rl!, `URL [${selected.url}]: `)
+          ).trim();
+          if (url) updates.url = url;
+        }
+
+        if (opts.params) {
           try {
-            updates.params = validateJsonSchema(paramsStr);
+            updates.params = validateJsonSchema(opts.params);
           } catch (err) {
             outputError(json, err instanceof Error ? err : String(err));
             return;
           }
+        } else if (!nonInteractive) {
+          const currentParamsDisplay = JSON.stringify(selected.params);
+          const updateParams = (
+            await prompt(
+              rl!,
+              `Update params? Current: ${currentParamsDisplay} (y/N): `
+            )
+          ).trim().toLowerCase();
+          if (updateParams === "y") {
+            const paramsStr = (
+              await prompt(rl!, "New params JSON schema: ")
+            ).trim();
+            try {
+              updates.params = validateJsonSchema(paramsStr);
+            } catch (err) {
+              outputError(json, err instanceof Error ? err : String(err));
+              return;
+            }
+          }
         }
 
-        const hiddenStr = (
-          await prompt(
-            rl,
-            `Hidden [${selected.isHidden ? "Yes" : "No"}] (y/n): `
-          )
-        ).trim().toLowerCase();
-        if (hiddenStr === "y") updates.hidden = true;
-        else if (hiddenStr === "n") updates.hidden = false;
+        if (opts.hidden !== undefined) {
+          updates.hidden = opts.hidden;
+        } else if (!nonInteractive) {
+          const hiddenStr = (
+            await prompt(
+              rl!,
+              `Hidden [${selected.isHidden ? "Yes" : "No"}] (y/n): `
+            )
+          ).trim().toLowerCase();
+          if (hiddenStr === "y") updates.hidden = true;
+          else if (hiddenStr === "n") updates.hidden = false;
+        }
 
         if (Object.keys(updates).length === 0) {
           console.log("No changes made.");
@@ -317,7 +364,7 @@ export function registerResourceCommands(program: Command): void {
           }`
         );
       } finally {
-        rl.close();
+        rl?.close();
       }
     });
 
@@ -325,7 +372,9 @@ export function registerResourceCommands(program: Command): void {
   resource
     .command("delete")
     .description("Delete a resource from the active agent")
-    .action(async (_opts, cmd) => {
+    .option("--resource-id <id>", "Resource ID to delete")
+    .option("--force", "Skip confirmation prompt")
+    .action(async (opts, cmd) => {
       const { agentApi } = await getClient();
       const json = isJson(cmd);
 
@@ -351,27 +400,43 @@ export function registerResourceCommands(program: Command): void {
         return;
       }
 
-      const selected = await selectOption(
-        "Choose a resource to delete:",
-        resources,
-        (r) => `${r.name} — ${r.url}`
-      );
-
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
-
-      try {
-        const confirm = (
-          await prompt(rl, `Delete resource '${selected.name}'? (y/N): `)
-        ).trim().toLowerCase();
-
-        if (confirm !== "y") {
-          console.log("Cancelled.");
+      let selected: AgentResource;
+      if (opts.resourceId) {
+        const match = resources.find((r) => r.id === opts.resourceId);
+        if (!match) {
+          outputError(json, `No resource found with ID: ${opts.resourceId}`);
           return;
         }
+        selected = match;
+      } else {
+        selected = await selectOption(
+          "Choose a resource to delete:",
+          resources,
+          (r) => `${r.name} — ${r.url}`
+        );
+      }
 
+      if (!opts.force) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+
+        try {
+          const confirm = (
+            await prompt(rl, `Delete resource '${selected.name}'? (y/N): `)
+          ).trim().toLowerCase();
+
+          if (confirm !== "y") {
+            console.log("Cancelled.");
+            return;
+          }
+        } finally {
+          rl.close();
+        }
+      }
+
+      try {
         await agentApi.deleteResource(agentId, selected.id);
 
         if (json) {
@@ -380,7 +445,11 @@ export function registerResourceCommands(program: Command): void {
             deletedResource: selected.name,
           });
         } else {
-          console.log(`\n${c.green(`Resource '${selected.name}' deleted successfully.`)}`);
+          console.log(
+            `\n${c.green(
+              `Resource '${selected.name}' deleted successfully.`
+            )}`
+          );
         }
       } catch (err) {
         outputError(
@@ -389,8 +458,6 @@ export function registerResourceCommands(program: Command): void {
             err instanceof Error ? err : String(err)
           }`
         );
-      } finally {
-        rl.close();
       }
     });
 }

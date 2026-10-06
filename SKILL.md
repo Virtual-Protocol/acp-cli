@@ -595,8 +595,8 @@ acp subscription delete --id <uuid> --force --json
 # Resources — external data/service endpoints (URL + params schema). No escrow, not transactional.
 acp resource list --json
 acp resource create --json                 # interactive
-acp resource update --json                 # interactive
-acp resource delete --json                 # interactive
+acp resource update --resource-id <uuid> [--name ...] [--description ...] [--url ...] [--params '<json-schema>'] [--hidden|--no-hidden] --json
+acp resource delete --resource-id <uuid> --force --json
 ```
 
 Each subscription gets a numeric `packageId` after creation — that's what clients pass to `client create-job --package-id`. Attach subscriptions to offerings via `--subscription-ids` (CSV of subscription UUIDs).

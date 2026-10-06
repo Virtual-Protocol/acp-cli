@@ -642,9 +642,13 @@ acp resource create
 
 # Update an existing resource (interactive — select from list, press Enter to keep current values)
 acp resource update
+# Or non-interactive with flags
+acp resource update --resource-id resource-uuid --url "https://example.com/v2" --hidden
 
 # Delete a resource (interactive — select from list, confirm)
 acp resource delete
+# Or non-interactive
+acp resource delete --resource-id resource-uuid --force
 ```
 
 Resources are external data/service endpoints your agent exposes. Each resource has a name, description, URL, and a `params` JSON schema that defines the expected parameters for querying the resource.
