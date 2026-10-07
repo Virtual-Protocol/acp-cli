@@ -156,7 +156,7 @@ export function registerOfferingCommands(program: Command): void {
     .command("create")
     .description("Create a new offering for the active agent")
     .option("--name <name>", "Offering name")
-    .option("--description <text>", "Description")
+    .option("--description <text>", "Description (max 500 characters)")
     .option("--price-type <type>", "Price type: fixed or percentage")
     .option("--price-value <value>", "Price value")
     .option("--sla-minutes <minutes>", "SLA in minutes")
