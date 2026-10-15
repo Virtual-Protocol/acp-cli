@@ -591,8 +591,29 @@ export function registerCardCommands(program: Command): void {
         let state = await agentApi.cardKycState(agentId);
 
         // `not_started` means nothing exists yet, so there is nothing to
-        // report — start it and hand back a link in one step.
+        // report — start it and hand back a link in one step. Not without the
+        // owner's name and email: the provider builds its applicant from
+        // them, and without them it returns a link that fails when opened —
+        // which would read here as verification having started.
         if (state.status === "not_started") {
+          const missing = (
+            [
+              ["--first-name", opts.firstName],
+              ["--last-name", opts.lastName],
+              ["--email", opts.email],
+            ] as const
+          )
+            .filter(([, value]) => !value?.trim())
+            .map(([flag]) => flag);
+          if (missing.length) {
+            outputError(
+              json,
+              "Identity verification has not started. Starting it needs the " +
+                "card owner's legal name, as on their ID, and an email the " +
+                `card provider can reach them at. Rerun with ${missing.join(", ")}.`
+            );
+            return;
+          }
           state = await agentApi.cardStartKyc(agentId, {
             firstName: opts.firstName,
             lastName: opts.lastName,
@@ -713,9 +734,11 @@ export function registerCardCommands(program: Command): void {
             ]),
           { json, evmProvider: createProviderAdapter({ attribution: false }) }
         );
-        const transactionHash =
-          (result as { transactionHash?: string })?.transactionHash ??
-          (result as unknown as string);
+        // sendCalls answers with a hash or an array of them, as every other
+        // caller reads it. Normalised before anything prints it: the approval
+        // has already been broadcast by now, so a crash here would hide it.
+        const sent = Array.isArray(result) ? result[0] : result;
+        const transactionHash = typeof sent === "string" ? sent : String(sent);
 
         // Read it back rather than assuming: the broadcast returning is not
         // the same as the allowance being live, and callers act on the latter.
