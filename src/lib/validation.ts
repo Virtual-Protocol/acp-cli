@@ -1,4 +1,5 @@
 import Ajv from "ajv";
+import addFormats from "ajv-formats";
 
 export function validateJsonSchema(input: string): Record<string, unknown> {
   let parsed: Record<string, unknown>;
@@ -12,6 +13,7 @@ export function validateJsonSchema(input: string): Record<string, unknown> {
   }
   try {
     const ajv = new Ajv({ allErrors: true });
+    addFormats(ajv);
     ajv.compile(parsed);
   } catch (err) {
     throw new Error(

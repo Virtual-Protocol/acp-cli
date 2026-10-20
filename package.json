@@ -18,6 +18,7 @@
     "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && esbuild bin/acp.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/bin/acp.js --packages=external",
     "typecheck": "tsc --noEmit",
+    "test:offering-schema": "node --test scripts/offeringSchema.test.mjs",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm run build"
   },
@@ -51,6 +52,7 @@
     "@virtuals-protocol/acp-node": "^0.3.0-beta.40",
     "@virtuals-protocol/acp-node-v2": "^0.1.15",
     "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "commander": "^13.0.0",
     "cross-keychain": "^1.1.0",
     "dotenv": "^17.0.0",

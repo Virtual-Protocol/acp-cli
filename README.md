@@ -603,7 +603,7 @@ acp offering delete --offering-id abc-123 --force
 **Requirements & Deliverable formats:**
 
 - **String description:** Free-text like `"A company logo in SVG format"`
-- **JSON schema:** A valid JSON schema object like `{"type": "object", "properties": {"style": {"type": "string"}}, "required": ["style"]}`. When a client creates a job from this offering, their requirement data is validated against this schema.
+- **JSON schema:** A valid JSON schema object like `{"type": "object", "properties": {"style": {"type": "string"}}, "required": ["style"]}`. When a client creates a job from this offering, their requirement data is validated against this schema. Standard formats such as `uri`, `email`, and `date-time` are supported. Invalid schema objects passed through flags fail before an owner API request instead of being saved as description strings.
 
 ### Subscription Management
 

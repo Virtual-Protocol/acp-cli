@@ -22,22 +22,38 @@ function parseSchemaOrString(
   value: string,
   fieldName: string
 ): Record<string, unknown> | string {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(value);
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      !Array.isArray(parsed)
-    ) {
-      return validateJsonSchema(value);
-    }
+    parsed = JSON.parse(value);
   } catch {
-    // Not valid JSON — treat as string description
+    // Not valid JSON — treat as string description.
+  }
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    !Array.isArray(parsed)
+  ) {
+    // A parsed object is an intended schema. Compilation errors must propagate.
+    return validateJsonSchema(value);
   }
   if (!value.trim()) {
     throw new Error(`${fieldName} cannot be empty.`);
   }
   return value;
+}
+
+function parseSchemaFlags(opts: {
+  requirements?: string;
+  deliverable?: string;
+}): Pick<UpdateOfferingBody, "requirements" | "deliverable"> {
+  const fields: Pick<UpdateOfferingBody, "requirements" | "deliverable"> = {};
+  if (opts.requirements !== undefined) {
+    fields.requirements = parseSchemaOrString(opts.requirements, "Requirements");
+  }
+  if (opts.deliverable !== undefined) {
+    fields.deliverable = parseSchemaOrString(opts.deliverable, "Deliverable");
+  }
+  return fields;
 }
 
 async function promptSchemaField(
@@ -171,8 +187,15 @@ export function registerOfferingCommands(program: Command): void {
       "Comma-separated subscription UUIDs to attach"
     )
     .action(async (opts, cmd) => {
-      const { agentApi } = await getClient();
       const json = isJson(cmd);
+      let schemaFields: ReturnType<typeof parseSchemaFlags>;
+      try {
+        schemaFields = parseSchemaFlags(opts);
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+        return;
+      }
+      const { agentApi } = await getClient();
 
       const agentId = getActiveAgentId(json);
       if (!agentId) return;
@@ -291,16 +314,8 @@ export function registerOfferingCommands(program: Command): void {
 
         // Requirements
         let requirements: Record<string, unknown> | string;
-        if (opts.requirements) {
-          try {
-            requirements = parseSchemaOrString(
-              opts.requirements,
-              "Requirements"
-            );
-          } catch (err) {
-            outputError(json, err instanceof Error ? err : String(err));
-            return;
-          }
+        if (schemaFields.requirements !== undefined) {
+          requirements = schemaFields.requirements;
         } else {
           try {
             requirements = await promptSchemaField(rl!, "Requirements");
@@ -312,13 +327,8 @@ export function registerOfferingCommands(program: Command): void {
 
         // Deliverable
         let deliverable: Record<string, unknown> | string;
-        if (opts.deliverable) {
-          try {
-            deliverable = parseSchemaOrString(opts.deliverable, "Deliverable");
-          } catch (err) {
-            outputError(json, err instanceof Error ? err : String(err));
-            return;
-          }
+        if (schemaFields.deliverable !== undefined) {
+          deliverable = schemaFields.deliverable;
         } else {
           try {
             deliverable = await promptSchemaField(rl!, "Deliverable");
@@ -444,8 +454,15 @@ export function registerOfferingCommands(program: Command): void {
       "Comma-separated subscription UUIDs to attach (empty string clears)"
     )
     .action(async (opts, cmd) => {
-      const { agentApi } = await getClient();
       const json = isJson(cmd);
+      let schemaFields: ReturnType<typeof parseSchemaFlags>;
+      try {
+        schemaFields = parseSchemaFlags(opts);
+      } catch (err) {
+        outputError(json, err instanceof Error ? err : String(err));
+        return;
+      }
+      const { agentApi } = await getClient();
 
       const agentId = getActiveAgentId(json);
       if (!agentId) return;
@@ -592,16 +609,8 @@ export function registerOfferingCommands(program: Command): void {
         }
 
         // Requirements
-        if (opts.requirements) {
-          try {
-            updates.requirements = parseSchemaOrString(
-              opts.requirements,
-              "Requirements"
-            );
-          } catch (err) {
-            outputError(json, err instanceof Error ? err : String(err));
-            return;
-          }
+        if (schemaFields.requirements !== undefined) {
+          updates.requirements = schemaFields.requirements;
         } else if (!nonInteractive) {
           const currentReqDisplay =
             typeof selected.requirements === "object"
@@ -629,16 +638,8 @@ export function registerOfferingCommands(program: Command): void {
         }
 
         // Deliverable
-        if (opts.deliverable) {
-          try {
-            updates.deliverable = parseSchemaOrString(
-              opts.deliverable,
-              "Deliverable"
-            );
-          } catch (err) {
-            outputError(json, err instanceof Error ? err : String(err));
-            return;
-          }
+        if (schemaFields.deliverable !== undefined) {
+          updates.deliverable = schemaFields.deliverable;
         } else if (!nonInteractive) {
           const currentDelDisplay =
             typeof selected.deliverable === "object"
