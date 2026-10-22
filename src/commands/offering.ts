@@ -694,6 +694,8 @@ export function registerOfferingCommands(program: Command): void {
             .toLowerCase();
           if (hiddenStr === "y") updates.isHidden = true;
           else if (hiddenStr === "n") updates.isHidden = false;
+        } else {
+          updates.isHidden = selected.isHidden;
         }
 
         // Subscriptions
